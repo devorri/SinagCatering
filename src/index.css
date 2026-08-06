@@ -1,0 +1,187 @@
+/* Sinag's Catering — Sunshine Brand Design System Tokens */
+:root {
+  /* Typography Families */
+  --font-display: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
+  --font-serif: 'Playfair Display', 'Cormorant Garamond', Georgia, serif;
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-number: 'Outfit', 'Plus Jakarta Sans', sans-serif;
+
+  /* ✦ Base — Clean White & Warm Neutrals */
+  --ink: #2C1A00;           /* Deep warm brown text */
+  --ink-light: #5A3D10;
+  --muted: #9A7A50;
+  --muted-light: #C4A06A;
+  --line: #F0E4C8;           /* Subtle warm divider */
+  --line-dark: #D4B87A;
+
+  --paper: #FFFFFF;
+  --paper-warm: #FDFAF4;     /* Very lightly warm white */
+  --cream: #FBF5E6;          /* Very soft yellow tint for section backgrounds */
+
+  /* ✦ Primary Accent — Sun Yellow (used sparingly) */
+  --gold: #F5C400;
+  --gold-light: #FFF0A0;
+  --gold-dark: #C99B00;
+  --gold-gradient: linear-gradient(135deg, #FFE566 0%, #F5C400 60%, #C99B00 100%);
+
+  /* ✦ Secondary Accent — Amber Orange (sun rays) */
+  --terracotta: #E8820A;
+  --terracotta-dark: #C06500;
+  --terracotta-light: #F5A84A;
+
+  /* ✦ Highlight — Blush Pink (bow) */
+  --pink: #F7A8C0;
+  --pink-dark: #E06090;
+  --pink-light: #FFE4EF;
+
+  /* ✦ Dark Surface — Deep Warm Brown (replaces obsidian) */
+  --obsidian: #3D2000;
+  --obsidian-surface: #2A1500;
+  --obsidian-card: #4A2800;
+  --obsidian-border: #7A5020;
+
+  --emerald: #2D6A4F;
+  --emerald-light: #D8F3DC;
+
+  /* Shadows & Glass */
+  --shadow-sm: 0 2px 8px rgba(60, 32, 0, 0.06);
+  --shadow-md: 0 8px 24px rgba(60, 32, 0, 0.10);
+  --shadow-lg: 0 20px 50px rgba(60, 32, 0, 0.14);
+  --shadow-gold: 0 8px 24px rgba(245, 196, 0, 0.22);
+
+  --glass-bg: rgba(255, 255, 255, 0.92);
+  --glass-border: rgba(245, 196, 0, 0.25);
+  --glass-dark: rgba(61, 32, 0, 0.80);
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 24px;
+  --radius-full: 9999px;
+
+  --transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-fast: all 0.15s ease;
+
+  color: var(--ink);
+  background: var(--paper);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+  background: var(--paper-warm);
+  color: var(--ink);
+  overflow-x: hidden;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--paper-warm);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D1C7B7;
+  border-radius: 5px;
+  border: 2px solid var(--paper-warm);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--terracotta);
+}
+
+/* Typography Utility Classes */
+h1, h2, h3, .font-serif {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+.font-sans {
+  font-family: var(--font-sans);
+}
+
+.font-number {
+  font-family: var(--font-number);
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: var(--font-sans);
+  letter-spacing: 0;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+code {
+  padding: 2px 8px;
+  color: var(--gold-dark);
+  background: #FAF0D6;
+  border: 1px solid rgba(212, 175, 55, 0.3);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+::selection {
+  color: var(--ink);
+  background: var(--gold);
+}
+
+/* Admin Dashboard Hamburger Navigation */
+.admin-dashboard-wrapper { position: relative; }
+.hamburger-btn {
+  background: var(--paper-warm);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--ink);
+  padding: 10px;
+  margin-right: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+  flex-shrink: 0;
+}
+.hamburger-btn:hover {
+  background: #FFFFFF;
+  border-color: var(--gold);
+  color: var(--terracotta);
+  box-shadow: var(--shadow-sm);
+}
+.admin-drawer { position: fixed; top: 0; left: -280px; width: 280px; height: 100vh; background: #FFFFFF; border-right: 1px solid var(--line); transition: var(--transition); z-index: 1000; overflow-y: auto; box-shadow: var(--shadow-lg); }
+.admin-drawer.open { left: 0; }
+.drawer-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); opacity: 0; visibility: hidden; transition: var(--transition); z-index: 900; backdrop-filter: blur(2px); }
+.drawer-overlay.open { opacity: 1; visibility: visible; }
+.drawer-nav-item { display: flex; align-items: center; width: 100%; padding: 14px 20px; background: transparent; border: none; text-align: left; font-size: 0.92rem; font-weight: 500; color: var(--ink); cursor: pointer; transition: var(--transition-fast); border-left: 3px solid transparent; }
+.drawer-nav-item:hover { background: var(--paper-warm); color: var(--terracotta); }
+.drawer-nav-item.active { background: var(--paper-warm); color: var(--gold-dark); border-left-color: var(--gold-dark); font-weight: 700; }
