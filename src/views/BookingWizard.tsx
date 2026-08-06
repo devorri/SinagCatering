@@ -10,9 +10,6 @@ import {
   Sparkles,
   Star,
   WandSparkles,
-  Calendar as CalendarIcon,
-  Clock,
-  Users as UsersIcon,
   CreditCard,
   Info,
 } from 'lucide-react'
