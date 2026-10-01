@@ -1,6 +1,11 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import type { ReactNode } from 'react'
 import type { User, Booking, Review, Staff, Inquiry } from '../types'
+import { supabase } from '../lib/supabase'
+import {
+  sendBookingSubmissionNotifications,
+  sendPaymentVerificationNotifications,
+} from '../lib/notifications'
 
 interface AppContextType {
   currentUser: User | null
@@ -9,10 +14,11 @@ interface AppContextType {
   staff: Staff[]
   blockedDates: string[]
   inquiries: Inquiry[]
-  login: (email: string, name: string, role: 'client' | 'admin') => User
-  logout: () => void
-  createBooking: (bookingData: Omit<Booking, 'id' | 'userId' | 'createdAt' | 'bookingStatus' | 'paymentStatus' | 'staffIds' | 'proofOfPaymentUrl'>) => Booking
-  uploadPayment: (bookingId: string, proofUrl: string) => void
+  signIn: (email: string, password: string) => Promise<{ user: User | null; error: string | null; confirmationRequired?: boolean }>
+  signUp: (name: string, email: string, phone: string, password: string) => Promise<{ user: User | null; error: string | null; confirmationRequired?: boolean }>
+  logout: () => Promise<void>
+  createBooking: (bookingData: Omit<Booking, 'id' | 'userId' | 'createdAt' | 'bookingStatus' | 'paymentStatus' | 'staffIds' | 'proofOfPaymentUrl'>, bookingId?: string) => Booking
+  uploadPayment: (bookingId: string, proofUrl: string, refNumber?: string) => void
   cancelBooking: (bookingId: string) => { refundPercentage: number; refundAmount: number }
   rebookEvent: (bookingId: string, newDate: string) => { success: boolean; message: string }
   addReview: (rating: number, comment: string, imageUrl: string | null) => void
@@ -25,10 +31,26 @@ interface AppContextType {
   createInquiryDirect: (name: string, email: string, message: string) => void
   updateBookingStatus: (bookingId: string, bookingStatus: Booking['bookingStatus'], paymentStatus?: Booking['paymentStatus']) => void
   updatePaymentStatus: (bookingId: string, paymentStatus: Booking['paymentStatus'], amount?: number) => void
+  verifyDownpaymentBooking: (bookingId: string, verifiedAmount?: number) => void
   notifyUsers: (emails: string[], subject: string, message: string) => void
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined)
+const SESSION_TOKEN_KEY = 'sinag_session_token'
+
+const mapTableUser = (value: unknown): User | null => {
+  if (!value || typeof value !== 'object') return null
+  const user = value as Record<string, unknown>
+  if (typeof user.id !== 'string' || typeof user.email !== 'string' ||
+      (user.role !== 'client' && user.role !== 'admin')) return null
+  return {
+    id: user.id,
+    name: typeof user.name === 'string' ? user.name : user.email.split('@')[0],
+    email: user.email,
+    phone: typeof user.phone === 'string' ? user.phone : undefined,
+    role: user.role,
+  }
+}
 
 const DEFAULT_STAFF: Staff[] = [
   { id: 'st-1', name: 'Juan Dela Cruz', role: 'waiter', status: 'available' },
@@ -95,10 +117,39 @@ const DEFAULT_INQUIRIES: Inquiry[] = [
 ]
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('sinag_user')
-    return saved ? JSON.parse(saved) : null
-  })
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+
+  useEffect(() => {
+    localStorage.removeItem('sinag_user')
+  }, [])
+
+  useEffect(() => {
+    const client = supabase
+    if (!client) return
+    let active = true
+    const restoreTableSession = async () => {
+      const token = sessionStorage.getItem(SESSION_TOKEN_KEY)
+      if (!token) return
+      const { data, error } = await client.functions.invoke('table-auth', {
+        body: { action: 'session' },
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const user = error ? null : mapTableUser(data?.user)
+      if (active) {
+        setCurrentUser(user)
+        if (!user) sessionStorage.removeItem(SESSION_TOKEN_KEY)
+      }
+    }
+    void restoreTableSession().catch(() => {
+      if (active) {
+        sessionStorage.removeItem(SESSION_TOKEN_KEY)
+        setCurrentUser(null)
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [])
 
   const [bookings, setBookings] = useState<Booking[]>(() => {
     const saved = localStorage.getItem('sinag_bookings')
@@ -200,11 +251,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return saved ? JSON.parse(saved) : DEFAULT_INQUIRIES
   })
 
-  // Sync state to localStorage
-  useEffect(() => {
-    localStorage.setItem('sinag_user', currentUser ? JSON.stringify(currentUser) : '')
-  }, [currentUser])
-
+  // Legacy business data remains cached locally; account credentials never do.
   useEffect(() => {
     localStorage.setItem('sinag_bookings', JSON.stringify(bookings))
   }, [bookings])
@@ -242,39 +289,89 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     })
   }, [bookings])
 
-  const login = (email: string, name: string, role: 'client' | 'admin'): User => {
-    const id = role === 'admin' ? 'usr-admin' : `usr-${Math.random().toString(36).substr(2, 9)}`
-    const user: User = { id, name, email, role }
+  const signIn = async (email: string, password: string): Promise<{ user: User | null; error: string | null; confirmationRequired?: boolean }> => {
+    if (!supabase) return { user: null, error: 'Supabase is not configured.' }
+    const { data, error } = await supabase.functions.invoke('table-auth', {
+      body: { action: 'login', email: email.trim().toLowerCase(), password },
+    })
+    if (error || !data?.user || typeof data.token !== 'string') {
+      return { user: null, error: data?.error ?? error?.message ?? 'Sign-in failed.' }
+    }
+    const user = mapTableUser(data.user)
+    if (!user) return { user: null, error: 'Account data is invalid.' }
+    sessionStorage.setItem(SESSION_TOKEN_KEY, data.token)
     setCurrentUser(user)
-    return user
+    return { user, error: null }
   }
 
-  const logout = () => {
-    setCurrentUser(null)
+  const signUp = async (name: string, email: string, phone: string, password: string) => {
+    if (!supabase) return { user: null, error: 'Supabase is not configured.' }
+    const { data, error } = await supabase.functions.invoke('table-auth', {
+      body: {
+        action: 'register',
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        phone: phone.trim(),
+        password,
+      },
+    })
+    if (error || !data?.user || typeof data.token !== 'string') {
+      return { user: null, error: data?.error ?? error?.message ?? 'Registration failed.' }
+    }
+    const user = mapTableUser(data.user)
+    if (!user) return { user: null, error: 'Account data is invalid.' }
+    sessionStorage.setItem(SESSION_TOKEN_KEY, data.token)
+    setCurrentUser(user)
+    return { user, error: null }
   }
 
-  const createBooking = (bookingData: Omit<Booking, 'id' | 'userId' | 'createdAt' | 'bookingStatus' | 'paymentStatus' | 'staffIds' | 'proofOfPaymentUrl'>): Booking => {
-    const id = `bk-${Math.floor(1000 + Math.random() * 9000)}`
+  const logout = async () => {
+    const token = sessionStorage.getItem(SESSION_TOKEN_KEY)
+    try {
+      if (supabase && token) {
+        await supabase.functions.invoke('table-auth', {
+          body: { action: 'logout' },
+          headers: { Authorization: `Bearer ${token}` },
+        })
+      }
+    } finally {
+      sessionStorage.removeItem(SESSION_TOKEN_KEY)
+      setCurrentUser(null)
+    }
+  }
+
+  const createBooking = (bookingData: Omit<Booking, 'id' | 'userId' | 'createdAt' | 'bookingStatus' | 'paymentStatus' | 'staffIds' | 'proofOfPaymentUrl'>, bookingId?: string): Booking => {
+    const id = bookingId ?? `bk-${crypto.randomUUID()}`
+    const isPaymentSubmitted = Boolean(bookingData.gcashRefNumber && bookingData.gcashRefNumber.trim())
     const newBooking: Booking = {
       ...bookingData,
       id,
       userId: currentUser?.id || 'guest',
       createdAt: new Date().toISOString(),
       bookingStatus: 'pending',
-      paymentStatus: 'unpaid',
+      paymentStatus: isPaymentSubmitted ? 'pending_verification' : 'unpaid',
       proofOfPaymentUrl: null,
       staffIds: [],
     }
 
     setBookings((prev) => [newBooking, ...prev])
+
+    // Trigger live Semaphore SMS and transactional email alerts
+    sendBookingSubmissionNotifications(newBooking).catch(console.error)
+
     return newBooking
   }
 
-  const uploadPayment = (bookingId: string, proofUrl: string) => {
+  const uploadPayment = (bookingId: string, proofUrl: string, refNumber?: string) => {
     setBookings((prev) =>
       prev.map((bk) =>
         bk.id === bookingId
-          ? { ...bk, proofOfPaymentUrl: proofUrl, paymentStatus: 'pending_verification' }
+          ? {
+              ...bk,
+              proofOfPaymentUrl: proofUrl,
+              paymentStatus: 'pending_verification',
+              ...(refNumber ? { gcashRefNumber: refNumber } : {}),
+            }
           : bk,
       ),
     )
@@ -441,6 +538,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     )
   }
 
+  const verifyDownpaymentBooking = (bookingId: string, verifiedAmount?: number) => {
+    let targetBooking: Booking | undefined
+    setBookings((prev) =>
+      prev.map((bk) => {
+        if (bk.id === bookingId) {
+          const finalAmount = verifiedAmount ?? bk.downpaymentAmount ?? bk.totalPrice * 0.5
+          targetBooking = {
+            ...bk,
+            bookingStatus: 'confirmed',
+            paymentStatus: 'downpayment_paid',
+            downpaymentAmount: finalAmount,
+          }
+          return targetBooking
+        }
+        return bk
+      }),
+    )
+
+    if (targetBooking) {
+      blockDate((targetBooking as Booking).eventDate)
+      sendPaymentVerificationNotifications(targetBooking as Booking).catch(console.error)
+    }
+  }
+
   return (
     <AppContext.Provider
       value={{
@@ -450,7 +571,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         staff,
         blockedDates,
         inquiries,
-        login,
+        signIn,
+        signUp,
         logout,
         createBooking,
         uploadPayment,
@@ -466,6 +588,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         createInquiryDirect,
         updateBookingStatus,
         updatePaymentStatus,
+        verifyDownpaymentBooking,
         notifyUsers,
       }}
     >

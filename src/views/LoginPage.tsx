@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { ShieldCheck, ArrowRight } from 'lucide-react'
+import { ShieldCheck, ArrowRight, Eye, EyeOff } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 
 interface LoginPageProps {
@@ -7,21 +7,27 @@ interface LoginPageProps {
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
-  const { login } = useApp()
+  const { signIn, signUp } = useApp()
   const [authMode, setAuthMode] = useState<'client' | 'admin'>('client')
 
   // Client Form State
   const [clientEmail, setClientEmail] = useState('')
   const [clientName, setClientName] = useState('')
+  const [clientPhone, setClientPhone] = useState('')
+  const [clientPassword, setClientPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [isRegistering, setIsRegistering] = useState(false)
   const [clientError, setClientError] = useState('')
 
   // Admin Form State
   const [adminEmail, setAdminEmail] = useState('')
   const [adminPassword, setAdminPassword] = useState('')
+  const [showAdminPassword, setShowAdminPassword] = useState(false)
   const [adminError, setAdminError] = useState('')
 
-  const handleClientSubmit = (e: React.FormEvent) => {
+  const handleClientSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setClientError('')
 
@@ -30,35 +36,51 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       return
     }
 
-    if (isRegistering && !clientName.trim()) {
-      setClientError('Please enter your full name to register.')
+    // Password validation (Item 6)
+    if (!clientPassword || clientPassword.length < 8) {
+      setClientError('Password must be at least 8 characters long.')
       return
     }
 
-    const name = isRegistering ? clientName : clientEmail.split('@')[0]
-    login(clientEmail.toLowerCase(), name, 'client')
-    onLoginSuccess('client')
+    if (isRegistering) {
+      if (!clientName.trim()) {
+        setClientError('Please enter your full name to register.')
+        return
+      }
+
+      if (clientPassword !== confirmPassword) {
+        setClientError('Passwords do not match. Please verify both fields.')
+        return
+      }
+
+    }
+
+    const result = isRegistering
+      ? await signUp(clientName, clientEmail, clientPhone, clientPassword)
+      : await signIn(clientEmail, clientPassword)
+    if (result.error) {
+      setClientError(result.error)
+      return
+    }
+    if (result.confirmationRequired) {
+      setClientError('Check your email to confirm your account, then sign in here.')
+      return
+    }
+    if (result.user) onLoginSuccess(result.user.role)
   }
 
-  const handleAdminSubmit = (e: React.FormEvent) => {
+  const handleAdminSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setAdminError('')
-
-    if (adminEmail === 'admin@sinagcatering.ph' && adminPassword === 'admin') {
-      login(adminEmail, 'Administrator', 'admin')
-      onLoginSuccess('admin')
-    } else {
-      setAdminError('Invalid admin credentials. Use admin@sinagcatering.ph / admin')
+    const result = await signIn(adminEmail, adminPassword)
+    if (result.error) {
+      setAdminError(result.error)
+      return
     }
-  }
-
-  const handleQuickClientLogin = (email: string, name: string) => {
-    login(email, name, 'client')
-    onLoginSuccess('client')
-  }
-
-  const handleQuickAdminLogin = () => {
-    login('admin@sinagcatering.ph', 'Administrator', 'admin')
+    if (result.user?.role !== 'admin') {
+      setAdminError('This account does not have administrator access.')
+      return
+    }
     onLoginSuccess('admin')
   }
 
@@ -68,7 +90,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         <h2 className="portal-auth-title" style={{ fontFamily: 'var(--font-serif)', fontSize: '2.4rem' }}>
           Sinag Portal Access
         </h2>
-        <p className="portal-auth-sub">Sign in to manage event reservations, submit payments, or access executive tools.</p>
+        <p className="portal-auth-sub">Sign in to manage event reservations, verify payments, or access executive tools.</p>
 
         {/* Tab Switcher */}
         <div style={{ display: 'flex', gap: '8px', background: 'var(--paper-warm)', padding: '6px', borderRadius: 'var(--radius-md)', border: '1px solid var(--line)', marginBottom: '32px' }}>
@@ -94,17 +116,31 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         {authMode === 'client' && (
           <form onSubmit={handleClientSubmit}>
             {isRegistering && (
-              <div className="form-group">
-                <label>Full Name</label>
-                <input
-                  type="text"
-                  className="input-field"
-                  required
-                  placeholder="e.g. Maria Santos"
-                  value={clientName}
-                  onChange={(e) => setClientName(e.target.value)}
-                />
-              </div>
+              <>
+                <div className="form-group">
+                  <label>Full Name</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    required
+                    placeholder="e.g. Maria Santos"
+                    value={clientName}
+                    onChange={(e) => setClientName(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Mobile Number (For Semaphore SMS & OTP)</label>
+                  <input
+                    type="tel"
+                    className="input-field"
+                    placeholder="0928 714 4597"
+                    value={clientPhone}
+                    onChange={(e) => setClientPhone(e.target.value)}
+                    required
+                  />
+                </div>
+              </>
             )}
 
             <div className="form-group">
@@ -119,45 +155,107 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
               />
             </div>
 
+            {/* Checklist Item 6: Password Input with Masking & Visibility Toggle */}
+            <div className="form-group">
+              <label>Password</label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  className="input-field"
+                  required
+                  placeholder="••••••••"
+                  value={clientPassword}
+                  onChange={(e) => setClientPassword(e.target.value)}
+                  style={{ width: '100%', paddingRight: '44px' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  style={{
+                    position: 'absolute',
+                    right: '12px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--muted)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '4px',
+                  }}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+              <span style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '4px' }}>
+                Must be at least 8 characters
+              </span>
+            </div>
+
+            {isRegistering && (
+              <div className="form-group">
+                <label>Confirm Password</label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    className="input-field"
+                    required
+                    placeholder="••••••••"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    style={{ width: '100%', paddingRight: '44px' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                    style={{
+                      position: 'absolute',
+                      right: '12px',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: 'var(--muted)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '4px',
+                    }}
+                  >
+                    {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {clientError && (
               <p style={{ color: 'var(--terracotta)', fontSize: '0.85rem', marginBottom: '16px' }}>
                 {clientError}
               </p>
             )}
 
-            <button type="submit" className="btn-hero-primary" style={{ width: '100%' }}>
+            <button type="submit" className="btn-hero-primary" style={{ width: '100%', marginTop: '6px' }}>
               {isRegistering ? 'Register & Access Dashboard' : 'Sign In as Client'} <ArrowRight size={16} />
             </button>
 
             <div style={{ marginTop: '20px', textAlign: 'center' }}>
               <button
                 type="button"
-                onClick={() => setIsRegistering(!isRegistering)}
+                onClick={() => {
+                  setIsRegistering(!isRegistering)
+                  setClientError('')
+                }}
                 style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '0.85rem', cursor: 'pointer', textDecoration: 'underline' }}
               >
                 {isRegistering ? 'Already registered? Sign in instead' : 'New client? Register an account'}
               </button>
             </div>
 
-            <div className="demo-login-bar">
-              <span style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
-                Demo Accounts:
-              </span>
-              <button
-                type="button"
-                onClick={() => handleQuickClientLogin('maria@email.com', 'Maria Santos')}
-                className="btn-demo-chip"
-              >
-                👤 Maria Santos (Wedding Client)
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickClientLogin('juan@email.com', 'Juan Dela Cruz')}
-                className="btn-demo-chip"
-              >
-                👤 Juan Dela Cruz (Birthday Client)
-              </button>
-            </div>
           </form>
         )}
 
@@ -178,14 +276,38 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
             <div className="form-group">
               <label>Password</label>
-              <input
-                type="password"
-                className="input-field"
-                required
-                placeholder="••••••••"
-                value={adminPassword}
-                onChange={(e) => setAdminPassword(e.target.value)}
-              />
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showAdminPassword ? 'text' : 'password'}
+                  className="input-field"
+                  required
+                  placeholder="••••••••"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  style={{ width: '100%', paddingRight: '44px' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowAdminPassword(!showAdminPassword)}
+                  aria-label={showAdminPassword ? 'Hide password' : 'Show password'}
+                  style={{
+                    position: 'absolute',
+                    right: '12px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--muted)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '4px',
+                  }}
+                >
+                  {showAdminPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
 
             {adminError && (
@@ -198,18 +320,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
               Unlock Executive Console <ShieldCheck size={16} />
             </button>
 
-            <div className="demo-login-bar">
-              <span style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
-                Quick Admin Access:
-              </span>
-              <button
-                type="button"
-                onClick={handleQuickAdminLogin}
-                className="btn-demo-chip"
-              >
-                🔐 Sign In as Administrator
-              </button>
-            </div>
           </form>
         )}
       </div>

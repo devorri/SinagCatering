@@ -999,6 +999,7 @@
 
 .calendar-day-cell {
   aspect-ratio: 1.1;
+  min-height: 48px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1013,6 +1014,18 @@
   cursor: pointer;
   transition: var(--transition);
   position: relative;
+  padding: 4px 2px;
+  text-align: center;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.calendar-day-number {
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.1;
+  text-align: center;
+  display: block;
 }
 
 .calendar-day-cell.empty {
@@ -1021,18 +1034,94 @@
   cursor: default;
 }
 
+/* Checklist Item 3: Calendar Blocked Date Styling & Alignment */
 .calendar-day-cell.blocked {
-  background: #FDF2F0;
-  border-color: #F8D7D2;
+  background: #FFF5EA;
+  border: 1.5px solid var(--terracotta);
   color: var(--terracotta);
   cursor: not-allowed;
-  opacity: 0.7;
+  opacity: 1;
+}
+
+.calendar-day-cell.blocked .calendar-day-number {
+  color: var(--terracotta);
+  font-weight: 700;
+  text-align: center;
+}
+
+.calendar-blocked-tag {
+  display: inline-block;
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #FFFFFF;
+  background: var(--terracotta);
+  padding: 1.5px 5px;
+  border-radius: 3px;
+  margin-top: 2px;
+  line-height: 1.1;
+  white-space: nowrap;
 }
 
 .calendar-day-cell.booked {
   background: #FAF4E8;
-  border-color: var(--gold-light);
+  border: 1px solid var(--gold-light);
   color: var(--gold-dark);
+  cursor: not-allowed;
+}
+
+.calendar-day-cell.booked .calendar-day-number {
+  color: var(--gold-dark);
+  font-weight: 700;
+}
+
+.calendar-count-tag {
+  display: inline-block;
+  font-size: 0.58rem;
+  font-weight: 600;
+  color: var(--obsidian);
+  background: var(--gold-light);
+  padding: 1.5px 4px;
+  border-radius: 3px;
+  margin-top: 2px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.calendar-day-cell.pending-booking {
+  background: #FFFBEB;
+  border: 1px solid #FCD34D;
+  color: #B45309;
+}
+
+.calendar-pending-tag {
+  display: inline-block;
+  font-size: 0.58rem;
+  font-weight: 600;
+  color: #92400E;
+  background: #FDE68A;
+  padding: 1.5px 4px;
+  border-radius: 3px;
+  margin-top: 2px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.calendar-day-cell.selected {
+  background: var(--gold) !important;
+  color: var(--obsidian) !important;
+  border-color: var(--gold) !important;
+  font-weight: 700;
+  box-shadow: 0 4px 12px rgba(212, 160, 23, 0.25);
+}
+
+.calendar-day-cell.selected .calendar-day-number {
+  color: var(--obsidian) !important;
+}
+
+.calendar-day-cell.disabled {
+  cursor: not-allowed;
 }
 
 .calendar-day-cell.available:hover {
@@ -1076,6 +1165,10 @@
 
 .legend-dot.booked {
   background: var(--gold);
+}
+
+.legend-dot.pending-booking {
+  background: #F59E0B;
 }
 
 /* ==========================================================================

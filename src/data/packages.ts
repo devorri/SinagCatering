@@ -10,9 +10,19 @@ export interface CateringPackage {
   bestFor: string
   description: string
   tiers: PackageTier[]
+  pricePerHead?: number
+  defaultPax?: number
+  currency?: 'PHP'
   inclusions: string[]
   entertainment: string[]
   freebies: string[]
+}
+
+export interface CateringAddon {
+  id: string
+  name: string
+  price: number
+  currency: 'PHP'
 }
 
 export const SINAG_PACKAGES: CateringPackage[] = [
@@ -128,7 +138,58 @@ export const SINAG_PACKAGES: CateringPackage[] = [
       'Lighted number standee',
     ],
   },
+  {
+    id: 'PKG-KIDDIE-01',
+    name: 'Kiddie Party Special',
+    shortName: 'Kiddie Party Special',
+    bestFor: "Children's birthdays (Ages 3-12), playful events",
+    description: 'Kid-friendly favorites for playful birthday celebrations.',
+    tiers: [{ pax: 30, price: 360 }],
+    pricePerHead: 12,
+    defaultPax: 30,
+    currency: 'PHP',
+    inclusions: ['Kiddie Spaghetti', 'Mini Crispy Burgers', 'Chicken Tenders', 'Juice Boxes'],
+    entertainment: [],
+    freebies: [],
+  },
+  {
+    id: 'PKG-CLASSIC-02',
+    name: 'Classic Family Feast',
+    shortName: 'Classic Family Feast',
+    bestFor: 'Family reunions, casual gatherings, intimate adult parties',
+    description: 'A familiar family-style buffet for casual gatherings.',
+    tiers: [{ pax: 50, price: 900 }],
+    pricePerHead: 18,
+    defaultPax: 50,
+    currency: 'PHP',
+    inclusions: ['Roast Pork', 'Baked Macaroni', 'Buttered Mixed Veggies', 'Fried Chicken'],
+    entertainment: [],
+    freebies: [],
+  },
+  {
+    id: 'PKG-PREMIER-03',
+    name: 'Grand Executive Buffet',
+    shortName: 'Grand Executive Buffet',
+    bestFor: 'Formal events, weddings, corporate galas',
+    description: 'A premium buffet for formal celebrations and corporate events.',
+    tiers: [{ pax: 100, price: 3000 }],
+    pricePerHead: 30,
+    defaultPax: 100,
+    currency: 'PHP',
+    inclusions: ['Slow-Roasted Beef', 'Seafood Alfredo', 'Creamy Grilled Salmon', 'Caesar Salad'],
+    entertainment: [],
+    freebies: [],
+  },
 ]
+
+export const AI_CATALOG_ADDONS: CateringAddon[] = [
+  { id: 'ADD-CANDY-01', name: 'Chocolate Fountain & Candy Buffet', price: 150, currency: 'PHP' },
+  { id: 'ADD-HOST-02', name: 'Party Emcee & Games Host', price: 200, currency: 'PHP' },
+  { id: 'ADD-DESSERT-03', name: 'Assorted Dessert Station', price: 100, currency: 'PHP' },
+]
+
+export const formatMoney = (amount: number, currency: 'PHP' = 'PHP'): string =>
+  `${currency} ${amount.toLocaleString('en-PH', { maximumFractionDigits: 2 })}`
 
 export const FOOD_BUFFER_PAX = 10
 export const EXCESS_PAX_RATE = 700
@@ -137,6 +198,9 @@ export const EXTRA_PASTA_RATE = 80
 export const EXTRA_DESSERT_RATE = 50
 
 export const findTierForGuestCount = (pkg: CateringPackage, guestCount: number) => {
+  if (pkg.pricePerHead !== undefined) {
+    return { pax: guestCount, price: guestCount * pkg.pricePerHead }
+  }
   return pkg.tiers.find((tier) => guestCount <= tier.pax + FOOD_BUFFER_PAX) || pkg.tiers[pkg.tiers.length - 1]
 }
 

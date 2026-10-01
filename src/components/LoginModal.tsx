@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { ArrowRight, X, UserPlus } from 'lucide-react'
+import { ArrowRight, X, UserPlus, Eye, EyeOff } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 
 interface LoginModalProps {
@@ -10,15 +10,17 @@ interface LoginModalProps {
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSuccess, onContinueAsGuest }) => {
-  const { login } = useApp()
+  const { signIn, signUp } = useApp()
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
+  const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [isRegistering, setIsRegistering] = useState(false)
   const [error, setError] = useState('')
 
   if (!isOpen) return null
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
 
@@ -27,19 +29,28 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
       return
     }
 
+    if (!password || password.length < 8) {
+      setError('Password must be at least 8 characters.')
+      return
+    }
+
     if (isRegistering && !name.trim()) {
       setError('Please enter your full name to register.')
       return
     }
 
-    const displayName = isRegistering ? name : email.split('@')[0]
-    login(email.toLowerCase(), displayName, 'client')
-    onSuccess()
-  }
-
-  const handleQuickLogin = (qEmail: string, qName: string) => {
-    login(qEmail, qName, 'client')
-    onSuccess()
+    const result = isRegistering
+      ? await signUp(name, email, '', password)
+      : await signIn(email, password)
+    if (result.error) {
+      setError(result.error)
+      return
+    }
+    if (result.confirmationRequired) {
+      setError('Check your email to confirm your account, then sign in here.')
+      return
+    }
+    if (result.user) onSuccess()
   }
 
   return (
@@ -88,6 +99,42 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
             />
           </div>
 
+          <div className="form-group">
+            <label>Password</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                className="input-field"
+                required
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                style={{ width: '100%', paddingRight: '44px' }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                style={{
+                  position: 'absolute',
+                  right: '12px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: 'var(--muted)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '4px',
+                }}
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </div>
+
           {error && (
             <p style={{ color: 'var(--terracotta)', fontSize: '0.85rem', marginBottom: '16px' }}>
               {error}
@@ -101,7 +148,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
           <div style={{ marginTop: '14px', textAlign: 'center' }}>
             <button
               type="button"
-              onClick={() => setIsRegistering(!isRegistering)}
+              onClick={() => {
+                setIsRegistering(!isRegistering)
+                setError('')
+              }}
               style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '0.85rem', cursor: 'pointer', textDecoration: 'underline' }}
             >
               {isRegistering ? 'Already registered? Sign in instead' : 'New client? Register an account'}
@@ -122,17 +172,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
           Continue as Guest
         </button>
 
-        <div className="demo-login-bar" style={{ marginTop: '20px' }}>
-          <span style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
-            Demo Accounts:
-          </span>
-          <button type="button" onClick={() => handleQuickLogin('maria@email.com', 'Maria Santos')} className="btn-demo-chip" style={{ width: '100%' }}>
-            👤 Maria Santos
-          </button>
-          <button type="button" onClick={() => handleQuickLogin('juan@email.com', 'Juan Dela Cruz')} className="btn-demo-chip" style={{ width: '100%' }}>
-            👤 Juan Dela Cruz
-          </button>
-        </div>
       </div>
     </div>
   )

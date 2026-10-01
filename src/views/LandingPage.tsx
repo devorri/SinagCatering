@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { Check, ChevronRight, ShieldCheck, Sparkles, Star, WandSparkles } from 'lucide-react'
 import { useApp } from '../context/AppContext'
-import { SINAG_PACKAGES } from '../data/packages'
+import { SINAG_PACKAGES, FOOD_BUFFER_PAX, formatMoney } from '../data/packages'
 
 interface LandingPageProps {
   onNavigateToClient: () => void
@@ -70,7 +70,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
 
             <div className="hero-inline-stats">
               <div>
-                <span className="hero-stat-num">3</span>
+                <span className="hero-stat-num">6</span>
                 <span className="hero-stat-lbl">Party Packages</span>
               </div>
               <div className="hero-stat-divider" />
@@ -112,7 +112,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
               <ShieldCheck size={24} />
             </div>
             <h3>Generous Food Buffer</h3>
-            <p>Every package includes a complimentary <strong>+10 pax food buffer</strong> allowance to ensure all guests eat comfortably.</p>
+            <p>Sinag's PHP package tiers include a complimentary <strong>+10 pax food buffer</strong>. The AI catalog uses per-guest pricing.</p>
           </div>
 
           <div className="process-card">
@@ -144,7 +144,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
         <div className="section-header">
           <span className="section-tag">Our Services & Packages</span>
           <h2 className="section-title">Signature Party Catering Packages</h2>
-          <p className="section-desc">Choose from our Silver, Gold, or Platinum catering tiers with complete food, setup, and styling.</p>
+          <p className="section-desc">Browse Sinag's PHP catering tiers and the AI catalog's per-guest buffet packages.</p>
         </div>
 
         <div className="process-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '32px' }}>
@@ -156,8 +156,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
               
               <div style={{ padding: '14px 18px', background: 'var(--paper-warm)', borderRadius: '12px', marginBottom: '24px' }}>
                 <span style={{ fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--muted)', display: 'block' }}>Starting Tier</span>
-                <strong style={{ fontSize: '1.4rem', color: 'var(--terracotta)' }}>PHP {pkg.tiers[0].price.toLocaleString()}</strong>
-                <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}> / {pkg.tiers[0].pax} pax (+10 buffer)</span>
+                <strong style={{ fontSize: '1.4rem', color: 'var(--terracotta)' }}>{formatMoney(
+                  pkg.pricePerHead !== undefined
+                    ? pkg.pricePerHead * (pkg.defaultPax ?? pkg.tiers[0].pax)
+                    : pkg.tiers[0].price,
+                  pkg.currency,
+                )}</strong>
+                <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{pkg.pricePerHead !== undefined
+                  ? ` / ${pkg.defaultPax ?? pkg.tiers[0].pax} pax`
+                  : ` / ${pkg.tiers[0].pax} pax (+${FOOD_BUFFER_PAX} buffer)`}</span>
               </div>
 
               <div style={{ flex: 1, marginBottom: '24px' }}>
@@ -189,7 +196,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
 
         <div className="process-grid">
           {[
-            ['01', 'Choose Package', 'Select a Sinag party package (Silver, Gold, or Platinum) suited to your celebration.'],
+            ['01', 'Choose Package', 'Select a Sinag catering package suited to your celebration.'],
             ['02', 'Customize & AI Helper', 'Fine-tune guest count, add-on dishes, and get instant AI recommendations.'],
             ['03', 'Reserve Schedule', 'Pick an available date from the interactive calendar and submit your reservation.'],
             ['04', 'Admin Operations', 'Admin confirms requests, checks downpayments, assigns staff, and coordinates your event.'],

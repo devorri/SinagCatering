@@ -1,13 +1,15 @@
 import React, { useState } from 'react'
-import { Calendar, Trash2, Edit2, AlertCircle, FileText, CheckCircle, Printer, X } from 'lucide-react'
+import { Calendar, Trash2, Edit2, AlertCircle, FileText, CheckCircle, Printer, X, Eye, EyeOff } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import type { Booking } from '../types'
+import { formatMoney } from '../data/packages'
 
 export const ClientPortal: React.FC = () => {
   const {
     currentUser,
     bookings,
-    login,
+    signIn,
+    signUp,
     logout,
     uploadPayment,
     cancelBooking,
@@ -17,8 +19,11 @@ export const ClientPortal: React.FC = () => {
   // Authentication states
   const [emailInput, setEmailInput] = useState('')
   const [nameInput, setNameInput] = useState('')
+  const [passwordInput, setPasswordInput] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [isRegistering, setIsRegistering] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
+  const [paymentRefInput, setPaymentRefInput] = useState('')
 
   // Action states
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null)
@@ -34,30 +39,43 @@ export const ClientPortal: React.FC = () => {
   // Filter bookings for current logged in client
   const clientBookings = bookings.filter((b) => b.email === currentUser?.email)
 
-  const handleAuthSubmit = (e: React.FormEvent) => {
+  const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setErrorMsg('')
 
     if (!emailInput.trim()) return
+
+    if (!passwordInput || passwordInput.length < 8) {
+      setErrorMsg('Password must be at least 8 characters.')
+      return
+    }
 
     if (isRegistering && !nameInput.trim()) {
       setErrorMsg('Please enter your full name to register.')
       return
     }
 
-    const name = isRegistering ? nameInput : emailInput.split('@')[0]
-    login(emailInput.toLowerCase(), name, 'client')
+    const result = isRegistering
+      ? await signUp(nameInput, emailInput, '', passwordInput)
+      : await signIn(emailInput, passwordInput)
+    if (result.error) {
+      setErrorMsg(result.error)
+      return
+    }
+    if (result.confirmationRequired) {
+      setErrorMsg('Check your email to confirm your account, then sign in here.')
+      return
+    }
     setEmailInput('')
     setNameInput('')
-  }
-
-  const handleQuickLogin = (email: string, name: string) => {
-    login(email, name, 'client')
+    setPasswordInput('')
   }
 
   const handleMockPaymentUpload = (bookingId: string) => {
     const mockReceipt = 'https://images.unsplash.com/photo-1627856013091-fed6e4e30025?w=500&auto=format&fit=crop&q=60'
-    uploadPayment(bookingId, mockReceipt)
+    const ref = paymentRefInput.trim() || `GCASH-${Math.floor(100000000 + Math.random() * 900000000)}`
+    uploadPayment(bookingId, mockReceipt, ref)
+    setPaymentRefInput('')
   }
 
   const openRebook = (booking: Booking) => {
@@ -150,6 +168,45 @@ export const ClientPortal: React.FC = () => {
               />
             </div>
 
+            <div className="form-group">
+              <label>Password</label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  className="input-field"
+                  required
+                  placeholder="••••••••"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  style={{ width: '100%', paddingRight: '44px' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  style={{
+                    position: 'absolute',
+                    right: '12px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--muted)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '4px',
+                  }}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+              <span style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '4px' }}>
+                At least 8 characters
+              </span>
+            </div>
+
             {errorMsg && (
               <p style={{ color: 'var(--terracotta)', fontSize: '0.85rem', marginBottom: '16px' }}>
                 {errorMsg}
@@ -171,25 +228,6 @@ export const ClientPortal: React.FC = () => {
             </button>
           </div>
 
-          <div className="demo-login-bar">
-            <span style={{ fontSize: '0.78rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
-              Quick Demonstration Accounts:
-            </span>
-            <button
-              type="button"
-              onClick={() => handleQuickLogin('maria@email.com', 'Maria Santos')}
-              className="btn-demo-chip"
-            >
-              Maria Santos (Kids Party Client)
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickLogin('juan@email.com', 'Juan Dela Cruz')}
-              className="btn-demo-chip"
-            >
-              Juan Dela Cruz (Birthday Client)
-            </button>
-          </div>
         </div>
       </div>
     )
@@ -266,9 +304,9 @@ export const ClientPortal: React.FC = () => {
                       Financial Breakdown
                     </h4>
                     <p className="font-number" style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--terracotta)', margin: '0 0 4px' }}>
-                      PHP {booking.totalPrice.toLocaleString()}
+                      {formatMoney(booking.totalPrice, booking.currency)}
                     </p>
-                    <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Remaining Balance: PHP {balanceAmount.toLocaleString()}</span>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Remaining Balance: {formatMoney(balanceAmount, booking.currency)}</span>
                   </div>
 
                   <div>
@@ -292,26 +330,53 @@ export const ClientPortal: React.FC = () => {
 
                 {/* Payment Actions Box */}
                 {booking.paymentStatus === 'unpaid' && (
-                  <div style={{ background: '#FFF8E6', border: '1px solid #F3E0A3', padding: '20px', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '20px', flexWrap: 'wrap', marginBottom: '20px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <AlertCircle size={24} style={{ color: 'var(--terracotta)' }} />
+                  <div style={{ background: '#FFF8E6', border: '1px solid #F3E0A3', padding: '20px', borderRadius: 'var(--radius-md)', marginBottom: '20px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
+                      <AlertCircle size={24} style={{ color: 'var(--terracotta)', flexShrink: 0 }} />
                       <div>
-                        <strong style={{ color: 'var(--ink)', display: 'block' }}>50% Downpayment Required: PHP {downpaymentRequired.toLocaleString()}</strong>
-                        <span style={{ fontSize: '0.88rem', color: 'var(--muted)' }}>Send to GCash / Maya: 0917-123-4567 (Sinag Catering Services).</span>
+                        <strong style={{ color: 'var(--ink)', display: 'block', fontSize: '1.05rem' }}>
+                          50% Downpayment Required: {formatMoney(downpaymentRequired, booking.currency)}
+                        </strong>
+                        <span style={{ fontSize: '0.88rem', color: 'var(--muted)' }}>
+                          Official GCash / QR Ph: <strong>0928 714 4597</strong> (Sinag Catering Services / Sunshine C.)
+                        </span>
                       </div>
                     </div>
-                    <button onClick={() => handleMockPaymentUpload(booking.id)} className="btn-submit-primary" style={{ width: 'auto', padding: '12px 24px' }}>
-                      Simulate GCash Receipt Upload
-                    </button>
+
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <input
+                        type="text"
+                        className="input-field"
+                        placeholder="Enter GCash Reference No. (e.g. 902148923019)"
+                        value={paymentRefInput}
+                        onChange={(e) => setPaymentRefInput(e.target.value)}
+                        style={{ flex: 1, minWidth: '220px', padding: '10px 14px' }}
+                      />
+                      <button onClick={() => handleMockPaymentUpload(booking.id)} className="btn-submit-primary" style={{ width: 'auto', padding: '10px 20px', whiteSpace: 'nowrap' }}>
+                        Submit GCash Reference & Receipt
+                      </button>
+                    </div>
                   </div>
                 )}
 
                 {booking.paymentStatus === 'pending_verification' && (
-                  <div style={{ background: '#E6F4EA', border: '1px solid #B7E1CD', padding: '16px 20px', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
-                    <CheckCircle size={20} style={{ color: '#137333' }} />
-                    <span style={{ fontSize: '0.9rem', color: '#137333' }}>
-                      Downpayment receipt uploaded! Our concierge team is verifying your payment. Your calendar date is locked.
-                    </span>
+                  <div style={{ background: '#E6F4EA', border: '1px solid #B7E1CD', padding: '16px 20px', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <CheckCircle size={20} style={{ color: '#137333', flexShrink: 0 }} />
+                      <div>
+                        <strong style={{ display: 'block', color: '#137333' }}>
+                          Downpayment Submitted & Pending Admin Verification
+                        </strong>
+                        <span style={{ fontSize: '0.85rem', color: '#137333' }}>
+                          Reference No: <strong>{booking.gcashRefNumber || 'Receipt uploaded'}</strong> · Your calendar date is temporarily locked.
+                        </span>
+                      </div>
+                    </div>
+                    {booking.proofOfPaymentUrl && (
+                      <a href={booking.proofOfPaymentUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.82rem', color: '#137333', textDecoration: 'underline' }}>
+                        View Uploaded Receipt
+                      </a>
+                    )}
                   </div>
                 )}
 
@@ -374,7 +439,7 @@ export const ClientPortal: React.FC = () => {
             <div style={{ background: 'var(--paper-warm)', padding: '20px', borderRadius: 'var(--radius-md)', marginBottom: '24px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', margin: '8px 0', fontSize: '0.9rem' }}>
                 <span>Total Package Price:</span>
-                <strong>PHP {selectedBooking.totalPrice.toLocaleString()}</strong>
+                <strong>{formatMoney(selectedBooking.totalPrice, selectedBooking.currency)}</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', margin: '8px 0', fontSize: '0.9rem' }}>
                 <span>Refund Tier:</span>
@@ -384,7 +449,7 @@ export const ClientPortal: React.FC = () => {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', margin: '12px 0 0', paddingTop: '12px', borderTop: '1px solid var(--line)', fontSize: '1.1rem' }}>
                 <span>Refund Amount:</span>
-                <strong className="font-number" style={{ color: 'var(--terracotta)' }}>PHP {cancelRefundResult.refundAmount.toLocaleString()}</strong>
+                <strong className="font-number" style={{ color: 'var(--terracotta)' }}>{formatMoney(cancelRefundResult.refundAmount, selectedBooking.currency)}</strong>
               </div>
             </div>
 
@@ -439,7 +504,7 @@ export const ClientPortal: React.FC = () => {
               <div style={{ borderTop: '1px solid var(--line)', paddingTop: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.1rem', fontWeight: 700 }}>
                   <span>Total Amount Due:</span>
-                  <span className="font-number" style={{ color: 'var(--terracotta)' }}>PHP {selectedBooking.totalPrice.toLocaleString()}</span>
+                  <span className="font-number" style={{ color: 'var(--terracotta)' }}>{formatMoney(selectedBooking.totalPrice, selectedBooking.currency)}</span>
                 </div>
               </div>
             </div>

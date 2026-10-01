@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import {
   DollarSign,
   CheckCircle,
@@ -21,16 +21,22 @@ import {
   TrendingUp,
   UsersRound,
   Bell,
-  AlertTriangle,
   Send,
   CreditCard,
   Ban,
   Check,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
-import type { Booking, Inquiry } from '../types'
+import type { Booking, Inquiry, NotificationLog } from '../types'
+import {
+  getNotificationLogs,
+  clearNotificationLogs,
+  sendSemaphoreSMS,
+} from '../lib/notifications'
+import { isSupabaseConfigured } from '../lib/supabase'
+import { formatMoney } from '../data/packages'
 
-type AdminTabType = 'analytics' | 'bookings' | 'calendar' | 'staff' | 'reviews' | 'inquiries'
+type AdminTabType = 'analytics' | 'bookings' | 'calendar' | 'staff' | 'reviews' | 'inquiries' | 'notifications'
 
 interface AdminDashboardProps {
   onLogout?: () => void
@@ -43,7 +49,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     blockedDates,
     inquiries,
     reviews,
-    login,
+    signIn,
     logout,
     currentUser,
     updateBookingStatus,
@@ -54,6 +60,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     replyReview,
     deleteReview,
     updatePaymentStatus,
+    verifyDownpaymentBooking,
     notifyUsers,
   } = useApp()
 
@@ -93,22 +100,55 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [showDownpaymentModal, setShowDownpaymentModal] = useState(false)
   const [downpaymentBooking, setDownpaymentBooking] = useState<Booking | null>(null)
   const [downpaymentAmount, setDownpaymentAmount] = useState(0)
-  const [downpaymentDeadline, setDownpaymentDeadline] = useState('')
+
+  // Semaphore SMS and Notification Logs state (Item 9)
+  const [notificationLogs, setNotificationLogs] = useState<NotificationLog[]>(() => getNotificationLogs())
+  const [testSmsPhone, setTestSmsPhone] = useState('')
+  const [testSmsMsg, setTestSmsMsg] = useState('[Sinag Catering] This is a test message.')
+  const [isSendingTestSms, setIsSendingTestSms] = useState(false)
+  const [testSmsStatus, setTestSmsStatus] = useState('')
+
+  useEffect(() => {
+    const handleNotifUpdate = () => {
+      setNotificationLogs(getNotificationLogs())
+    }
+    window.addEventListener('sinag-notification-sent', handleNotifUpdate)
+    return () => window.removeEventListener('sinag-notification-sent', handleNotifUpdate)
+  }, [])
+
+  const handleSendTestSms = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!testSmsPhone.trim() || !testSmsMsg.trim()) return
+    setIsSendingTestSms(true)
+    setTestSmsStatus('Sending via Semaphore...')
+    const res = await sendSemaphoreSMS(testSmsPhone, testSmsMsg, 'ADMIN-TEST')
+    setIsSendingTestSms(false)
+    if (res.success) {
+      setTestSmsStatus(res.simulated ? 'Dispatched (Simulated live payload logged in register)' : 'Delivered successfully via Semaphore SMS!')
+      setNotificationLogs(getNotificationLogs())
+    } else {
+      setTestSmsStatus(`Failed: ${res.error || 'Network error'}`)
+    }
+  }
+
+  const handleClearLogs = () => {
+    if (window.confirm('Clear all notification audit logs?')) {
+      clearNotificationLogs()
+      setNotificationLogs([])
+    }
+  }
 
   const handleLogoutClick = () => {
     logout()
     if (onLogout) onLogout()
   }
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoginError('')
-
-    if (email === 'admin@sinagcatering.ph' && password === 'admin') {
-      login(email, 'Administrator', 'admin')
-    } else {
-      setLoginError('Invalid credentials. Use admin@sinagcatering.ph / admin')
-    }
+    const result = await signIn(email, password)
+    if (result.error) setLoginError(result.error)
+    else if (result.user?.role !== 'admin') setLoginError('This account does not have administrator access.')
   }
 
   // Analytics Computations
@@ -130,7 +170,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       if (b.bookingStatus === 'confirmed' && b.paymentStatus === 'fully_paid') {
         totalRevenue += b.totalPrice
       } else if (b.bookingStatus === 'confirmed' && b.paymentStatus === 'downpayment_paid') {
-        totalRevenue += b.downpaymentAmount || (b.totalPrice * 0.5)
+        const paidAmount = b.downpaymentAmount || (b.totalPrice * 0.5)
+        totalRevenue += paidAmount
       }
 
       // Status counts
@@ -157,8 +198,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       }
     })
 
-    const totalValidBookings = Math.max(1, confirmedCount + pendingCount)
-    const avgBookingValue = bookings.length > 0 ? totalRevenue / totalValidBookings : 0
+    const phpValidBookings = Math.max(1, bookings.filter((booking) =>
+      (booking.currency ?? 'PHP') === 'PHP' && ['confirmed', 'pending'].includes(booking.bookingStatus),
+    ).length)
+    const avgBookingValue = totalRevenue / phpValidBookings
 
     // Most popular date
     let mostPopularDate = 'None'
@@ -243,38 +286,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const handleApproveBooking = (booking: Booking) => {
     setDownpaymentBooking(booking)
     setDownpaymentAmount(booking.totalPrice * 0.5)
-
-    // Set deadline to 7 days from now
-    const deadline = new Date()
-    deadline.setDate(deadline.getDate() + 7)
-    setDownpaymentDeadline(deadline.toISOString().split('T')[0])
-
     setShowDownpaymentModal(true)
   }
 
-  // Process downpayment confirmation
+  // Process downpayment confirmation & verification
   const handleConfirmDownpayment = () => {
     if (!downpaymentBooking) return
 
-    // Update booking status to confirmed
-    updateBookingStatus(downpaymentBooking.id, 'confirmed')
-
-    // Update payment status to downpayment_paid
-    updatePaymentStatus(downpaymentBooking.id, 'downpayment_paid', downpaymentAmount)
-
-    // Block the date automatically
-    blockDate(downpaymentBooking.eventDate)
-
-    // Notify the user
-    notifyUsers(
-      [downpaymentBooking.email],
-      'Booking Confirmed - Downpayment Received',
-      `Your booking for ${downpaymentBooking.eventDate} has been confirmed. Your downpayment of PHP ${downpaymentAmount.toLocaleString()} has been received. We look forward to serving you!`
-    )
+    // Update booking status to confirmed and payment to downpayment_paid, block date, and trigger real alerts
+    verifyDownpaymentBooking(downpaymentBooking.id, downpaymentAmount)
 
     setShowDownpaymentModal(false)
+    setShowBookingModal(false)
     setDownpaymentBooking(null)
-    alert('Booking confirmed! Date has been blocked and client has been notified.')
+    alert(`Downpayment verified & booking confirmed! Date (${downpaymentBooking.eventDate}) is officially locked, and Semaphore SMS/Email confirmation alert has been dispatched to ${downpaymentBooking.phone}.`)
   }
 
   // Handle booking rejection
@@ -429,7 +454,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         items: [
           { id: 'staff', label: 'Staff Roster', icon: <Users size={18} />, badge: staff.length },
           { id: 'reviews', label: 'Reviews Moderation', icon: <Star size={18} />, badge: reviews.length },
+        ],
+      },
+      {
+        group: 'COMMUNICATIONS',
+        items: [
           { id: 'inquiries', label: 'Inquiry Inbox', icon: <MessageSquare size={18} />, badge: inquiries.filter(i => !i.replied).length },
+          { id: 'notifications', label: 'SMS & Email Alerts', icon: <Send size={18} /> },
         ],
       },
     ]
@@ -557,8 +588,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                 <div className="kpi-card">
                   <div className="kpi-icon-box"><DollarSign size={24} /></div>
                   <div>
-                    <div className="kpi-val">PHP {analyticsData.totalRevenue.toLocaleString()}</div>
-                    <div className="kpi-lbl" style={{ fontSize: '0.82rem', color: '#64748B' }}>Total Gross Revenue</div>
+                    <div className="kpi-val">{formatMoney(analyticsData.totalRevenue, 'PHP')}</div>
+                    <div className="kpi-lbl" style={{ fontSize: '0.82rem', color: '#64748B' }}>Gross PHP Revenue</div>
                   </div>
                 </div>
 
@@ -589,8 +620,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                 <div className="kpi-card">
                   <div className="kpi-icon-box" style={{ color: '#3B82F6', background: '#DBEAFE' }}><TrendingUp size={24} /></div>
                   <div>
-                    <div className="kpi-val">PHP {analyticsData.avgBookingValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
-                    <div className="kpi-lbl" style={{ fontSize: '0.82rem', color: '#64748B' }}>Avg. Booking Value</div>
+                    <div className="kpi-val">{formatMoney(analyticsData.avgBookingValue, 'PHP')}</div>
+                    <div className="kpi-lbl" style={{ fontSize: '0.82rem', color: '#64748B' }}>Avg. PHP Booking Value</div>
                   </div>
                 </div>
 
@@ -616,10 +647,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   </div>
                   <div className="admin-chart-body">
                     {(() => {
-                      const confirmedRev = bookings.filter(b => b.bookingStatus === 'confirmed' && b.paymentStatus === 'fully_paid').reduce((s, b) => s + b.totalPrice, 0)
-                      const downpaymentRev = bookings.filter(b => b.bookingStatus === 'confirmed' && b.paymentStatus === 'downpayment_paid').reduce((s, b) => s + (b.downpaymentAmount || b.totalPrice * 0.5), 0)
-                      const pendingRev = bookings.filter(b => b.bookingStatus === 'pending').reduce((s, b) => s + b.totalPrice, 0)
-                      const cancelledRev = bookings.filter(b => b.bookingStatus === 'cancelled' || b.bookingStatus === 'forfeit').reduce((s, b) => s + b.totalPrice, 0)
+                      const phpBookings = bookings.filter((booking) => (booking.currency ?? 'PHP') === 'PHP')
+                      const confirmedRev = phpBookings.filter(b => b.bookingStatus === 'confirmed' && b.paymentStatus === 'fully_paid').reduce((s, b) => s + b.totalPrice, 0)
+                      const downpaymentRev = phpBookings.filter(b => b.bookingStatus === 'confirmed' && b.paymentStatus === 'downpayment_paid').reduce((s, b) => s + (b.downpaymentAmount || b.totalPrice * 0.5), 0)
+                      const pendingRev = phpBookings.filter(b => b.bookingStatus === 'pending').reduce((s, b) => s + b.totalPrice, 0)
+                      const cancelledRev = phpBookings.filter(b => b.bookingStatus === 'cancelled' || b.bookingStatus === 'forfeit').reduce((s, b) => s + b.totalPrice, 0)
                       const maxRev = Math.max(confirmedRev, downpaymentRev, pendingRev, cancelledRev, 1)
                       const bars = [
                         { label: 'Fully Paid', value: confirmedRev, color: '#10B981', bg: '#D1FAE5' },
@@ -644,7 +676,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                   }}
                                 />
                               </div>
-                              <span className="admin-bar-value">PHP {bar.value.toLocaleString()}</span>
+                              <span className="admin-bar-value">{formatMoney(bar.value, 'PHP')}</span>
                             </div>
                           ))}
                         </div>
@@ -792,7 +824,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                           <div style={{ fontSize: '0.8rem', color: '#64748B' }}>{b.eventType} · {b.guestCount} guests · {b.eventDate}</div>
                         </div>
                         <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#0F172A' }}>PHP {b.totalPrice.toLocaleString()}</div>
+                          <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#0F172A' }}>{formatMoney(b.totalPrice, b.currency)}</div>
                           <span className={`admin-status-pill admin-status-${b.bookingStatus}`}>
                             {b.bookingStatus === 'forfeit' ? 'Forfeited' : b.bookingStatus}
                           </span>
@@ -849,7 +881,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                           <div><strong>{b.eventType}</strong> ({b.guestCount} pax)</div>
                           <div style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>{b.eventDate}</div>
                         </td>
-                        <td className="font-number" style={{ fontWeight: 700 }}>PHP {b.totalPrice.toLocaleString()}</td>
+                        <td className="font-number" style={{ fontWeight: 700 }}>{formatMoney(b.totalPrice, b.currency)}</td>
                         <td>
                           <div style={{ display: 'flex', gap: '6px', flexDirection: 'column' }}>
                             <span className={`status-pill ${b.paymentStatus === 'fully_paid' ? 'confirmed' : b.paymentStatus === 'downpayment_paid' ? 'pending' : 'cancelled'}`}>
@@ -857,7 +889,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                             </span>
                             {b.paymentStatus === 'downpayment_paid' && b.downpaymentAmount && (
                               <span style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>
-                                PHP {b.downpaymentAmount.toLocaleString()}
+                                {formatMoney(b.downpaymentAmount, b.currency)}
                               </span>
                             )}
                           </div>
@@ -882,9 +914,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                 <button
                                   onClick={() => handleApproveBooking(b)}
                                   className="btn-submit-primary"
-                                  style={{ padding: '6px 12px', fontSize: '0.75rem' }}
+                                  style={{ padding: '6px 12px', fontSize: '0.75rem', background: '#10B981' }}
                                 >
-                                  <Check size={14} /> Approve
+                                  <Check size={14} /> Verify & Approve
                                 </button>
                                 <button
                                   onClick={() => handleRejectBooking(b.id)}
@@ -1162,13 +1194,50 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     <p style={{ margin: '0 0 4px' }}><strong>Tier:</strong> {selectedBooking.packageName}</p>
                     <p style={{ margin: '0 0 4px' }}><strong>Date:</strong> {selectedBooking.eventDate}</p>
                     <p style={{ margin: '0 0 4px' }}><strong>Attendees:</strong> {selectedBooking.guestCount} pax</p>
-                    <p style={{ margin: '0 0 4px' }}><strong>Total Price:</strong> PHP {selectedBooking.totalPrice.toLocaleString()}</p>
-                    <p style={{ margin: '0 0 16px' }}><strong>Payment Status:</strong> {selectedBooking.paymentStatus.replace('_', ' ')}</p>
+                    <p style={{ margin: '0 0 4px' }}><strong>Total Price:</strong> {formatMoney(selectedBooking.totalPrice, selectedBooking.currency)}</p>
+                    <p style={{ margin: '0 0 10px' }}><strong>Payment Status:</strong> {selectedBooking.paymentStatus.replace('_', ' ')}</p>
+
+                    {/* Checklist Item 8: Payment Verification Details (GCash Ref & Proof) */}
+                    <div style={{ background: 'var(--paper-warm)', padding: '12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--line)', marginBottom: '16px' }}>
+                      <div style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '6px' }}>
+                        Payment Verification Details
+                      </div>
+                      <p style={{ margin: '0 0 6px', fontSize: '0.85rem' }}>
+                        <strong>Method:</strong> {selectedBooking.paymentMethod === 'bank_transfer' ? 'Bank Transfer' : 'QR Ph / GCash'}
+                      </p>
+                      {selectedBooking.gcashRefNumber ? (
+                        <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', padding: '8px 12px', borderRadius: '6px', color: '#1E40AF', fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: selectedBooking.proofOfPaymentUrl ? '8px' : 0 }}>
+                          <span>REF: {selectedBooking.gcashRefNumber}</span>
+                          <span style={{ fontSize: '0.7rem', fontWeight: 600, background: '#DBEAFE', padding: '2px 6px', borderRadius: '4px' }}>GCash Ref</span>
+                        </div>
+                      ) : (
+                        <p style={{ margin: '0 0 6px', fontSize: '0.8rem', color: 'var(--muted)' }}>
+                          <em>No GCash reference submitted</em>
+                        </p>
+                      )}
+                      {selectedBooking.proofOfPaymentUrl && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px' }}>
+                          <img
+                            src={selectedBooking.proofOfPaymentUrl}
+                            alt="Receipt"
+                            style={{ width: '42px', height: '42px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--line)' }}
+                          />
+                          <a
+                            href={selectedBooking.proofOfPaymentUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ fontSize: '0.8rem', color: 'var(--terracotta)', fontWeight: 600, textDecoration: 'underline' }}
+                          >
+                            View Receipt Proof ↗
+                          </a>
+                        </div>
+                      )}
+                    </div>
 
                     {selectedBooking.bookingStatus === 'pending' && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        <button onClick={() => handleApproveBooking(selectedBooking)} className="btn-submit-primary">
-                          <ShieldCheck size={16} /> Approve & Request Downpayment
+                        <button onClick={() => handleApproveBooking(selectedBooking)} className="btn-submit-primary" style={{ background: '#10B981' }}>
+                          <ShieldCheck size={16} /> VERIFY DOWNPAYMENT & APPROVE BOOKING
                         </button>
                         <button onClick={() => handleRejectBooking(selectedBooking.id)} className="btn-nav-logout" style={{ color: 'var(--terracotta)' }}>
                           Reject Request
@@ -1231,25 +1300,251 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             </div>
           )}
 
-          {/* DOWNPAYMENT MODAL */}
+          {/* Tab 6: SMS & Email Notifications (Item 9) */}
+          {activeTab === 'notifications' && (
+            <div className="data-table-card" style={{ padding: '36px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
+                <div>
+                  <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.6rem', margin: '0 0 6px' }}>
+                    Semaphore SMS & Transactional Notification Hub
+                  </h3>
+                  <p style={{ color: 'var(--muted)', fontSize: '0.9rem', margin: 0 }}>
+                    Monitor real-time SMS dispatches (booking confirmations, downpayment verification alerts, OTPs) and email triggers.
+                  </p>
+                </div>
+                <button onClick={handleClearLogs} className="btn-nav-logout" style={{ fontSize: '0.78rem' }}>
+                  <Trash size={14} /> Clear Audit Logs
+                </button>
+              </div>
+
+              {/* Server-side Semaphore dispatch and explicit test send */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 0.9fr', gap: '24px', marginBottom: '32px' }}>
+                {/* Server-side Semaphore configuration */}
+                <div style={{ background: 'var(--paper-warm)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--line)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                    <ShieldCheck size={18} style={{ color: 'var(--gold-dark)' }} />
+                    <strong style={{ fontSize: '0.95rem' }}>Semaphore SMS Gateway</strong>
+                  </div>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--muted)', margin: '0 0 14px' }}>
+                    SMS requests are sent through a Supabase Edge Function. Store the Semaphore API key as a server secret; it is never saved in this browser.
+                  </p>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+                    Mode: <strong>{isSupabaseConfigured ? 'Supabase function required for delivery' : 'Simulated preview mode'}</strong>
+                  </div>
+                </div>
+
+                {/* Dispatch Test SMS Form */}
+                <form onSubmit={handleSendTestSms} style={{ background: 'var(--paper-warm)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--line)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                    <Send size={18} style={{ color: 'var(--terracotta)' }} />
+                    <strong style={{ fontSize: '0.95rem' }}>Send Test SMS</strong>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '10px', marginBottom: '12px' }}>
+                    <div>
+                      <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Recipient Mobile</label>
+                      <input
+                        type="tel"
+                        className="input-field"
+                        placeholder="0928 714 4597"
+                        value={testSmsPhone}
+                        onChange={(e) => setTestSmsPhone(e.target.value)}
+                        style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Message Body</label>
+                      <input
+                        type="text"
+                        className="input-field"
+                        value={testSmsMsg}
+                        onChange={(e) => setTestSmsMsg(e.target.value)}
+                        style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <button
+                      type="submit"
+                      disabled={isSendingTestSms}
+                      className="btn-submit-primary"
+                      style={{ width: 'auto', padding: '8px 18px', fontSize: '0.78rem' }}
+                    >
+                      {isSendingTestSms ? 'Dispatching...' : 'Dispatch Test SMS'}
+                    </button>
+                    {testSmsStatus && (
+                      <span style={{ fontSize: '0.78rem', color: testSmsStatus.includes('Failed') ? 'var(--terracotta)' : '#10B981', fontWeight: 600 }}>
+                        {testSmsStatus}
+                      </span>
+                    )}
+                  </div>
+                </form>
+              </div>
+
+              {/* Notification Audit Log Register */}
+              <h4 style={{ fontSize: '0.85rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '16px' }}>
+                Dispatched Payload Activity Log ({notificationLogs.length} events):
+              </h4>
+
+              {notificationLogs.length === 0 ? (
+                <div style={{ padding: '32px', textAlign: 'center', background: 'var(--paper-warm)', borderRadius: 'var(--radius-md)', color: 'var(--muted)', fontSize: '0.88rem' }}>
+                  No notification events recorded yet. Perform a client registration, booking submission, or downpayment verification to view live events!
+                </div>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '2px solid var(--line)', textAlign: 'left', color: 'var(--muted)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+                        <th style={{ padding: '10px' }}>Channel</th>
+                        <th style={{ padding: '10px' }}>Recipient</th>
+                        <th style={{ padding: '10px' }}>Message Payload</th>
+                        <th style={{ padding: '10px' }}>Status</th>
+                        <th style={{ padding: '10px' }}>Time</th>
+                        <th style={{ padding: '10px' }}>Ref</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {notificationLogs.map((log) => (
+                        <tr key={log.id} style={{ borderBottom: '1px solid var(--line)' }}>
+                          <td style={{ padding: '10px' }}>
+                            <span style={{
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontSize: '0.72rem',
+                              fontWeight: 700,
+                              background: log.type === 'sms' ? '#FEF3C7' : '#DBEAFE',
+                              color: log.type === 'sms' ? '#D97706' : '#2563EB',
+                            }}>
+                              {log.provider}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px', fontWeight: 600 }}>{log.recipient}</td>
+                          <td style={{ padding: '10px', maxWidth: '380px' }}>
+                            {log.subject && <strong style={{ display: 'block', color: 'var(--ink)' }}>{log.subject}</strong>}
+                            <span style={{ color: 'var(--ink-light)', fontSize: '0.82rem', whiteSpace: 'pre-wrap' }}>{log.message}</span>
+                          </td>
+                          <td style={{ padding: '10px' }}>
+                            <span style={{
+                              padding: '2px 8px',
+                              borderRadius: '12px',
+                              fontSize: '0.72rem',
+                              fontWeight: 700,
+                              background: log.status === 'sent' ? '#D1FAE5' : log.status === 'simulated' ? '#EFF6FF' : '#FEE2E2',
+                              color: log.status === 'sent' ? '#059669' : log.status === 'simulated' ? '#2563EB' : '#DC2626',
+                            }}>
+                              {log.status === 'sent' ? 'Delivered' : log.status === 'simulated' ? 'Simulated Live' : 'Failed'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px', color: 'var(--muted)', fontSize: '0.75rem' }}>
+                            {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </td>
+                          <td style={{ padding: '10px', color: 'var(--muted)', fontSize: '0.72rem' }}>
+                            {log.referenceId || '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* DOWNPAYMENT VERIFICATION & APPROVAL MODAL (Item 8) */}
           {showDownpaymentModal && downpaymentBooking && (
             <div className="modal-overlay">
-              <div className="modal-card" style={{ maxWidth: '500px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                  <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.6rem', margin: 0 }}>Request Downpayment</h3>
+              <div className="modal-card" style={{ maxWidth: '560px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+                  <div>
+                    <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.6rem', margin: '0 0 4px' }}>
+                      Verify Downpayment & Approve Booking
+                    </h3>
+                    <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--muted)' }}>
+                      Manual Payment Verification Workflow: Cross-check client payment against phone notifications.
+                    </p>
+                  </div>
                   <button onClick={() => { setShowDownpaymentModal(false); setDownpaymentBooking(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
                     <X size={20} />
                   </button>
                 </div>
 
-                <div style={{ marginBottom: '20px' }}>
-                  <p><strong>Client:</strong> {downpaymentBooking.customerName}</p>
-                  <p><strong>Event:</strong> {downpaymentBooking.eventType} on {downpaymentBooking.eventDate}</p>
-                  <p><strong>Total:</strong> PHP {downpaymentBooking.totalPrice.toLocaleString()}</p>
+                {/* Event & Client Details */}
+                <div style={{ background: 'var(--paper-warm)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--line)', marginBottom: '18px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '0.88rem', marginBottom: '10px' }}>
+                    <div>
+                      <span style={{ color: 'var(--muted)', fontSize: '0.75rem', textTransform: 'uppercase', display: 'block' }}>Client Name</span>
+                      <strong>{downpaymentBooking.customerName}</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--muted)', fontSize: '0.75rem', textTransform: 'uppercase', display: 'block' }}>Mobile (Check Phone SMS)</span>
+                      <strong>{downpaymentBooking.phone}</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--muted)', fontSize: '0.75rem', textTransform: 'uppercase', display: 'block' }}>Event Schedule</span>
+                      <strong>{downpaymentBooking.eventDate} ({downpaymentBooking.eventType})</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--muted)', fontSize: '0.75rem', textTransform: 'uppercase', display: 'block' }}>Payment Method</span>
+                      <strong>{downpaymentBooking.paymentMethod === 'bank_transfer' ? 'Bank Transfer' : 'QR Ph / GCash'}</strong>
+                    </div>
+                    <div style={{ gridColumn: 'span 2' }}>
+                      <span style={{ color: 'var(--muted)', fontSize: '0.75rem', textTransform: 'uppercase', display: 'block' }}>Total Estimate</span>
+                      <strong>{formatMoney(downpaymentBooking.totalPrice, downpaymentBooking.currency)}</strong>
+                    </div>
+                  </div>
+
+                  {/* Checklist Item 8: Client GCash Reference Number Display */}
+                  <div style={{ borderTop: '1px solid var(--line)', paddingTop: '12px', marginTop: '12px' }}>
+                    <span style={{ color: 'var(--muted)', fontSize: '0.75rem', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>
+                      Client's GCash / QR Ph Reference Number:
+                    </span>
+                    {downpaymentBooking.gcashRefNumber ? (
+                      <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', padding: '10px 14px', borderRadius: '8px', color: '#1E40AF', fontSize: '1.05rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span>REF: {downpaymentBooking.gcashRefNumber}</span>
+                        <span style={{ fontSize: '0.75rem', fontWeight: 600, background: '#DBEAFE', padding: '2px 8px', borderRadius: '4px' }}>Match with GCash SMS</span>
+                      </div>
+                    ) : (
+                      <div style={{ background: '#FEF3C7', color: '#D97706', padding: '8px 12px', borderRadius: '6px', fontSize: '0.82rem' }}>
+                        No reference number entered during initial request. Please verify via client name: <strong>{downpaymentBooking.customerName}</strong>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Checklist Item 8: Uploaded Receipt Preview */}
+                  {downpaymentBooking.proofOfPaymentUrl && (
+                    <div style={{ borderTop: '1px solid var(--line)', paddingTop: '12px', marginTop: '12px' }}>
+                      <span style={{ color: 'var(--muted)', fontSize: '0.75rem', textTransform: 'uppercase', display: 'block', marginBottom: '6px' }}>
+                        Uploaded Payment Receipt Proof:
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <img
+                          src={downpaymentBooking.proofOfPaymentUrl}
+                          alt="Receipt Proof"
+                          style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--line)' }}
+                        />
+                        <div>
+                          <a
+                            href={downpaymentBooking.proofOfPaymentUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ fontSize: '0.82rem', color: 'var(--terracotta)', fontWeight: 600, textDecoration: 'underline' }}
+                          >
+                            Open Full Resolution Receipt Image ↗
+                          </a>
+                          <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)' }}>
+                            Uploaded by client for verification
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                <div className="form-group">
-                  <label>Downpayment Amount (50% of total)</label>
+                <div className="form-group" style={{ marginBottom: '14px' }}>
+                  <label>Verified Downpayment Amount (PHP)</label>
                   <input
                     type="number"
                     className="input-field"
@@ -1257,23 +1552,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     onChange={(e) => setDownpaymentAmount(Number(e.target.value))}
                     required
                   />
+                  <span style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '2px' }}>
+                    Required 50% amount: {formatMoney(downpaymentBooking.totalPrice * 0.5, downpaymentBooking.currency)}
+                  </span>
                 </div>
 
-                <div className="form-group">
-                  <label>Payment Deadline</label>
-                  <input
-                    type="date"
-                    className="input-field"
-                    value={downpaymentDeadline}
-                    onChange={(e) => setDownpaymentDeadline(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div style={{ background: 'var(--paper-warm)', padding: '16px', borderRadius: 'var(--radius-md)', marginBottom: '20px', border: '1px solid var(--line)' }}>
-                  <p style={{ margin: 0, fontSize: '0.85rem' }}>
-                    <AlertTriangle size={16} style={{ color: 'var(--gold)', verticalAlign: 'middle', marginRight: '8px' }} />
-                    <strong>Note:</strong> The selected date will be blocked once you confirm. The client will be notified with payment instructions.
+                <div style={{ background: '#ECFDF5', padding: '12px 16px', borderRadius: 'var(--radius-md)', marginBottom: '20px', border: '1px solid #A7F3D0' }}>
+                  <p style={{ margin: 0, fontSize: '0.82rem', color: '#065F46' }}>
+                    <ShieldCheck size={16} style={{ color: '#059669', verticalAlign: 'middle', marginRight: '6px' }} />
+                    <strong>Admin Verification Confirmation:</strong> Clicking the button below confirms that you received the funds. The date will be officially locked, and a real-time Semaphore SMS and Email confirmation will be triggered to the client.
                   </p>
                 </div>
 
@@ -1285,12 +1572,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   >
                     Cancel
                   </button>
+                  {/* Checklist Item 8: Renamed Button Action */}
                   <button
                     onClick={handleConfirmDownpayment}
                     className="btn-submit-primary"
-                    style={{ flex: 2 }}
+                    style={{ flex: 2, background: '#10B981', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
                   >
-                    <Check size={16} /> Confirm & Block Date
+                    <ShieldCheck size={16} /> VERIFY DOWNPAYMENT & APPROVE BOOKING
                   </button>
                 </div>
               </div>

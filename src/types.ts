@@ -2,6 +2,7 @@ export interface User {
   id: string
   name: string
   email: string
+  phone?: string
   role: 'client' | 'admin'
 }
 
@@ -9,6 +10,7 @@ export interface AddOnItem {
   extraMainCount: number
   extraPastaCount: number
   extraDessertCount: number
+  selectedAddonIds?: string[]
 }
 
 export interface Booking {
@@ -18,9 +20,12 @@ export interface Booking {
   email: string
   phone: string
   eventType: string
+  customEventType?: string
   eventDate: string
   guestCount: number
   packageName: string
+  packageId?: string
+  currency?: 'PHP'
   basePrice: number
   extraPaxFee: number
   addOns: AddOnItem
@@ -28,6 +33,8 @@ export interface Booking {
   downpaymentAmount?: number
   bookingStatus: 'pending' | 'approved' | 'confirmed' | 'cancelled' | 'forfeit'
   paymentStatus: 'unpaid' | 'pending_verification' | 'partially_paid' | 'downpayment_paid' | 'fully_paid'
+  paymentMethod?: 'qrph' | 'gcash' | 'maya' | 'bank_transfer' | 'paymongo'
+  gcashRefNumber?: string
   proofOfPaymentUrl: string | null
   staffIds: string[]
   notes: string
@@ -59,4 +66,16 @@ export interface Inquiry {
   replied: boolean
   replyText: string | null
   date: string
+}
+
+export interface NotificationLog {
+  id: string
+  type: 'sms' | 'email'
+  recipient: string
+  subject?: string
+  message: string
+  status: 'sent' | 'failed' | 'simulated'
+  timestamp: string
+  provider: 'Semaphore' | 'Email'
+  referenceId?: string
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Bot, Clock3, LogOut, Mail, MapPin, Menu, Phone, Sparkles, User, X } from 'lucide-react'
 import './App.css'
 import { AppProvider, useApp } from './context/AppContext'
@@ -9,22 +9,60 @@ import { ClientPortal } from './views/ClientPortal'
 import { LandingPage } from './views/LandingPage'
 import { LoginPage } from './views/LoginPage'
 import { LoginModal } from './components/LoginModal'
+import type { AIFormData } from './lib/ai'
+import { supabase } from './lib/supabase'
 
 type ViewName = 'landing' | 'login' | 'client' | 'admin' | 'booking'
 
 function AppContent() {
-  const { currentUser, logout } = useApp()
+  const { currentUser, logout, updatePaymentStatus } = useApp()
   const [activeView, setActiveView] = useState<ViewName>(() => (currentUser?.role === 'admin' ? 'admin' : 'landing'))
   const [isChatOpen, setIsChatOpen] = useState(false)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
-  const [aiBookingPreset, setAiBookingPreset] = useState<{ pkgId?: string; guestCount?: number } | null>(null)
+  const [aiBookingPreset, setAiBookingPreset] = useState<AIFormData | null>(null)
+  const [paymongoNotice, setPaymongoNotice] = useState(() =>
+    new URLSearchParams(window.location.search).get('paymongo') === 'cancelled'
+      ? 'Checkout was cancelled. Your booking request remains unpaid.'
+      : '',
+  )
 
   const navigateTo = (view: ViewName) => {
     setActiveView(view)
     setIsMobileMenuOpen(false)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const result = params.get('paymongo')
+    const bookingId = params.get('booking')
+    if (!result) return
+
+    params.delete('paymongo')
+    params.delete('booking')
+    const query = params.toString()
+    window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
+
+    if (result === 'cancelled') {
+      return
+    }
+    if (result !== 'success' || !bookingId || !supabase) return
+
+    let active = true
+    void supabase.functions.invoke('verify-paymongo-payment', { body: { bookingId } }).then(({ data, error }) => {
+      if (!active) return
+      if (error || data?.paid !== true) {
+        setPaymongoNotice('Payment is still awaiting PayMongo confirmation. Refresh this page in a moment to check again.')
+        return
+      }
+      updatePaymentStatus(bookingId, 'downpayment_paid', Number(data.downpayment_amount))
+      setPaymongoNotice('PayMongo confirmed your downpayment. Your booking is awaiting the catering team’s final confirmation.')
+    }).catch(() => {
+      if (active) setPaymongoNotice('Payment verification is temporarily unavailable. Your payment was not marked as confirmed.')
+    })
+    return () => { active = false }
+  }, [updatePaymentStatus])
 
   const handleNavigateHome = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -41,8 +79,8 @@ function AppContent() {
     }
   }
 
-  const handleApplyAiRecommendation = (pkgId: string, guestCount: number) => {
-    setAiBookingPreset({ pkgId, guestCount })
+  const handleApplyAiRecommendation = (formData: AIFormData) => {
+    setAiBookingPreset(formData)
     if (!currentUser) {
       setIsAuthModalOpen(true)
     } else if (currentUser.role === 'admin') {
@@ -89,6 +127,12 @@ function AppContent() {
         <Sparkles size={14} style={{ color: 'var(--gold)' }} />
         <span>SINAG'S CATERING SERVICES - KIDS PARTY BOOKING, SCHEDULING, AND AI PACKAGE RECOMMENDATIONS</span>
       </div>
+
+      {paymongoNotice && (
+        <div className="alert-box success" role="status" style={{ margin: '12px auto', maxWidth: '1200px' }}>
+          {paymongoNotice}
+        </div>
+      )}
 
       <nav className="site-nav" aria-label="Primary navigation">
         <a href="#top" className="brand" onClick={handleNavigateHome}>
@@ -153,8 +197,7 @@ function AppContent() {
             <BookingWizard
               onComplete={() => navigateTo('client')}
               onBack={() => navigateTo('landing')}
-              initialPkgId={aiBookingPreset?.pkgId}
-              initialGuestCount={aiBookingPreset?.guestCount}
+              initialAIFormData={aiBookingPreset ?? undefined}
             />
           )}
         </div>
@@ -219,7 +262,7 @@ function AppContent() {
 
         <div className="footer-bottom-strip">
           <span>&copy; {new Date().getFullYear()} Sinag's Catering Services. Planning and event coordination.</span>
-          <span>Philippine Peso (PHP) package estimates</span>
+          <span>Package estimates in PHP</span>
         </div>
       </footer>
     </main>
