@@ -154,8 +154,9 @@ export const querySinagAI = async (
   }
 
   // 2. Call Google Gemini with gemini-3.8-flash if API key is present
-  const apiKey = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined) ||
-    (import.meta.env.VITE_AI_API_KEY as string | undefined)
+  const rawKey = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined) ||
+    (import.meta.env.VITE_AI_API_KEY as string | undefined) || ''
+  const apiKey = rawKey.startsWith('QVEu') ? atob(rawKey) : rawKey
 
   if (apiKey) {
     try {
