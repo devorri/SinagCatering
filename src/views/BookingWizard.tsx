@@ -67,9 +67,9 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   // Step 2 — Customization (Pure Manual Customization)
   const [guestCount, setGuestCount] = useState(initialAIFormData?.guest_count || 70)
   const [selectedAIAddonIds, setSelectedAIAddonIds] = useState<string[]>(initialAIFormData?.addons ?? [])
-  const [extraMain, setExtraMain] = useState(0)
-  const [extraPasta, setExtraPasta] = useState(0)
-  const [extraDessert, setExtraDessert] = useState(0)
+  const [extraMain, setExtraMain] = useState(initialAIFormData?.extra_main_count || 0)
+  const [extraPasta, setExtraPasta] = useState(initialAIFormData?.extra_pasta_count || 0)
+  const [extraDessert, setExtraDessert] = useState(initialAIFormData?.extra_dessert_count || 0)
 
   // Step 3 — Calendar
   const [eventDate, setEventDate] = useState('')
@@ -83,7 +83,33 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const [eventType, setEventType] = useState<'Kids Birthday' | 'Debut' | 'Wedding' | 'Others (Please Specify)'>('Kids Birthday')
   const [customEventType, setCustomEventType] = useState('')
   const [selectedGalleryPhotoIndex, setSelectedGalleryPhotoIndex] = useState(0)
-  const [notes, setNotes] = useState('')
+  const [notes, setNotes] = useState(initialAIFormData?.notes || '')
+
+  // Reactively auto-fill and advance wizard whenever an AI recommendation is applied
+  React.useEffect(() => {
+    if (initialAIFormData) {
+      if (initialAIFormData.package_id) {
+        const idx = SINAG_PACKAGES.findIndex((p) => p.id === initialAIFormData.package_id)
+        if (idx !== -1) setSelectedPkgIndex(idx)
+      }
+      if (initialAIFormData.guest_count) setGuestCount(initialAIFormData.guest_count)
+      if (initialAIFormData.addons) setSelectedAIAddonIds(initialAIFormData.addons)
+      if (initialAIFormData.extra_main_count !== undefined) setExtraMain(initialAIFormData.extra_main_count)
+      if (initialAIFormData.extra_pasta_count !== undefined) setExtraPasta(initialAIFormData.extra_pasta_count)
+      if (initialAIFormData.extra_dessert_count !== undefined) setExtraDessert(initialAIFormData.extra_dessert_count)
+      if (initialAIFormData.event_type) {
+        if (['Kids Birthday', 'Debut', 'Wedding'].includes(initialAIFormData.event_type)) {
+          setEventType(initialAIFormData.event_type as any)
+        } else {
+          setEventType('Others (Please Specify)')
+          setCustomEventType(initialAIFormData.event_type)
+        }
+      }
+      if (initialAIFormData.notes) setNotes(initialAIFormData.notes)
+      setAiAppliedBanner(true)
+      setCurrentStep(1) // Jump straight to Customize step so all fields are visibly populated
+    }
+  }, [initialAIFormData])
 
   // Step 4 — Dedicated Payment Method Section
   const [paymentMethod, setPaymentMethod] = useState<'qrph' | 'gcash' | 'maya' | 'bank_transfer' | 'paymongo'>('qrph')
@@ -300,24 +326,53 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     }
 
     if (paymentMethod === 'paymongo') {
-      if (!supabase) {
-        setErrorMsg('Supabase is not configured for secure PayMongo checkout.')
-        setIsSubmitting(false)
-        return
-      }
-
       const bookingId = `bk-${crypto.randomUUID()}`
-      const { data, error } = await supabase.functions.invoke('create-paymongo-checkout', {
-        body: { bookingId, booking: { ...bookingData, userId: currentUser?.id ?? 'guest' } },
-      })
-      if (error || typeof data?.checkout_url !== 'string') {
-        setErrorMsg(data?.error ?? error?.message ?? 'Could not start PayMongo checkout. Please try again.')
-        setIsSubmitting(false)
+      let checkoutUrl = ''
+
+      // 1. Try local server API endpoint
+      try {
+        const apiRes = await fetch('/api/paymongo/create-checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            bookingId,
+            packageName: currentPkg.name,
+            amount: calculations.downpayment,
+            guestCount,
+            eventDate,
+            email: currentUser?.email || clientEmail.trim(),
+          }),
+        })
+        const apiData = await apiRes.json()
+        if (apiRes.ok && apiData.checkout_url) {
+          checkoutUrl = apiData.checkout_url
+        }
+      } catch {
+        // Fall back to Supabase function
+      }
+
+      // 2. Fall back to Supabase function
+      if (!checkoutUrl && supabase) {
+        try {
+          const { data } = await supabase.functions.invoke('create-paymongo-checkout', {
+            body: { bookingId, booking: { ...bookingData, userId: currentUser?.id ?? 'guest' } },
+          })
+          if (typeof data?.checkout_url === 'string') {
+            checkoutUrl = data.checkout_url
+          }
+        } catch {
+          // Ignore
+        }
+      }
+
+      if (checkoutUrl) {
+        createBooking({ ...bookingData, totalPrice: calculations.totalPrice, downpaymentAmount: calculations.downpayment }, bookingId)
+        window.location.assign(checkoutUrl)
         return
       }
 
-      createBooking({ ...bookingData, totalPrice: Number(data.total_price), downpaymentAmount: Number(data.downpayment_amount) }, bookingId)
-      window.location.assign(data.checkout_url)
+      setErrorMsg('Could not initialize PayMongo checkout session. Please check your network or try another payment method.')
+      setIsSubmitting(false)
       return
     }
 

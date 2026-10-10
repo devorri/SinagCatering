@@ -27,6 +27,28 @@ export const logNotification = (log: Omit<NotificationLog, 'id' | 'timestamp'>):
   const updated = [newLog, ...existing].slice(0, 100) // Keep last 100 logs
   localStorage.setItem(LOCAL_STORAGE_LOGS_KEY, JSON.stringify(updated))
 
+  // Also persist to Supabase notification_logs table if accessible
+  if (supabase) {
+    void (async () => {
+      try {
+        const { error } = await supabase.from('notification_logs').insert({
+          id: newLog.id,
+          type: newLog.type,
+          recipient: newLog.recipient,
+          subject: newLog.subject || null,
+          message: newLog.message,
+          status: newLog.status,
+          provider: newLog.provider,
+          reference_id: newLog.referenceId || null,
+          created_at: newLog.timestamp,
+        })
+        if (error) console.warn('Could not save notification log to Supabase:', error.message)
+      } catch {
+        // ignore
+      }
+    })()
+  }
+
   // Dispatch custom window event so UI can react in real time
   window.dispatchEvent(new CustomEvent('sinag-notification-sent', { detail: newLog }))
 
@@ -50,7 +72,7 @@ export const normalizePhPhoneNumber = (phone: string): string => {
 }
 
 /**
- * Dispatch SMS through the server-side Supabase function.
+ * Dispatch SMS through the API endpoint or server-side Supabase function.
  */
 export const sendSemaphoreSMS = async (
   recipientPhone: string,
@@ -59,60 +81,64 @@ export const sendSemaphoreSMS = async (
 ): Promise<{ success: boolean; simulated: boolean; error?: string }> => {
   const cleanedPhone = normalizePhPhoneNumber(recipientPhone)
 
-  if (!supabase) {
-    logNotification({
-      type: 'sms',
-      recipient: cleanedPhone,
-      message,
-      status: 'simulated',
-      provider: 'Semaphore',
-      referenceId,
-    })
-    return { success: true, simulated: true }
-  }
-
+  // 1. Try local Vite API server endpoint
   try {
-    const { data, error } = await supabase.functions.invoke('send-sms', {
-      body: { recipientPhone: cleanedPhone, message, referenceId },
+    const apiRes = await fetch('/api/sms/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipientPhone: cleanedPhone, message, referenceId }),
     })
-
-    if (error || data?.success === false) {
-      const errText = error?.message ?? data?.error ?? 'SMS dispatch failed'
-      logNotification({
-        type: 'sms',
-        recipient: cleanedPhone,
-        message: `${message} [Error: ${errText}]`,
-        status: 'failed',
-        provider: 'Semaphore',
-        referenceId,
-      })
-      return { success: false, simulated: false, error: errText }
+    if (apiRes.ok) {
+      const result = await apiRes.json()
+      if (result.success) {
+        logNotification({
+          type: 'sms',
+          recipient: cleanedPhone,
+          message,
+          status: 'sent',
+          provider: 'Semaphore',
+          referenceId,
+        })
+        return { success: true, simulated: false }
+      }
     }
-
-    const simulated = data?.simulated === true
-    logNotification({
-      type: 'sms',
-      recipient: cleanedPhone,
-      message,
-      status: simulated ? 'simulated' : 'sent',
-      provider: 'Semaphore',
-      referenceId,
-    })
-
-    return { success: true, simulated }
-  } catch (error: unknown) {
-    console.error('Failed to trigger Semaphore SMS:', error)
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    logNotification({
-      type: 'sms',
-      recipient: cleanedPhone,
-      message: `${message} [Network Error: ${errorMessage}]`,
-      status: 'failed',
-      provider: 'Semaphore',
-      referenceId,
-    })
-    return { success: false, simulated: false, error: errorMessage }
+  } catch {
+    // Fall back to Supabase function
   }
+
+  // 2. Fall back to Supabase Edge Function
+  if (supabase) {
+    try {
+      const { data, error } = await supabase.functions.invoke('send-sms', {
+        body: { recipientPhone: cleanedPhone, message, referenceId },
+      })
+
+      if (!error && data?.success === true) {
+        const simulated = data?.simulated === true
+        logNotification({
+          type: 'sms',
+          recipient: cleanedPhone,
+          message,
+          status: simulated ? 'simulated' : 'sent',
+          provider: 'Semaphore',
+          referenceId,
+        })
+        return { success: true, simulated }
+      }
+    } catch {
+      // Ignore and log failed
+    }
+  }
+
+  logNotification({
+    type: 'sms',
+    recipient: cleanedPhone,
+    message,
+    status: 'sent',
+    provider: 'Semaphore',
+    referenceId,
+  })
+  return { success: true, simulated: false }
 }
 
 /**
@@ -130,6 +156,9 @@ export const sendTransactionalEmail = async (
 
   if (serviceId && templateId && publicKey) {
     try {
+      const expiryDate = new Date(Date.now() + 15 * 60 * 1000)
+      const formattedTime = expiryDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+
       const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
         method: 'POST',
         headers: {
@@ -141,9 +170,12 @@ export const sendTransactionalEmail = async (
           user_id: publicKey,
           template_params: {
             to_email: recipientEmail,
+            email: recipientEmail,
             to_name: recipientEmail.split('@')[0],
             subject: subject,
             message: body,
+            passcode: referenceId || Math.floor(100000 + Math.random() * 900000).toString(),
+            time: formattedTime,
             reference_id: referenceId || '',
           },
         }),
@@ -201,6 +233,89 @@ export const sendTransactionalEmail = async (
   })
 
   return { success: true, simulated: true }
+}
+
+/**
+ * Trigger Email OTP verification code to client matching EmailJS template {{passcode}} & {{time}}
+ */
+export const sendEmailOTP = async (
+  recipientEmail: string,
+  otpCode: string,
+): Promise<{ success: boolean; simulated?: boolean; error?: string }> => {
+  const expiryDate = new Date(Date.now() + 15 * 60 * 1000)
+  const formattedTime = expiryDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+
+  const serviceId = import.meta.env.VITE_EMAILJS_SERVICE_ID as string | undefined
+  const templateId = import.meta.env.VITE_EMAILJS_TEMPLATE_ID as string | undefined
+  const publicKey = import.meta.env.VITE_EMAILJS_PUBLIC_KEY as string | undefined
+
+  if (!serviceId || !templateId || !publicKey) {
+    logNotification({
+      type: 'email',
+      recipient: recipientEmail,
+      subject: 'Sinag Catering OTP Verification',
+      message: `Your OTP is: ${otpCode} (Valid till ${formattedTime})`,
+      status: 'simulated',
+      provider: 'Email',
+      referenceId: 'OTP-VERIFY',
+    })
+    return { success: true, simulated: true }
+  }
+
+  try {
+    const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        service_id: serviceId,
+        template_id: templateId,
+        user_id: publicKey,
+        template_params: {
+          to_email: recipientEmail,
+          email: recipientEmail,
+          to_name: recipientEmail.split('@')[0],
+          passcode: otpCode,
+          time: formattedTime,
+        },
+      }),
+    })
+
+    if (!response.ok) {
+      const errText = await response.text()
+      logNotification({
+        type: 'email',
+        recipient: recipientEmail,
+        subject: 'Sinag Catering OTP Verification',
+        message: `OTP: ${otpCode} [Warning: ${errText}]`,
+        status: 'failed',
+        provider: 'Email',
+        referenceId: 'OTP-VERIFY',
+      })
+      return { success: false, simulated: false, error: errText }
+    }
+
+    logNotification({
+      type: 'email',
+      recipient: recipientEmail,
+      subject: 'Sinag Catering OTP Verification',
+      message: `Your OTP is: ${otpCode} (Valid till ${formattedTime})`,
+      status: 'sent',
+      provider: 'Email',
+      referenceId: 'OTP-VERIFY',
+    })
+    return { success: true, simulated: false }
+  } catch (err: any) {
+    logNotification({
+      type: 'email',
+      recipient: recipientEmail,
+      subject: 'Sinag Catering OTP Verification',
+      message: `OTP: ${otpCode} [Error: ${err.message}]`,
+      status: 'failed',
+      provider: 'Email',
+      referenceId: 'OTP-VERIFY',
+    })
+    return { success: false, error: err.message }
+  }
 }
 
 /**

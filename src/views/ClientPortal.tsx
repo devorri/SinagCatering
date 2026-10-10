@@ -71,11 +71,49 @@ export const ClientPortal: React.FC = () => {
     setPasswordInput('')
   }
 
-  const handleMockPaymentUpload = (bookingId: string) => {
-    const mockReceipt = 'https://images.unsplash.com/photo-1627856013091-fed6e4e30025?w=500&auto=format&fit=crop&q=60'
-    const ref = paymentRefInput.trim() || `GCASH-${Math.floor(100000000 + Math.random() * 900000000)}`
-    uploadPayment(bookingId, mockReceipt, ref)
+  const [uploadedReceipt, setUploadedReceipt] = useState<string | null>(null)
+  const [isProcessingPayMongo, setIsProcessingPayMongo] = useState<string | null>(null)
+
+  const handlePaymentUpload = (bookingId: string) => {
+    const ref = paymentRefInput.trim()
+    if (!ref && !uploadedReceipt) {
+      alert('Please enter your reference number or choose a receipt screenshot.')
+      return
+    }
+    const finalRef = ref || `REF-${Date.now().toString().slice(-8)}`
+    uploadPayment(bookingId, uploadedReceipt || '', finalRef)
     setPaymentRefInput('')
+    setUploadedReceipt(null)
+  }
+
+  const handlePayMongoCheckout = async (booking: Booking) => {
+    setIsProcessingPayMongo(booking.id)
+    const downpaymentReq = booking.downpaymentAmount || Math.round(booking.totalPrice * 0.5)
+
+    try {
+      const res = await fetch('/api/paymongo/create-checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingId: booking.id,
+          packageName: booking.packageName,
+          amount: downpaymentReq,
+          guestCount: booking.guestCount,
+          eventDate: booking.eventDate,
+          email: booking.email,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok && data.checkout_url) {
+        window.location.assign(data.checkout_url)
+        return
+      }
+      alert('Could not start PayMongo session: ' + (data.error || 'Please try again'))
+    } catch {
+      alert('Network error initiating PayMongo checkout.')
+    } finally {
+      setIsProcessingPayMongo(null)
+    }
   }
 
   const openRebook = (booking: Booking) => {
@@ -104,10 +142,7 @@ export const ClientPortal: React.FC = () => {
     const nowTime = new Date().getTime()
     const diffDays = Math.ceil((eventTime - nowTime) / (1000 * 60 * 60 * 24))
 
-    let refundPercentage = 0
-    if (diffDays >= 30) refundPercentage = 100
-    else if (diffDays >= 14) refundPercentage = 50
-    else refundPercentage = 0
+    const refundPercentage = diffDays >= 30 ? 100 : diffDays >= 14 ? 50 : 0
 
     const amountPaid = booking.paymentStatus === 'fully_paid' ? booking.totalPrice : (booking.totalPrice * 0.5)
     const refundAmount = booking.paymentStatus === 'unpaid' ? 0 : amountPaid * (refundPercentage / 100)
@@ -331,30 +366,59 @@ export const ClientPortal: React.FC = () => {
                 {/* Payment Actions Box */}
                 {booking.paymentStatus === 'unpaid' && (
                   <div style={{ background: '#FFF8E6', border: '1px solid #F3E0A3', padding: '20px', borderRadius: 'var(--radius-md)', marginBottom: '20px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
-                      <AlertCircle size={24} style={{ color: 'var(--terracotta)', flexShrink: 0 }} />
-                      <div>
-                        <strong style={{ color: 'var(--ink)', display: 'block', fontSize: '1.05rem' }}>
-                          50% Downpayment Required: {formatMoney(downpaymentRequired, booking.currency)}
-                        </strong>
-                        <span style={{ fontSize: '0.88rem', color: 'var(--muted)' }}>
-                          Official GCash / QR Ph: <strong>0928 714 4597</strong> (Sinag Catering Services / Sunshine C.)
-                        </span>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '14px', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <AlertCircle size={24} style={{ color: 'var(--terracotta)', flexShrink: 0 }} />
+                        <div>
+                          <strong style={{ color: 'var(--ink)', display: 'block', fontSize: '1.05rem' }}>
+                            50% Downpayment Required: {formatMoney(downpaymentRequired, booking.currency)}
+                          </strong>
+                          <span style={{ fontSize: '0.88rem', color: 'var(--muted)' }}>
+                            Official GCash / QR Ph: <strong>0928 714 4597</strong> (Sinag Catering Services / Sunshine C.)
+                          </span>
+                        </div>
                       </div>
+
+                      <button
+                        onClick={() => handlePayMongoCheckout(booking)}
+                        disabled={isProcessingPayMongo === booking.id}
+                        className="btn-hero-primary"
+                        style={{ padding: '8px 18px', fontSize: '0.84rem' }}
+                      >
+                        {isProcessingPayMongo === booking.id ? 'Loading Checkout...' : '💳 Pay with PayMongo (Card / GCash)'}
+                      </button>
                     </div>
 
-                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                      <input
-                        type="text"
-                        className="input-field"
-                        placeholder="Enter GCash Reference No. (e.g. 902148923019)"
-                        value={paymentRefInput}
-                        onChange={(e) => setPaymentRefInput(e.target.value)}
-                        style={{ flex: 1, minWidth: '220px', padding: '10px 14px' }}
-                      />
-                      <button onClick={() => handleMockPaymentUpload(booking.id)} className="btn-submit-primary" style={{ width: 'auto', padding: '10px 20px', whiteSpace: 'nowrap' }}>
-                        Submit GCash Reference & Receipt
-                      </button>
+                    <div style={{ borderTop: '1px dashed #E5D5A5', paddingTop: '14px', marginTop: '10px' }}>
+                      <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--ink)', marginBottom: '8px' }}>
+                        Or Submit GCash / Maya Reference & Screenshot:
+                      </div>
+                      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <input
+                          type="text"
+                          className="input-field"
+                          placeholder="Enter Reference No. (e.g. 902148923019)"
+                          value={paymentRefInput}
+                          onChange={(e) => setPaymentRefInput(e.target.value)}
+                          style={{ flex: 1, minWidth: '200px', padding: '8px 12px' }}
+                        />
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0]
+                            if (file) {
+                              const reader = new FileReader()
+                              reader.onloadend = () => setUploadedReceipt(reader.result as string)
+                              reader.readAsDataURL(file)
+                            }
+                          }}
+                          style={{ fontSize: '0.8rem' }}
+                        />
+                        <button onClick={() => handlePaymentUpload(booking.id)} className="btn-submit-primary" style={{ width: 'auto', padding: '8px 18px', whiteSpace: 'nowrap' }}>
+                          Submit Payment Proof
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}
