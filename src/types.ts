@@ -11,6 +11,10 @@ export interface AddOnItem {
   extraPastaCount: number
   extraDessertCount: number
   selectedAddonIds?: string[]
+  selectedMainDishes?: string[]
+  selectedPastaDishes?: string[]
+  extraMainDishes?: string[]
+  extraPastaDishes?: string[]
 }
 
 export interface Booking {
@@ -31,12 +35,13 @@ export interface Booking {
   addOns: AddOnItem
   totalPrice: number
   downpaymentAmount?: number
-  bookingStatus: 'pending' | 'approved' | 'confirmed' | 'cancelled' | 'forfeit'
+  bookingStatus: 'pending' | 'approved' | 'confirmed' | 'completed' | 'cancelled' | 'forfeit'
   paymentStatus: 'unpaid' | 'pending_verification' | 'partially_paid' | 'downpayment_paid' | 'fully_paid'
   paymentMethod?: 'qrph' | 'gcash' | 'maya' | 'bank_transfer' | 'paymongo'
   gcashRefNumber?: string
   proofOfPaymentUrl: string | null
   staffIds: string[]
+  assignedServices?: string[]
   notes: string
   createdAt: string
 }

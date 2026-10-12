@@ -1,5 +1,26 @@
 import React, { useState } from 'react'
-import { Calendar, Trash2, Edit2, AlertCircle, FileText, CheckCircle, Printer, X, Eye, EyeOff } from 'lucide-react'
+import {
+  Calendar,
+  Trash2,
+  AlertCircle,
+  FileText,
+  CheckCircle,
+  Printer,
+  X,
+  Eye,
+  EyeOff,
+  CreditCard,
+  Copy,
+  Check,
+  UploadCloud,
+  LogOut,
+  Users,
+  Receipt,
+  Clock,
+  ArrowUpRight,
+  Lock,
+  CalendarDays,
+} from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import type { Booking } from '../types'
 import { formatMoney } from '../data/packages'
@@ -24,6 +45,7 @@ export const ClientPortal: React.FC = () => {
   const [isRegistering, setIsRegistering] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const [paymentRefInput, setPaymentRefInput] = useState('')
+  const [paymentProofError, setPaymentProofError] = useState('')
 
   // Action states
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null)
@@ -35,6 +57,23 @@ export const ClientPortal: React.FC = () => {
   // Contract/Invoice modal states
   const [showInvoiceModal, setShowInvoiceModal] = useState(false)
   const [showContractModal, setShowContractModal] = useState(false)
+
+  // Copy and upload states
+  const [copiedRefId, setCopiedRefId] = useState<string | null>(null)
+  const [copiedGcash, setCopiedGcash] = useState(false)
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null)
+
+  const handleCopyRef = (id: string) => {
+    navigator.clipboard.writeText(id)
+    setCopiedRefId(id)
+    setTimeout(() => setCopiedRefId(null), 2000)
+  }
+
+  const handleCopyGcash = (phone: string) => {
+    navigator.clipboard.writeText(phone)
+    setCopiedGcash(true)
+    setTimeout(() => setCopiedGcash(false), 2000)
+  }
 
   // Filter bookings for current logged in client
   const clientBookings = bookings.filter((b) => b.email === currentUser?.email)
@@ -76,14 +115,15 @@ export const ClientPortal: React.FC = () => {
 
   const handlePaymentUpload = (bookingId: string) => {
     const ref = paymentRefInput.trim()
-    if (!ref && !uploadedReceipt) {
-      alert('Please enter your reference number or choose a receipt screenshot.')
+    if (!ref || !uploadedReceipt) {
+      setPaymentProofError('Please provide both the payment reference number and screenshot proof before submitting.')
       return
     }
-    const finalRef = ref || `REF-${Date.now().toString().slice(-8)}`
-    uploadPayment(bookingId, uploadedReceipt || '', finalRef)
+    uploadPayment(bookingId, uploadedReceipt, ref)
     setPaymentRefInput('')
     setUploadedReceipt(null)
+    setUploadedFileName(null)
+    setPaymentProofError('')
   }
 
   const handlePayMongoCheckout = async (booking: Booking) => {
@@ -271,188 +311,428 @@ export const ClientPortal: React.FC = () => {
   // Dashboard Screen
   return (
     <div className="portal-container">
-      <header className="admin-header">
-        <div className="admin-title-group">
-          <span className="section-tag">Client Services Desk</span>
-          <h1>Mabuhay, {currentUser.name}!</h1>
-          <p style={{ color: 'var(--muted)', margin: 0 }}>Review event reservations, track payment verifications, and download invoices.</p>
+      {/* Modern Header */}
+      <header className="portal-header-modern">
+        <div>
+          <div className="portal-tag-row">
+            <span className="portal-tag-kicker">01 / CLIENT SERVICES DESK</span>
+            <span className="portal-session-pill">
+              <span className="status-dot dot-emerald" /> Active Client Session
+            </span>
+          </div>
+          <h1 className="portal-heading">
+            Mabuhay, <span className="serif-italic" style={{ fontWeight: 400 }}>{currentUser.name}</span>!
+          </h1>
+          <p className="portal-subheading">
+            Review event reservations, track payment verifications, and download official invoices.
+          </p>
         </div>
-        <button onClick={logout} className="btn-nav-logout">
-          Logout Account
-        </button>
+        <div className="portal-header-actions">
+          <button onClick={logout} className="portal-btn-ghost">
+            <LogOut size={14} />
+            <span>Sign Out</span>
+          </button>
+        </div>
       </header>
 
+      {/* Summary Stats Strip */}
+      <div className="portal-summary-strip">
+        <div className="portal-summary-card">
+          <span className="portal-summary-lbl">Total Reservations</span>
+          <div className="portal-summary-val font-number">{clientBookings.length}</div>
+          <span className="portal-summary-sub">Registered with your account</span>
+        </div>
+        <div className="portal-summary-card">
+          <span className="portal-summary-lbl">Upcoming Event Date</span>
+          <div className="portal-summary-val font-number" style={{ fontSize: '1.25rem' }}>
+            {clientBookings[0] ? clientBookings[0].eventDate : 'No scheduled event'}
+          </div>
+          <span className="portal-summary-sub">
+            {clientBookings[0] ? `${clientBookings[0].eventType} Banquet` : 'Create your reservation'}
+          </span>
+        </div>
+        <div className="portal-summary-card">
+          <span className="portal-summary-lbl">Downpayment Status</span>
+          <div className="portal-summary-val" style={{ fontSize: '1.1rem' }}>
+            {clientBookings[0]?.paymentStatus === 'fully_paid' ? (
+              <span style={{ color: '#059669', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <CheckCircle size={16} /> Fully Paid
+              </span>
+            ) : clientBookings[0]?.paymentStatus === 'pending_verification' ? (
+              <span style={{ color: '#D97706', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <Clock size={16} /> Under Verification
+              </span>
+            ) : clientBookings[0]?.paymentStatus === 'partially_paid' ? (
+              <span style={{ color: '#2563EB', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <CheckCircle size={16} /> 50% Settled
+              </span>
+            ) : (
+              <span style={{ color: '#DC2626', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <AlertCircle size={16} /> 50% Downpayment Due
+              </span>
+            )}
+          </div>
+          <span className="portal-summary-sub">
+            {clientBookings[0]?.paymentStatus === 'unpaid'
+              ? 'Required to lock calendar date'
+              : 'Reservation status active'}
+          </span>
+        </div>
+      </div>
+
       {clientBookings.length === 0 ? (
-        <div style={{ background: '#FFF', padding: '60px', borderRadius: 'var(--radius-lg)', textAlign: 'center', border: '1px solid var(--line)' }}>
-          <Calendar size={48} style={{ color: 'var(--gold)', marginBottom: '16px' }} />
-          <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.8rem', margin: '0 0 10px' }}>No Event Reservations Found</h3>
-          <p style={{ color: 'var(--muted)', maxWidth: '440px', margin: '0 auto 24px' }}>
-            You haven't requested any catering packages yet. Head over to our customizer to design your first feast!
+        <div className="portal-empty-card">
+          <Calendar size={44} style={{ color: 'var(--gold-dark)', margin: '0 auto 16px' }} />
+          <h3 style={{ fontSize: '1.5rem', margin: '0 0 10px', fontWeight: 800 }}>No Event Reservations Found</h3>
+          <p style={{ color: 'var(--muted)', maxWidth: '440px', margin: '0 auto 24px', fontSize: '0.9rem', lineHeight: 1.6 }}>
+            You haven't requested any catering packages yet. Head over to our event calculator to design your first banquet spread!
           </p>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '30px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           {clientBookings.map((booking) => {
             const downpaymentRequired = booking.totalPrice * 0.5
-            const balanceAmount = booking.paymentStatus === 'fully_paid' ? 0 : booking.paymentStatus === 'partially_paid' ? booking.totalPrice * 0.5 : booking.totalPrice
+            const balanceAmount =
+              booking.paymentStatus === 'fully_paid'
+                ? 0
+                : booking.paymentStatus === 'partially_paid'
+                ? booking.totalPrice * 0.5
+                : booking.totalPrice
 
             return (
-              <div
-                key={booking.id}
-                style={{ background: '#FFF', borderRadius: 'var(--radius-lg)', padding: '36px', border: '1px solid var(--line)', boxShadow: 'var(--shadow-md)' }}
-              >
+              <div key={booking.id} className="portal-booking-card">
                 {/* Header Info */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)', paddingBottom: '20px', marginBottom: '24px' }}>
-                  <div>
-                    <span style={{ fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--gold-dark)' }}>
-                      Booking REF: {booking.id}
-                    </span>
-                    <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.8rem', margin: '4px 0' }}>
+                <div className="portal-booking-top">
+                  <div className="portal-booking-info">
+                    <div className="portal-ref-group">
+                      <span className="portal-ref-tag">
+                        REF #{booking.id.slice(0, 16)}...
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyRef(booking.id)}
+                        className="portal-ref-copy-btn"
+                        title="Copy full reference ID"
+                      >
+                        {copiedRefId === booking.id ? (
+                          <>
+                            <Check size={12} style={{ color: '#059669' }} />
+                            <span style={{ color: '#059669' }}>Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy size={12} />
+                            <span>Copy ID</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    <h2 className="portal-booking-title">
                       {booking.eventType} Banquet
-                    </h3>
-                    <p style={{ fontSize: '0.9rem', color: 'var(--muted)', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Calendar size={14} /> Scheduled Date: <strong>{booking.eventDate}</strong>
-                    </p>
+                    </h2>
+
+                    <div className="portal-meta-badges">
+                      <span className="portal-meta-item">
+                        <Calendar size={14} style={{ color: 'var(--gold-dark)' }} />
+                        <span>Scheduled: <strong>{booking.eventDate}</strong></span>
+                      </span>
+                      <span className="portal-meta-item">
+                        <Users size={14} style={{ color: 'var(--gold-dark)' }} />
+                        <span><strong>{booking.guestCount}</strong> Attendees (+10 buffer)</span>
+                      </span>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '10px' }}>
-                    <span className={`status-pill ${booking.bookingStatus}`}>
-                      {booking.bookingStatus}
+
+                  <div className="portal-booking-status-col">
+                    <span className={`portal-status-badge badge-${booking.bookingStatus}`}>
+                      <span className="status-dot" />
+                      <span style={{ textTransform: 'capitalize' }}>Status: {booking.bookingStatus}</span>
                     </span>
-                    <span className={`status-pill ${booking.paymentStatus === 'fully_paid' ? 'confirmed' : 'pending'}`}>
-                      Payment: {booking.paymentStatus.replace('_', ' ')}
+                    <span className={`portal-status-badge badge-payment-${booking.paymentStatus}`}>
+                      <span className="status-dot" />
+                      <span style={{ textTransform: 'capitalize' }}>
+                        Payment: {booking.paymentStatus === 'unpaid' ? '50% Unpaid' : booking.paymentStatus.replace('_', ' ')}
+                      </span>
                     </span>
                   </div>
                 </div>
 
-                {/* Details Grid */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '24px', marginBottom: '28px' }}>
-                  <div>
-                    <h4 style={{ fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '8px' }}>
-                      Selected Tier
-                    </h4>
-                    <p style={{ fontWeight: 700, margin: '0 0 4px' }}>{booking.packageName}</p>
-                    <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{booking.guestCount} Attendees registered</span>
-                  </div>
-
-                  <div>
-                    <h4 style={{ fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '8px' }}>
-                      Financial Breakdown
-                    </h4>
-                    <p className="font-number" style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--terracotta)', margin: '0 0 4px' }}>
-                      {formatMoney(booking.totalPrice, booking.currency)}
+                {/* Details Bento 3-block Grid */}
+                <div className="portal-bento-grid">
+                  <div className="portal-bento-card">
+                    <span className="portal-bento-label">Selected Tier & Service</span>
+                    <div className="portal-bento-val-title">{booking.packageName}</div>
+                    <p className="portal-bento-desc">
+                      Full banquet arrangement with professional staff, buffet setup, and standard dinnerware.
                     </p>
-                    <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Remaining Balance: {formatMoney(balanceAmount, booking.currency)}</span>
                   </div>
 
-                  <div>
-                    <h4 style={{ fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '8px' }}>
-                      Official Documents
-                    </h4>
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                      <button onClick={() => viewInvoice(booking)} className="btn-nav-logout">
-                        <FileText size={14} /> Invoice
+                  <div className="portal-bento-card">
+                    <span className="portal-bento-label">Financial Breakdown</span>
+                    <div className="portal-bento-price font-number">
+                      {formatMoney(booking.totalPrice, booking.currency)}
+                    </div>
+                    <div className="portal-balance-tag">
+                      Remaining Balance: <strong>{formatMoney(balanceAmount, booking.currency)}</strong>
+                    </div>
+                  </div>
+
+                  <div className="portal-bento-card">
+                    <span className="portal-bento-label">Official Documentation</span>
+                    <div className="portal-docs-row">
+                      <button type="button" onClick={() => viewInvoice(booking)} className="portal-doc-btn">
+                        <FileText size={14} />
+                        <span>Invoice</span>
                       </button>
                       <button
+                        type="button"
                         disabled={booking.bookingStatus !== 'confirmed'}
                         onClick={() => viewContract(booking)}
-                        className="btn-nav-logout"
+                        className={`portal-doc-btn ${booking.bookingStatus !== 'confirmed' ? 'disabled' : ''}`}
+                        title={booking.bookingStatus !== 'confirmed' ? 'Contract unlocks once reservation is confirmed' : 'View Contract'}
                       >
-                        <FileText size={14} /> Contract
+                        {booking.bookingStatus !== 'confirmed' ? <Lock size={13} /> : <FileText size={14} />}
+                        <span>Contract</span>
                       </button>
                     </div>
+                    <span className="portal-docs-hint">
+                      {booking.bookingStatus === 'confirmed'
+                        ? 'Official contract unlocked & ready for print'
+                        : 'Contract unlocks upon admin booking confirmation'}
+                    </span>
                   </div>
                 </div>
 
                 {/* Payment Actions Box */}
                 {booking.paymentStatus === 'unpaid' && (
-                  <div style={{ background: '#FFF8E6', border: '1px solid #F3E0A3', padding: '20px', borderRadius: 'var(--radius-md)', marginBottom: '20px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '14px', flexWrap: 'wrap' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <AlertCircle size={24} style={{ color: 'var(--terracotta)', flexShrink: 0 }} />
-                        <div>
-                          <strong style={{ color: 'var(--ink)', display: 'block', fontSize: '1.05rem' }}>
-                            50% Downpayment Required: {formatMoney(downpaymentRequired, booking.currency)}
-                          </strong>
-                          <span style={{ fontSize: '0.88rem', color: 'var(--muted)' }}>
-                            Official GCash / QR Ph: <strong>0928 714 4597</strong> (Sinag Catering Services / Sunshine C.)
-                          </span>
+                  <div className="portal-checkout-panel">
+                    <div className="portal-checkout-grid">
+                      {/* Left Column: QR & Instant Payment */}
+                      <div className="portal-checkout-col-left">
+                        <div className="portal-checkout-badge-row">
+                          <span className="portal-step-pill">STEP 01</span>
+                          <span className="portal-checkout-kicker">50% Downpayment Required</span>
                         </div>
-                      </div>
+                        <div className="portal-checkout-amount font-number">
+                          {formatMoney(downpaymentRequired, booking.currency)}
+                        </div>
+                        <p className="portal-checkout-sub">
+                          To lock your reservation date on our official catering schedule, scan the verified QR Ph code or pay via PayMongo.
+                        </p>
 
-                      <button
-                        onClick={() => handlePayMongoCheckout(booking)}
-                        disabled={isProcessingPayMongo === booking.id}
-                        className="btn-hero-primary"
-                        style={{ padding: '8px 18px', fontSize: '0.84rem' }}
-                      >
-                        {isProcessingPayMongo === booking.id ? 'Loading Checkout...' : '💳 Pay with PayMongo (Card / GCash)'}
-                      </button>
-                    </div>
+                        <div className="portal-qr-showcase">
+                          <div className="portal-qr-frame">
+                            <img
+                              src="/sinag_gcash_qr.png"
+                              alt="Scan GCash / QR Ph"
+                              className="portal-qr-img"
+                            />
+                          </div>
+                          <div className="portal-qr-details">
+                            <span className="portal-qr-account-lbl">Official QR Ph / GCash</span>
+                            <strong className="portal-qr-account-name">Sinag Catering Services / Sunshine C.</strong>
+                            <div className="portal-qr-copy-row">
+                              <span className="portal-qr-phone">0928 714 4597</span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyGcash('09287144597')}
+                                className="portal-copy-pill"
+                              >
+                                {copiedGcash ? (
+                                  <>
+                                    <Check size={11} style={{ color: '#059669' }} />
+                                    <span style={{ color: '#059669' }}>Copied</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy size={11} />
+                                    <span>Copy</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                            <span className="portal-qr-hint">Scan using GCash, Maya, BDO, BPI, or any mobile bank app.</span>
+                          </div>
+                        </div>
 
-                    <div style={{ borderTop: '1px dashed #E5D5A5', paddingTop: '14px', marginTop: '10px' }}>
-                      <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--ink)', marginBottom: '8px' }}>
-                        Or Submit GCash / Maya Reference & Screenshot:
-                      </div>
-                      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                        <input
-                          type="text"
-                          className="input-field"
-                          placeholder="Enter Reference No. (e.g. 902148923019)"
-                          value={paymentRefInput}
-                          onChange={(e) => setPaymentRefInput(e.target.value)}
-                          style={{ flex: 1, minWidth: '200px', padding: '8px 12px' }}
-                        />
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0]
-                            if (file) {
-                              const reader = new FileReader()
-                              reader.onloadend = () => setUploadedReceipt(reader.result as string)
-                              reader.readAsDataURL(file)
-                            }
-                          }}
-                          style={{ fontSize: '0.8rem' }}
-                        />
-                        <button onClick={() => handlePaymentUpload(booking.id)} className="btn-submit-primary" style={{ width: 'auto', padding: '8px 18px', whiteSpace: 'nowrap' }}>
-                          Submit Payment Proof
+                        <button
+                          type="button"
+                          onClick={() => handlePayMongoCheckout(booking)}
+                          disabled={isProcessingPayMongo === booking.id}
+                          className="portal-paymongo-btn"
+                        >
+                          <CreditCard size={15} />
+                          <span>
+                            {isProcessingPayMongo === booking.id
+                              ? 'Opening PayMongo Checkout...'
+                              : 'Pay with PayMongo (Card / GCash)'}
+                          </span>
                         </button>
+                      </div>
+
+                      {/* Right Column: Reference & File Upload Verification */}
+                      <div className="portal-checkout-col-right">
+                        <div className="portal-checkout-badge-row">
+                          <span className="portal-step-pill">STEP 02</span>
+                          <span className="portal-checkout-kicker">Payment Verification</span>
+                        </div>
+                        <h4 className="portal-proof-title">Submit Transaction Proof</h4>
+                        <p className="portal-checkout-sub">
+                          Enter your GCash / Bank reference number and attach your payment receipt screenshot.
+                        </p>
+
+                        <div className="portal-upload-form">
+                          <div className="portal-input-group">
+                            <label className="portal-input-label">
+                              <Receipt size={13} />
+                              <span>Reference Number <strong style={{ color: '#DC2626' }}>*</strong></span>
+                            </label>
+                            <input
+                              type="text"
+                              className={`portal-text-input ${paymentProofError && !paymentRefInput.trim() ? 'input-error' : ''}`}
+                              placeholder="Enter Reference No. (e.g. 902148923019)"
+                              value={paymentRefInput}
+                              onChange={(e) => setPaymentRefInput(e.target.value)}
+                            />
+                            {paymentProofError && !paymentRefInput.trim() && (
+                              <span className="portal-field-error">Transaction reference number is required.</span>
+                            )}
+                          </div>
+
+                          <div className="portal-input-group">
+                            <label className="portal-input-label">
+                              <UploadCloud size={13} />
+                              <span>Screenshot Proof <strong style={{ color: '#DC2626' }}>*</strong></span>
+                            </label>
+
+                            <label
+                              htmlFor={`receipt-upload-${booking.id}`}
+                              className={`portal-dropzone ${uploadedReceipt ? 'has-file' : ''} ${paymentProofError && !uploadedReceipt ? 'dropzone-error' : ''}`}
+                            >
+                              <input
+                                id={`receipt-upload-${booking.id}`}
+                                type="file"
+                                accept="image/*"
+                                style={{ display: 'none' }}
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0]
+                                  if (file) {
+                                    setUploadedFileName(file.name)
+                                    const reader = new FileReader()
+                                    reader.onloadend = () => setUploadedReceipt(reader.result as string)
+                                    reader.readAsDataURL(file)
+                                  }
+                                }}
+                              />
+                              {uploadedReceipt ? (
+                                <div className="portal-dropzone-selected">
+                                  {uploadedReceipt.startsWith('data:image') && (
+                                    <img src={uploadedReceipt} alt="Receipt thumbnail" className="portal-receipt-thumbnail" />
+                                  )}
+                                  <div className="portal-dropzone-fileinfo">
+                                    <span className="portal-dropzone-filename">{uploadedFileName || 'receipt_screenshot.png'}</span>
+                                    <span className="portal-dropzone-change"><CheckCircle size={12} /> Ready to submit · Click to change file</span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="portal-dropzone-empty">
+                                  <div className="portal-upload-icon-circle">
+                                    <UploadCloud size={18} />
+                                  </div>
+                                  <div className="portal-dropzone-text">
+                                    <strong>Click or tap to upload screenshot proof</strong>
+                                    <span>PNG, JPG, or WEBP up to 10MB</span>
+                                  </div>
+                                </div>
+                              )}
+                            </label>
+                            {paymentProofError && !uploadedReceipt && (
+                              <span className="portal-field-error">Screenshot image proof is required.</span>
+                            )}
+                          </div>
+
+                          {paymentProofError && (
+                            <div className="portal-alert-error" role="alert">
+                              <AlertCircle size={15} />
+                              <span>{paymentProofError}</span>
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => handlePaymentUpload(booking.id)}
+                            disabled={!paymentRefInput.trim() || !uploadedReceipt}
+                            className="portal-btn-submit-proof"
+                          >
+                            <CheckCircle size={15} />
+                            <span>Submit Payment Proof</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
                 )}
 
                 {booking.paymentStatus === 'pending_verification' && (
-                  <div style={{ background: '#E6F4EA', border: '1px solid #B7E1CD', padding: '16px 20px', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <CheckCircle size={20} style={{ color: '#137333', flexShrink: 0 }} />
+                  <div className="portal-verification-notice">
+                    <div className="portal-notice-left">
+                      <div className="portal-notice-icon-circle">
+                        <Clock size={20} />
+                      </div>
                       <div>
-                        <strong style={{ display: 'block', color: '#137333' }}>
-                          Downpayment Submitted & Pending Admin Verification
-                        </strong>
-                        <span style={{ fontSize: '0.85rem', color: '#137333' }}>
+                        <h4 className="portal-notice-title">Downpayment Submitted & Pending Admin Verification</h4>
+                        <p className="portal-notice-desc">
                           Reference No: <strong>{booking.gcashRefNumber || 'Receipt uploaded'}</strong> · Your calendar date is temporarily locked.
-                        </span>
+                        </p>
                       </div>
                     </div>
                     {booking.proofOfPaymentUrl && (
-                      <a href={booking.proofOfPaymentUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.82rem', color: '#137333', textDecoration: 'underline' }}>
-                        View Uploaded Receipt
+                      <a
+                        href={booking.proofOfPaymentUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="portal-notice-link"
+                      >
+                        <span>View Uploaded Receipt</span>
+                        <ArrowUpRight size={14} />
                       </a>
                     )}
                   </div>
                 )}
 
-                {/* Modification Buttons */}
+                {booking.paymentStatus === 'fully_paid' && (
+                  <div className="portal-paid-notice">
+                    <div className="portal-notice-left">
+                      <div className="portal-notice-icon-circle paid">
+                        <CheckCircle size={20} />
+                      </div>
+                      <div>
+                        <h4 className="portal-notice-title">Reservation Downpayment Completed</h4>
+                        <p className="portal-notice-desc">
+                          Your reservation is locked in our master catering calendar. You may download your official contract and invoice anytime.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Modification Actions */}
                 {booking.bookingStatus !== 'cancelled' && (
-                  <div style={{ display: 'flex', gap: '12px', borderTop: '1px solid var(--line)', paddingTop: '20px' }}>
-                    <button onClick={() => openRebook(booking)} className="btn-nav-logout">
-                      <Edit2 size={12} /> Rebook Date
-                    </button>
-                    <button onClick={() => openCancel(booking)} className="btn-nav-logout" style={{ color: 'var(--terracotta)', borderColor: 'var(--terracotta)' }}>
-                      <Trash2 size={12} /> Cancel Reservation
-                    </button>
+                  <div className="portal-card-footer">
+                    <span className="portal-footer-note">
+                      Modifications can be requested up to 14 days before your scheduled date.
+                    </span>
+                    <div className="portal-footer-buttons">
+                      <button type="button" onClick={() => openRebook(booking)} className="portal-btn-secondary">
+                        <CalendarDays size={14} />
+                        <span>Rebook Date</span>
+                      </button>
+                      <button type="button" onClick={() => openCancel(booking)} className="portal-btn-destructive">
+                        <Trash2 size={14} />
+                        <span>Cancel Reservation</span>
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -476,6 +756,7 @@ export const ClientPortal: React.FC = () => {
                   className="input-field"
                   required
                   value={rebookDate}
+                  min={(() => { const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().slice(0, 10) })()}
                   onChange={(e) => setRebookDate(e.target.value)}
                 />
               </div>

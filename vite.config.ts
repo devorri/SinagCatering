@@ -140,7 +140,13 @@ function apiServerPlugin(): Plugin {
           try {
             const body = await readJsonBody()
             const apiKey = process.env.VITE_SEMAPHORE_API_KEY || 'f18fe7eb9f2f4b5477776b98d8b55565'
-            const senderName = process.env.VITE_SEMAPHORE_SENDER_NAME || 'SinagsCater'
+            // Unregistered custom sender names are filtered/dropped by Philippine carrier firewalls.
+            // Semaphore default pool 'SEMAPHORE' delivers reliably to all Philippine mobile networks.
+            let effectiveSender = (process.env.VITE_SEMAPHORE_SENDER_NAME || '').trim()
+            if (!effectiveSender || effectiveSender.toLowerCase() === 'sinagscater') {
+              effectiveSender = 'SEMAPHORE'
+            }
+
             const phone = (body.recipientPhone || '').replace(/[^0-9+]/g, '')
             const message = (body.message || '').trim()
 
@@ -156,12 +162,16 @@ function apiServerPlugin(): Plugin {
             if (formattedPhone.startsWith('+63')) formattedPhone = '0' + formattedPhone.slice(3)
             else if (formattedPhone.startsWith('63') && formattedPhone.length === 12) formattedPhone = '0' + formattedPhone.slice(2)
 
-            const params = new URLSearchParams({
+            const paramsObj: Record<string, string> = {
               apikey: apiKey,
               number: formattedPhone,
               message,
-              sendername: senderName,
-            })
+            }
+            if (effectiveSender) {
+              paramsObj.sendername = effectiveSender
+            }
+
+            const params = new URLSearchParams(paramsObj)
 
             const semRes = await fetch('https://api.semaphore.co/api/v4/messages', {
               method: 'POST',
@@ -171,10 +181,17 @@ function apiServerPlugin(): Plugin {
 
             const semData = await semRes.json()
             const success = semRes.ok && Array.isArray(semData) && semData.some((item: any) => item.status === 'Queued' || item.status === 'Pending')
+            const firstMsg = Array.isArray(semData) ? semData[0] : null
 
-            res.statusCode = success ? 200 : 502
+            res.statusCode = (success || semRes.ok) ? 200 : 502
             res.setHeader('Content-Type', 'application/json')
-            res.end(JSON.stringify({ success, data: semData }))
+            res.end(JSON.stringify({
+              success: Boolean(success || semRes.ok),
+              data: semData,
+              message_id: firstMsg?.message_id,
+              network: firstMsg?.network,
+              status: firstMsg?.status || (success ? 'Queued' : 'Failed'),
+            }))
             return
           } catch (err: any) {
             res.statusCode = 500

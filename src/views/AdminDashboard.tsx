@@ -25,6 +25,7 @@ import {
   CreditCard,
   Ban,
   Check,
+  KeyRound,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import type { Booking, Inquiry, NotificationLog } from '../types'
@@ -81,9 +82,55 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null)
   const [showBookingModal, setShowBookingModal] = useState(false)
   const [tempStaffIds, setTempStaffIds] = useState<string[]>([])
+  const [tempServices, setTempServices] = useState<string[]>([])
 
-  // Date blocking form state
+  // Date blocking form state & interactive operations calendar (Item 10)
   const [newBlockDate, setNewBlockDate] = useState('')
+  const [calMonth, setCalMonth] = useState(() => new Date().getMonth())
+  const [calYear, setCalYear] = useState(() => new Date().getFullYear())
+
+  const monthsList = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ]
+
+  const handlePrevCalMonth = () => {
+    if (calMonth === 0) {
+      setCalMonth(11)
+      setCalYear((prev) => prev - 1)
+    } else {
+      setCalMonth((prev) => prev - 1)
+    }
+  }
+
+  const handleNextCalMonth = () => {
+    if (calMonth === 11) {
+      setCalMonth(0)
+      setCalYear((prev) => prev + 1)
+    } else {
+      setCalMonth((prev) => prev + 1)
+    }
+  }
+
+  const calDays = useMemo(() => {
+    const daysInCurrentMonth = new Date(calYear, calMonth + 1, 0).getDate()
+    const firstDayOfWeek = new Date(calYear, calMonth, 1).getDay()
+    const days: { day: number | null; dateStr: string }[] = []
+
+    for (let i = 0; i < firstDayOfWeek; i++) {
+      days.push({ day: null, dateStr: '' })
+    }
+
+    for (let day = 1; day <= daysInCurrentMonth; day++) {
+      const monthStr = String(calMonth + 1).padStart(2, '0')
+      const dayStr = String(day).padStart(2, '0')
+      days.push({
+        day,
+        dateStr: `${calYear}-${monthStr}-${dayStr}`,
+      })
+    }
+    return days
+  }, [calYear, calMonth])
 
   // Inquiry reply form state
   const [selectedInquiry, setSelectedInquiry] = useState<Inquiry | null>(null)
@@ -94,7 +141,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [reviewReplyText, setReviewReplyText] = useState('')
 
   // Booking list filters
-  const [bookingFilter, setBookingFilter] = useState<'all' | 'pending' | 'confirmed' | 'cancelled' | 'forfeit'>('all')
+  const [bookingFilter, setBookingFilter] = useState<'all' | 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'forfeit'>('all')
 
   // Downpayment management
   const [showDownpaymentModal, setShowDownpaymentModal] = useState(false)
@@ -166,8 +213,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       // Count bookings per day
       dailyBookings[b.eventDate] = (dailyBookings[b.eventDate] || 0) + 1
 
-      // Revenue calculations
-      if (b.bookingStatus === 'confirmed' && b.paymentStatus === 'fully_paid') {
+      // Revenue calculations: include completed bookings with fully_paid and confirmed bookings
+      if ((b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed') && b.paymentStatus === 'fully_paid') {
         totalRevenue += b.totalPrice
       } else if (b.bookingStatus === 'confirmed' && b.paymentStatus === 'downpayment_paid') {
         const paidAmount = b.downpaymentAmount || (b.totalPrice * 0.5)
@@ -175,7 +222,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       }
 
       // Status counts
-      if (b.bookingStatus === 'confirmed') confirmedCount++
+      if (b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed') confirmedCount++
       else if (b.bookingStatus === 'pending') pendingCount++
       else if (b.bookingStatus === 'cancelled') cancelledCount++
       else if (b.bookingStatus === 'forfeit') forfeitCount++
@@ -199,7 +246,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     })
 
     const phpValidBookings = Math.max(1, bookings.filter((booking) =>
-      (booking.currency ?? 'PHP') === 'PHP' && ['confirmed', 'pending'].includes(booking.bookingStatus),
+      (booking.currency ?? 'PHP') === 'PHP' && ['confirmed', 'completed', 'pending'].includes(booking.bookingStatus),
     ).length)
     const avgBookingValue = totalRevenue / phpValidBookings
 
@@ -240,13 +287,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const handleOpenBookingDetails = (booking: Booking) => {
     setSelectedBooking(booking)
     setTempStaffIds(booking.staffIds || [])
+    setTempServices(booking.assignedServices || [])
     setShowBookingModal(true)
   }
 
   const handleSaveStaffAllocation = () => {
     if (!selectedBooking) return
-    allocateStaff(selectedBooking.id, tempStaffIds)
-    alert('Staff successfully assigned to event!')
+    allocateStaff(selectedBooking.id, tempStaffIds, tempServices)
+    setSelectedBooking((prev) => prev ? { ...prev, staffIds: tempStaffIds, assignedServices: tempServices } : null)
+    alert('Roster and subcontracted service assignments saved successfully.')
     setShowBookingModal(false)
   }
 
@@ -254,6 +303,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     setTempStaffIds((prev) =>
       prev.includes(id) ? prev.filter((sid) => sid !== id) : [...prev, id]
     )
+  }
+  const toggleServiceSelection = (service: string) => setTempServices((current) => current.includes(service) ? current.filter((item) => item !== service) : [...current, service])
+
+  const handleFullPayment = (booking: Booking) => {
+    const remainingBalance = booking.totalPrice - (booking.downpaymentAmount || (booking.totalPrice * 0.5))
+    if (!window.confirm(`Confirm receipt of remaining 50% balance (${formatMoney(remainingBalance, booking.currency)}) for Booking #${booking.id} (${booking.customerName})?\n\nThis will mark the reservation as Fully Paid and move status to Completed.`)) {
+      return
+    }
+    updatePaymentStatus(booking.id, 'fully_paid', booking.totalPrice)
+    alert(`Full payment of ${formatMoney(remainingBalance, booking.currency)} recorded! Booking #${booking.id} has moved to COMPLETED.`)
   }
 
   const handleBlockDateSubmit = (e: React.FormEvent) => {
@@ -427,9 +486,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                 setPassword('admin')
               }}
               className="btn-demo-chip"
-              style={{ width: '100%', marginTop: '8px' }}
+              style={{ width: '100%', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
             >
-              🔐 Autofill Admin Credentials
+              <KeyRound size={14} /> Autofill Admin Credentials
             </button>
           </div>
         </div>
@@ -471,10 +530,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       <aside className={`admin-sidebar ${isDrawerOpen ? 'open' : ''}`}>
         <div>
           <div className="admin-sidebar-header">
-            <img src="/sinag_logo.png" alt="Sinag Logo" className="admin-sidebar-logo" />
+            <div className="admin-sidebar-logo-box">
+              <img src="/sinag_logo.png" alt="Sinag Logo" className="admin-sidebar-logo" />
+            </div>
             <div>
-              <h2 className="admin-sidebar-title">Sinag Executive</h2>
-              <span className="admin-sidebar-tag">Operations Hub</span>
+              <h2 className="admin-sidebar-title">Sinag Catering</h2>
+              <span className="admin-sidebar-tag">Operations Suite</span>
             </div>
           </div>
 
@@ -496,16 +557,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                       <span>{item.label}</span>
                     </div>
                     {item.badge !== undefined && item.badge > 0 && (
-                      <span
-                        style={{
-                          fontSize: '0.72rem',
-                          fontWeight: 700,
-                          padding: '2px 8px',
-                          borderRadius: '12px',
-                          background: activeTab === item.id ? 'rgba(255,255,255,0.25)' : '#1E293B',
-                          color: '#FFFFFF',
-                        }}
-                      >
+                      <span className="admin-nav-badge">
                         {item.badge}
                       </span>
                     )}
@@ -520,9 +572,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           <div className="admin-user-chip">
             <div className="admin-avatar">A</div>
             <div>
-              <strong style={{ display: 'block', fontSize: '0.88rem', color: '#FFF' }}>{currentUser.name}</strong>
-              <span style={{ fontSize: '0.75rem', color: '#10B981', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10B981', display: 'inline-block' }}></span> Online
+              <strong style={{ display: 'block', fontSize: '0.86rem', color: '#FFF' }}>{currentUser.name}</strong>
+              <span style={{ fontSize: '0.74rem', color: '#10B981', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10B981', display: 'inline-block' }}></span> Active Session
               </span>
             </div>
           </div>
@@ -530,9 +582,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           <button
             onClick={handleLogoutClick}
             title="Sign out of Admin Suite"
-            style={{ background: 'none', border: 'none', color: '#64748B', cursor: 'pointer', padding: '6px' }}
+            style={{ background: 'none', border: 'none', color: '#71717A', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center' }}
           >
-            <LogOut size={18} />
+            <LogOut size={16} />
           </button>
         </div>
       </aside>
@@ -546,23 +598,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             aria-label="Toggle sidebar menu"
             className="admin-mobile-toggle"
           >
-            <Menu size={22} />
+            <Menu size={20} />
           </button>
 
           <div className="admin-search-box">
-            <Search size={16} style={{ color: '#94A3B8' }} />
+            <Search size={15} style={{ color: '#71717A' }} />
             <input
               type="text"
               className="admin-search-input"
-              placeholder="Search bookings, clients, or status..."
+              placeholder="Search reservations, clients, or status..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button className="admin-notification-bell">
-              <Bell size={18} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button className="admin-notification-bell" title="Notifications">
+              <Bell size={16} />
               {bookings.filter(b => b.bookingStatus === 'pending').length > 0 && (
                 <span className="admin-notification-dot" />
               )}
@@ -574,7 +626,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         <div className="admin-body-content">
           <div className="admin-page-header">
             <div>
-              <h1 className="admin-page-title">{activeTab === 'analytics' ? 'Executive Dashboard' : activeTab === 'bookings' ? 'Bookings Register' : activeTab === 'calendar' ? 'Date Availability' : activeTab === 'staff' ? 'Staff Roster' : activeTab === 'reviews' ? 'Reviews Moderation' : 'Inquiry Inbox'}</h1>
+              <span className="admin-header-kicker">01 / OPERATIONS & ANALYTICS</span>
+              <h1 className="admin-page-title">
+                {activeTab === 'analytics' ? (
+                  <>Executive <span className="serif-italic" style={{ fontWeight: 400 }}>Dashboard</span></>
+                ) : activeTab === 'bookings' ? (
+                  <>Master <span className="serif-italic" style={{ fontWeight: 400 }}>Reservations</span></>
+                ) : activeTab === 'calendar' ? (
+                  <>Operations <span className="serif-italic" style={{ fontWeight: 400 }}>Calendar</span></>
+                ) : activeTab === 'staff' ? (
+                  <>Staff <span className="serif-italic" style={{ fontWeight: 400 }}>Roster</span></>
+                ) : activeTab === 'reviews' ? (
+                  <>Reviews <span className="serif-italic" style={{ fontWeight: 400 }}>Moderation</span></>
+                ) : (
+                  <>Inquiry <span className="serif-italic" style={{ fontWeight: 400 }}>Inbox</span></>
+                )}
+              </h1>
               <p className="admin-page-sub">
                 Welcome back, <strong>{currentUser.name}</strong>. Here's your real-time catering operations overview.
               </p>
@@ -586,50 +653,68 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             <>
               <div className="kpi-card-grid">
                 <div className="kpi-card">
-                  <div className="kpi-icon-box"><DollarSign size={24} /></div>
+                  <div className="kpi-card-top">
+                    <span className="kpi-lbl">Gross Revenue</span>
+                    <div className="kpi-icon-box"><DollarSign size={16} /></div>
+                  </div>
                   <div>
-                    <div className="kpi-val">{formatMoney(analyticsData.totalRevenue, 'PHP')}</div>
-                    <div className="kpi-lbl" style={{ fontSize: '0.82rem', color: '#64748B' }}>Gross PHP Revenue</div>
+                    <div className="kpi-val font-number">{formatMoney(analyticsData.totalRevenue, 'PHP')}</div>
+                    <div className="kpi-subtext">Active & confirmed event packages</div>
                   </div>
                 </div>
 
                 <div className="kpi-card">
-                  <div className="kpi-icon-box" style={{ color: '#10B981', background: '#D1FAE5' }}><CheckCircle size={24} /></div>
+                  <div className="kpi-card-top">
+                    <span className="kpi-lbl">Confirmed Events</span>
+                    <div className="kpi-icon-box"><CheckCircle size={16} /></div>
+                  </div>
                   <div>
-                    <div className="kpi-val">{analyticsData.confirmedCount}</div>
-                    <div className="kpi-lbl" style={{ fontSize: '0.82rem', color: '#64748B' }}>Confirmed Events</div>
+                    <div className="kpi-val font-number">{analyticsData.confirmedCount}</div>
+                    <div className="kpi-subtext">Locked in catering calendar</div>
                   </div>
                 </div>
 
                 <div className="kpi-card">
-                  <div className="kpi-icon-box" style={{ color: '#F59E0B', background: '#FEF3C7' }}><Clock size={24} /></div>
+                  <div className="kpi-card-top">
+                    <span className="kpi-lbl">Pending Approval</span>
+                    <div className="kpi-icon-box"><Clock size={16} /></div>
+                  </div>
                   <div>
-                    <div className="kpi-val">{analyticsData.pendingCount}</div>
-                    <div className="kpi-lbl" style={{ fontSize: '0.82rem', color: '#64748B' }}>Pending Approval</div>
+                    <div className="kpi-val font-number">{analyticsData.pendingCount}</div>
+                    <div className="kpi-subtext">Awaiting admin or deposit check</div>
                   </div>
                 </div>
 
                 <div className="kpi-card">
-                  <div className="kpi-icon-box" style={{ color: '#8B5CF6', background: '#EDE9FE' }}><Award size={24} /></div>
+                  <div className="kpi-card-top">
+                    <span className="kpi-lbl">Top Package Tier</span>
+                    <div className="kpi-icon-box"><Award size={16} /></div>
+                  </div>
                   <div>
-                    <div className="kpi-val" style={{ fontSize: '1.2rem' }}>{analyticsData.popularPackageName}</div>
-                    <div className="kpi-lbl" style={{ fontSize: '0.82rem', color: '#64748B' }}>Top Package Tier</div>
+                    <div className="kpi-val" style={{ fontSize: '1.15rem' }}>{analyticsData.popularPackageName}</div>
+                    <div className="kpi-subtext">Most frequent reservation tier</div>
                   </div>
                 </div>
 
                 <div className="kpi-card">
-                  <div className="kpi-icon-box" style={{ color: '#3B82F6', background: '#DBEAFE' }}><TrendingUp size={24} /></div>
+                  <div className="kpi-card-top">
+                    <span className="kpi-lbl">Avg. Booking Value</span>
+                    <div className="kpi-icon-box"><TrendingUp size={16} /></div>
+                  </div>
                   <div>
-                    <div className="kpi-val">{formatMoney(analyticsData.avgBookingValue, 'PHP')}</div>
-                    <div className="kpi-lbl" style={{ fontSize: '0.82rem', color: '#64748B' }}>Avg. PHP Booking Value</div>
+                    <div className="kpi-val font-number">{formatMoney(analyticsData.avgBookingValue, 'PHP')}</div>
+                    <div className="kpi-subtext">Average spend per client reservation</div>
                   </div>
                 </div>
 
                 <div className="kpi-card">
-                  <div className="kpi-icon-box" style={{ color: '#EC4899', background: '#FCE7F3' }}><UsersRound size={24} /></div>
+                  <div className="kpi-card-top">
+                    <span className="kpi-lbl">Guests Served</span>
+                    <div className="kpi-icon-box"><UsersRound size={16} /></div>
+                  </div>
                   <div>
-                    <div className="kpi-val">{analyticsData.totalGuests.toLocaleString()}</div>
-                    <div className="kpi-lbl" style={{ fontSize: '0.82rem', color: '#64748B' }}>Total Guests Served</div>
+                    <div className="kpi-val font-number">{analyticsData.totalGuests.toLocaleString()}</div>
+                    <div className="kpi-subtext">Total attendees across all events</div>
                   </div>
                 </div>
               </div>
@@ -648,16 +733,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   <div className="admin-chart-body">
                     {(() => {
                       const phpBookings = bookings.filter((booking) => (booking.currency ?? 'PHP') === 'PHP')
-                      const confirmedRev = phpBookings.filter(b => b.bookingStatus === 'confirmed' && b.paymentStatus === 'fully_paid').reduce((s, b) => s + b.totalPrice, 0)
+                      const fullyPaidRev = phpBookings.filter(b => (b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed') && b.paymentStatus === 'fully_paid').reduce((s, b) => s + b.totalPrice, 0)
                       const downpaymentRev = phpBookings.filter(b => b.bookingStatus === 'confirmed' && b.paymentStatus === 'downpayment_paid').reduce((s, b) => s + (b.downpaymentAmount || b.totalPrice * 0.5), 0)
                       const pendingRev = phpBookings.filter(b => b.bookingStatus === 'pending').reduce((s, b) => s + b.totalPrice, 0)
                       const cancelledRev = phpBookings.filter(b => b.bookingStatus === 'cancelled' || b.bookingStatus === 'forfeit').reduce((s, b) => s + b.totalPrice, 0)
-                      const maxRev = Math.max(confirmedRev, downpaymentRev, pendingRev, cancelledRev, 1)
+                      const maxRev = Math.max(fullyPaidRev, downpaymentRev, pendingRev, cancelledRev, 1)
                       const bars = [
-                        { label: 'Fully Paid', value: confirmedRev, color: '#10B981', bg: '#D1FAE5' },
-                        { label: 'Downpayment', value: downpaymentRev, color: '#8B5CF6', bg: '#EDE9FE' },
-                        { label: 'Pending', value: pendingRev, color: '#F59E0B', bg: '#FEF3C7' },
-                        { label: 'Lost', value: cancelledRev, color: '#EF4444', bg: '#FEE2E2' },
+                        { label: 'Fully Paid', value: fullyPaidRev, color: '#059669', bg: '#D1FAE5' },
+                        { label: 'Downpayment', value: downpaymentRev, color: '#D97706', bg: '#FEF3C7' },
+                        { label: 'Pending', value: pendingRev, color: '#CA8A04', bg: '#FEF9C3' },
+                        { label: 'Cancelled', value: cancelledRev, color: '#9CA3AF', bg: '#F3F4F6' },
                       ]
                       return (
                         <div className="admin-bar-chart">
@@ -672,7 +757,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                   className="admin-bar-fill"
                                   style={{
                                     width: `${Math.max(4, (bar.value / maxRev) * 100)}%`,
-                                    background: `linear-gradient(90deg, ${bar.color}, ${bar.bg})`,
+                                    background: bar.color,
                                   }}
                                 />
                               </div>
@@ -785,9 +870,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         <div style={{
                           fontSize: '0.8rem',
                           color: count >= 5 ? '#DC2626' : count >= 3 ? '#D97706' : '#059669',
-                          fontWeight: 600
+                          fontWeight: 600,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '5px'
                         }}>
-                          {count >= 5 ? '🔴 High' : count >= 3 ? '🟡 Medium' : '🟢 Low'}
+                          <span style={{
+                            width: '7px',
+                            height: '7px',
+                            borderRadius: '50%',
+                            background: count >= 5 ? '#DC2626' : count >= 3 ? '#D97706' : '#059669'
+                          }} />
+                          {count >= 5 ? 'High' : count >= 3 ? 'Medium' : 'Low'}
                         </div>
                       </div>
                     ))}
@@ -840,19 +934,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           {/* Tab 2: Bookings Management */}
           {activeTab === 'bookings' && (
             <div className="data-table-card">
-              <div style={{ padding: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)', flexWrap: 'wrap', gap: '16px' }}>
-                <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.5rem', margin: 0 }}>Master Reservations Register</h3>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  {(['all', 'pending', 'confirmed', 'cancelled', 'forfeit'] as const).map((filter) => (
-                    <button
-                      key={filter}
-                      onClick={() => setBookingFilter(filter)}
-                      className="btn-nav-logout"
-                      style={bookingFilter === filter ? { background: 'var(--obsidian)', color: 'var(--gold)', borderColor: 'var(--obsidian)' } : {}}
-                    >
-                      {filter.toUpperCase()}
-                    </button>
-                  ))}
+              <div style={{ padding: '24px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #EBE4D8', flexWrap: 'wrap', gap: '16px' }}>
+                <div>
+                  <h3 style={{ fontFamily: 'var(--font-sans)', fontSize: '1.25rem', fontWeight: 800, margin: '0 0 4px', color: '#18181B' }}>Master Reservations Register</h3>
+                  <span style={{ fontSize: '0.84rem', color: '#71717A' }}>Filter, verify deposits, allocate event staff, and download contracts</span>
+                </div>
+                <div className="admin-filter-bar">
+                  {(['all', 'pending', 'confirmed', 'completed', 'cancelled', 'forfeit'] as const).map((filter) => {
+                    const count = filter === 'all'
+                      ? bookings.length
+                      : bookings.filter((b) => b.bookingStatus === filter).length
+                    return (
+                      <button
+                        key={filter}
+                        onClick={() => setBookingFilter(filter)}
+                        className={`admin-filter-pill ${bookingFilter === filter ? 'active' : ''}`}
+                      >
+                        {filter.toUpperCase()} ({count})
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
 
@@ -872,82 +973,85 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   <tbody>
                     {filteredBookings.map((b) => (
                       <tr key={b.id}>
-                        <td className="font-number" style={{ fontWeight: 700 }}>#{b.id}</td>
-                        <td>
-                          <div style={{ fontWeight: 700 }}>{b.customerName}</div>
-                          <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>{b.email}</div>
+                        <td className="font-number" style={{ fontWeight: 700, fontSize: '0.8rem', color: '#78716C' }}>
+                          #{b.id.slice(0, 14)}...
                         </td>
                         <td>
-                          <div><strong>{b.eventType}</strong> ({b.guestCount} pax)</div>
-                          <div style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>{b.eventDate}</div>
+                          <div style={{ fontWeight: 700, color: '#18181B' }}>{b.customerName}</div>
+                          <div style={{ fontSize: '0.8rem', color: '#71717A' }}>{b.email}</div>
                         </td>
-                        <td className="font-number" style={{ fontWeight: 700 }}>{formatMoney(b.totalPrice, b.currency)}</td>
                         <td>
-                          <div style={{ display: 'flex', gap: '6px', flexDirection: 'column' }}>
-                            <span className={`status-pill ${b.paymentStatus === 'fully_paid' ? 'confirmed' : b.paymentStatus === 'downpayment_paid' ? 'pending' : 'cancelled'}`}>
-                              {b.paymentStatus === 'downpayment_paid' ? 'Downpayment' : b.paymentStatus.replace('_', ' ')}
+                          <div style={{ fontWeight: 600, color: '#18181B' }}>{b.eventType} ({b.guestCount} pax)</div>
+                          <div style={{ fontSize: '0.82rem', color: '#71717A' }}>{b.eventDate}</div>
+                        </td>
+                        <td className="font-number" style={{ fontWeight: 700, color: '#9A3412' }}>
+                          {formatMoney(b.totalPrice, b.currency)}
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '4px', flexDirection: 'column' }}>
+                            <span className={`portal-status-badge badge-payment-${b.paymentStatus}`} style={{ width: 'fit-content' }}>
+                              <span className="status-dot" />
+                              <span style={{ textTransform: 'capitalize' }}>
+                                {b.paymentStatus === 'downpayment_paid' ? 'Downpayment' : b.paymentStatus.replace('_', ' ')}
+                              </span>
                             </span>
                             {b.paymentStatus === 'downpayment_paid' && b.downpaymentAmount && (
-                              <span style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>
+                              <span style={{ fontSize: '0.72rem', color: '#71717A' }}>
                                 {formatMoney(b.downpaymentAmount, b.currency)}
                               </span>
                             )}
                           </div>
                         </td>
                         <td>
-                          <span className={`status-pill ${b.bookingStatus === 'forfeit' ? 'cancelled' : b.bookingStatus}`}>
-                            {b.bookingStatus === 'forfeit' ? 'Forfeited' : b.bookingStatus}
+                          <span className={`portal-status-badge badge-${b.bookingStatus}`} style={{ width: 'fit-content' }}>
+                            <span className="status-dot" />
+                            <span style={{ textTransform: 'capitalize' }}>
+                              {b.bookingStatus === 'forfeit' ? 'Forfeited' : b.bookingStatus}
+                            </span>
                           </span>
                         </td>
                         <td>
                           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                             <button
                               onClick={() => handleOpenBookingDetails(b)}
-                              className="btn-hero-primary"
-                              style={{ padding: '6px 12px', fontSize: '0.75rem' }}
+                              className="btn-action-view"
                             >
-                              <Eye size={14} /> View
+                              <Eye size={13} /> View
                             </button>
 
                             {b.bookingStatus === 'pending' && (
                               <>
                                 <button
                                   onClick={() => handleApproveBooking(b)}
-                                  className="btn-submit-primary"
-                                  style={{ padding: '6px 12px', fontSize: '0.75rem', background: '#10B981' }}
+                                  className="btn-action-approve"
                                 >
-                                  <Check size={14} /> Verify & Approve
+                                  <Check size={13} /> Approve
                                 </button>
                                 <button
                                   onClick={() => handleRejectBooking(b.id)}
-                                  className="btn-nav-logout"
-                                  style={{ padding: '6px 12px', fontSize: '0.75rem', color: 'var(--terracotta)' }}
+                                  className="btn-action-forfeit"
+                                  style={{ color: '#DC2626' }}
                                 >
-                                  <X size={14} /> Reject
+                                  <X size={13} /> Reject
                                 </button>
                               </>
                             )}
 
                             {b.bookingStatus === 'confirmed' && b.paymentStatus === 'downpayment_paid' && (
                               <button
-                                onClick={() => {
-                                  updatePaymentStatus(b.id, 'fully_paid', b.totalPrice)
-                                  alert('Full payment recorded!')
-                                }}
-                                className="btn-hero-primary"
-                                style={{ padding: '6px 12px', fontSize: '0.75rem', background: '#10B981' }}
+                                onClick={() => handleFullPayment(b)}
+                                className="btn-action-fullpay"
                               >
-                                <CreditCard size={14} /> Full Payment
+                                <CreditCard size={13} /> Settle Full
                               </button>
                             )}
 
                             {(b.bookingStatus === 'pending' || b.bookingStatus === 'confirmed') && (
                               <button
                                 onClick={() => handleForfeitBooking(b.id, b.eventDate)}
-                                className="btn-nav-logout"
-                                style={{ padding: '6px 12px', fontSize: '0.75rem', color: '#DC2626' }}
+                                className="btn-action-forfeit"
                               >
-                                <Ban size={14} /> Forfeit
+                                <Ban size={13} /> Forfeit
                               </button>
                             )}
                           </div>
@@ -960,27 +1064,116 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             </div>
           )}
 
-          {/* Tab 3: Calendar Blocked Dates */}
+          {/* Tab 3: Calendar Date Availability & Blocking Coordinator (Item 10) */}
           {activeTab === 'calendar' && (
             <div className="data-table-card" style={{ padding: '36px' }}>
-              <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.6rem', margin: '0 0 10px' }}>Calendar Date Blocking Coordinator</h3>
-              <p style={{ color: 'var(--muted)', fontSize: '0.9rem', marginBottom: '28px' }}>Manually lock out dates for private holidays or venue maintenance.</p>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
+                <div>
+                  <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.6rem', margin: '0 0 6px' }}>
+                    Master Operations Calendar & Date Availability
+                  </h3>
+                  <p style={{ color: 'var(--muted)', fontSize: '0.9rem', margin: 0 }}>
+                    Live reservation calendar synced with bookings register. Switch months, click any dated event to inspect or manage, and lock out dates.
+                  </p>
+                </div>
+              </div>
 
-              <form onSubmit={handleBlockDateSubmit} style={{ display: 'flex', gap: '16px', maxWidth: '500px', marginBottom: '32px' }}>
+              {/* Date blocking coordinator form */}
+              <form onSubmit={handleBlockDateSubmit} style={{ display: 'flex', gap: '12px', maxWidth: '520px', marginBottom: '28px', flexWrap: 'wrap' }}>
                 <input
                   type="date"
                   className="input-field"
                   required
                   value={newBlockDate}
                   onChange={(e) => setNewBlockDate(e.target.value)}
+                  style={{ flex: 1, minWidth: '180px' }}
                 />
-                <button type="submit" className="btn-submit-primary" style={{ width: 'auto', whiteSpace: 'nowrap' }}>
-                  Block Date
+                <button type="submit" className="btn-action-forfeit" style={{ background: '#DC2626', color: '#FFF', borderColor: '#DC2626', padding: '10px 18px', fontSize: '0.85rem' }}>
+                  <Ban size={15} /> Lock / Block Date
                 </button>
               </form>
 
+              {/* Interactive Calendar Grid Matching Client Design */}
+              <div className="calendar-card" style={{ maxWidth: '100%', margin: '0 0 32px' }}>
+                <div className="calendar-header-bar">
+                  <button type="button" className="stepper-btn" onClick={handlePrevCalMonth}>&lt;</button>
+                  <h3 className="calendar-month-title">{monthsList[calMonth]} {calYear}</h3>
+                  <button type="button" className="stepper-btn" onClick={handleNextCalMonth}>&gt;</button>
+                </div>
+
+                <div className="calendar-grid-header">
+                  <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+                </div>
+
+                <div className="calendar-days-grid" style={{ minHeight: '360px' }}>
+                  {calDays.map((item, idx) => {
+                    if (!item.day) return <div key={`empty-admin-${idx}`} className="calendar-day-cell empty" />
+
+                    const isBlocked = blockedDates.includes(item.dateStr)
+                    const dayBookings = bookings.filter((booking) => booking.eventDate === item.dateStr)
+                    const confirmedBookings = dayBookings.filter((b) => b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed')
+                    const pendingBookings = dayBookings.filter((b) => b.bookingStatus === 'pending')
+
+                    let cellState = 'available'
+                    if (isBlocked) cellState = 'blocked'
+                    else if (confirmedBookings.length > 0) cellState = 'booked'
+                    else if (pendingBookings.length > 0) cellState = 'pending-booking'
+
+                    return (
+                      <button
+                        key={item.dateStr}
+                        type="button"
+                        className={`calendar-day-cell ${cellState}`}
+                        style={{ minHeight: '82px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'flex-start', padding: '8px', cursor: 'pointer' }}
+                        onClick={() => {
+                          setNewBlockDate(item.dateStr)
+                          if (dayBookings.length > 0) {
+                            handleOpenBookingDetails(dayBookings[0])
+                          } else if (isBlocked) {
+                            handleManualUnblock(item.dateStr)
+                          }
+                        }}
+                        title={
+                          isBlocked
+                            ? `Date ${item.dateStr} is BLOCKED. Click to unblock.`
+                            : dayBookings.length > 0
+                            ? `Date ${item.dateStr} has ${dayBookings.length} booking(s). Click to inspect.`
+                            : `Date ${item.dateStr} is available. Click to select for blocking.`
+                        }
+                      >
+                        <span className="calendar-day-number" style={{ fontWeight: 700 }}>{item.day}</span>
+                        {isBlocked ? (
+                          <span className="calendar-blocked-tag" style={{ marginTop: 'auto' }}>
+                            Blocked
+                          </span>
+                        ) : confirmedBookings.length > 0 ? (
+                          <span className="calendar-count-tag" style={{ marginTop: 'auto' }}>
+                            {confirmedBookings.length} Confirmed
+                          </span>
+                        ) : pendingBookings.length > 0 ? (
+                          <span className="calendar-pending-tag" style={{ marginTop: 'auto' }}>
+                            {pendingBookings.length} Pending
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: '0.65rem', color: '#10B981', marginTop: 'auto', fontWeight: 600 }}>
+                            Available
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                <div className="calendar-legend-bar">
+                  <div className="legend-item"><span className="legend-dot available" /> Available Date</div>
+                  <div className="legend-item"><span className="legend-dot booked" /> Confirmed / Completed Event</div>
+                  <div className="legend-item"><span className="legend-dot pending-booking" /> Pending Client Request</div>
+                  <div className="legend-item"><span className="legend-dot blocked" /> Blocked Date</div>
+                </div>
+              </div>
+
               <h4 style={{ fontSize: '0.85rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '16px' }}>
-                Currently Blocked Calendar Dates:
+                Currently Blocked Calendar Dates ({blockedDates.length}):
               </h4>
 
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
@@ -1065,7 +1258,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   <div key={rev.id} style={{ background: 'var(--paper-warm)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: '20px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
                       <div>
-                        <strong>{rev.userName}</strong> ({rev.rating}★)
+                        <strong>{rev.userName}</strong> ({rev.rating} / 5 stars)
                         <div style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>{rev.date}</div>
                       </div>
                       <button onClick={() => deleteReview(rev.id)} className="btn-nav-logout" style={{ color: 'var(--terracotta)' }}>
@@ -1197,6 +1390,63 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     <p style={{ margin: '0 0 4px' }}><strong>Total Price:</strong> {formatMoney(selectedBooking.totalPrice, selectedBooking.currency)}</p>
                     <p style={{ margin: '0 0 10px' }}><strong>Payment Status:</strong> {selectedBooking.paymentStatus.replace('_', ' ')}</p>
 
+                    {/* Checklist Item 8: Detailed Menu Breakdown */}
+                    <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '14px', marginBottom: '16px' }}>
+                      <div style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '8px' }}>
+                        Catering Menu & Course Selections
+                      </div>
+
+                      <div style={{ marginBottom: '10px' }}>
+                        <strong style={{ fontSize: '0.8rem', color: '#334155', display: 'block', marginBottom: '4px' }}>Selected Main Dishes (4 Course):</strong>
+                        {selectedBooking.addOns.selectedMainDishes && selectedBooking.addOns.selectedMainDishes.length > 0 ? (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                            {selectedBooking.addOns.selectedMainDishes.map((dish) => (
+                              <span key={dish} style={{ background: '#FEF3C7', color: '#92400E', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                                {dish}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: '0.8rem', color: '#94A3B8', fontStyle: 'italic' }}>Standard Chef Selection</span>
+                        )}
+                      </div>
+
+                      <div style={{ marginBottom: '10px' }}>
+                        <strong style={{ fontSize: '0.8rem', color: '#334155', display: 'block', marginBottom: '4px' }}>Selected Pasta Dishes:</strong>
+                        {selectedBooking.addOns.selectedPastaDishes && selectedBooking.addOns.selectedPastaDishes.length > 0 ? (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                            {selectedBooking.addOns.selectedPastaDishes.map((dish) => (
+                              <span key={dish} style={{ background: '#EDE9FE', color: '#6D28D9', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                                {dish}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: '0.8rem', color: '#94A3B8', fontStyle: 'italic' }}>None specified</span>
+                        )}
+                      </div>
+
+                      <div>
+                        <strong style={{ fontSize: '0.8rem', color: '#334155', display: 'block', marginBottom: '4px' }}>Extra Food Add-ons:</strong>
+                        {((selectedBooking.addOns.extraMainDishes && selectedBooking.addOns.extraMainDishes.length > 0) || (selectedBooking.addOns.extraPastaDishes && selectedBooking.addOns.extraPastaDishes.length > 0)) ? (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                            {selectedBooking.addOns.extraMainDishes?.map((dish, i) => (
+                              <span key={`extra-m-${i}`} style={{ background: '#DCFCE7', color: '#166534', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                                + Extra Main: {dish}
+                              </span>
+                            ))}
+                            {selectedBooking.addOns.extraPastaDishes?.map((dish, i) => (
+                              <span key={`extra-p-${i}`} style={{ background: '#DBEAFE', color: '#1E40AF', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                                + Extra Pasta: {dish}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: '0.8rem', color: '#94A3B8', fontStyle: 'italic' }}>No extra food items added</span>
+                        )}
+                      </div>
+                    </div>
+
                     {/* Checklist Item 8: Payment Verification Details (GCash Ref & Proof) */}
                     <div style={{ background: 'var(--paper-warm)', padding: '12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--line)', marginBottom: '16px' }}>
                       <div style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '6px' }}>
@@ -1248,14 +1498,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     {selectedBooking.bookingStatus === 'confirmed' && selectedBooking.paymentStatus === 'downpayment_paid' && (
                       <button
                         onClick={() => {
-                          updatePaymentStatus(selectedBooking.id, 'fully_paid', selectedBooking.totalPrice)
-                          alert('Full payment recorded!')
+                          handleFullPayment(selectedBooking)
                           setShowBookingModal(false)
                         }}
-                        className="btn-submit-primary"
-                        style={{ background: '#10B981' }}
+                        className="btn-action-fullpay"
+                        style={{ width: '100%', justifyContent: 'center', padding: '10px' }}
                       >
-                        <CreditCard size={16} /> Record Full Payment
+                        <CreditCard size={16} /> Record Full Payment (50% Balance)
                       </button>
                     )}
                   </div>
@@ -1275,7 +1524,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                       )
                     })()}
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto', marginBottom: '20px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto', marginBottom: '20px' }}>
                       {staff.map((s) => {
                         const isChecked = tempStaffIds.includes(s.id)
                         return (
@@ -1291,8 +1540,49 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                       })}
                     </div>
 
+                    {/* Checklist Item 8: Subcontracted Services Checklist */}
+                    <div style={{ background: 'var(--paper-warm)', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--line)', marginBottom: '18px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                        <h4 style={{ fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', margin: 0 }}>
+                          Subcontracted Event Services ({tempServices.length} Active)
+                        </h4>
+                        <span style={{ fontSize: '0.72rem', background: '#DBEAFE', color: '#1E40AF', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
+                          Checklist
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {['Event Host', 'Clown / Entertainer', 'Photo Booth', 'Photographer', 'Lights and Sounds'].map((service) => {
+                          const isChecked = tempServices.includes(service)
+                          return (
+                            <label
+                              key={service}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '10px',
+                                fontSize: '0.85rem',
+                                cursor: 'pointer',
+                                padding: '6px 10px',
+                                borderRadius: '6px',
+                                background: isChecked ? '#FFF' : 'transparent',
+                                border: isChecked ? '1px solid var(--gold)' : '1px solid transparent',
+                                fontWeight: isChecked ? 600 : 400,
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => toggleServiceSelection(service)}
+                              />
+                              <span>{service}</span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </div>
+
                     <button onClick={handleSaveStaffAllocation} className="btn-hero-primary" style={{ width: '100%' }}>
-                      Save Staff Roster
+                      Save Roster & Service Assignments
                     </button>
                   </div>
                 </div>

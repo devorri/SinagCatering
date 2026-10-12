@@ -155,6 +155,9 @@ export const EXTRA_MAIN_RATE = 100
 export const EXTRA_PASTA_RATE = 80
 export const EXTRA_DESSERT_RATE = 50
 
+export const MAIN_DISHES = ['Beef Broccoli', 'Cordon Bleu', 'Menudo', 'Caldereta', 'Mixed Veggies', 'Chicken Curry', 'Fish Fillet']
+export const PASTA_DISHES = ['Pancit', 'Spaghetti', 'Carbonara']
+
 export const findTierForGuestCount = (pkg: CateringPackage, guestCount: number) => {
   if (pkg.pricePerHead !== undefined) {
     return { pax: guestCount, price: guestCount * pkg.pricePerHead }
@@ -162,23 +165,124 @@ export const findTierForGuestCount = (pkg: CateringPackage, guestCount: number) 
   return pkg.tiers.find((tier) => guestCount <= tier.pax + FOOD_BUFFER_PAX) || pkg.tiers[pkg.tiers.length - 1]
 }
 
-export const recommendPackage = (guestCount: number, budget: number, needsEntertainment: boolean) => {
-  const candidates = SINAG_PACKAGES.map((pkg) => {
+export interface RecommendedPackageResult {
+  pkg: CateringPackage
+  tier: PackageTier
+  estimatedTotal: number
+  score: number
+  suggestedAddons: {
+    extraMain: number
+    extraPasta: number
+    extraDessert: number
+    addonIds: string[]
+  }
+  customizationNotes: string[]
+  budgetExceeded?: boolean
+}
+
+export const recommendPackage = (
+  guestCount: number,
+  budget: number,
+  needsEntertainment: boolean,
+): RecommendedPackageResult => {
+  // 1. Evaluate each package base configuration
+  const evaluatedPackages = SINAG_PACKAGES.map((pkg) => {
     const tier = findTierForGuestCount(pkg, guestCount)
     const overage = Math.max(0, guestCount - (tier.pax + FOOD_BUFFER_PAX))
-    const estimatedTotal = tier.price + overage * EXCESS_PAX_RATE
-    let score = 0
+    const baseTotal = tier.price + overage * EXCESS_PAX_RATE
 
-    if (budget >= estimatedTotal) score += 40
-    else score -= Math.min(35, Math.round((estimatedTotal - budget) / 1000))
+    let fitScore = 0
+    if (needsEntertainment && pkg.entertainment.length > 0) fitScore += 50
+    if (!needsEntertainment && pkg.id === 'budget-basic') fitScore += 40
+    if (pkg.id === 'full-blast') fitScore += 30
 
-    if (needsEntertainment && pkg.entertainment.length > 0) score += 30
-    if (!needsEntertainment && pkg.id === 'budget-basic') score += 24
-    if (pkg.id === 'full-blast' && guestCount >= 100) score += 10
-    if (pkg.id === 'budget-entertainment' && needsEntertainment && budget < 70000) score += 12
+    return { pkg, tier, baseTotal, fitScore }
+  })
 
-    return { pkg, tier, estimatedTotal, score }
-  }).sort((a, b) => b.score - a.score)
+  // Filter packages that can fit within budget at base level
+  const affordablePackages = evaluatedPackages.filter((ep) => ep.baseTotal <= budget)
 
-  return candidates[0]
+  // Never return a price above the customer's ceiling. The UI may use the
+  // lowest tier as a reference, but it is not an applicable recommendation.
+  if (affordablePackages.length === 0) {
+    const lowest = [...evaluatedPackages].sort((a, b) => a.baseTotal - b.baseTotal)[0]
+    return {
+      pkg: lowest.pkg,
+      tier: lowest.tier,
+      estimatedTotal: 0,
+      score: 0,
+      suggestedAddons: { extraMain: 0, extraPasta: 0, extraDessert: 0, addonIds: [] },
+      customizationNotes: [`No standard package fits this budget. The lowest available configuration is ${formatMoney(lowest.baseTotal)}.`],
+      budgetExceeded: true,
+    }
+  }
+
+  // Sort affordable packages by preference: highest tier fitting entertainment preferences
+  affordablePackages.sort((a, b) => {
+    if (needsEntertainment) {
+      const aEnt = a.pkg.entertainment.length > 0 ? 1 : 0
+      const bEnt = b.pkg.entertainment.length > 0 ? 1 : 0
+      if (bEnt !== aEnt) return bEnt - aEnt
+    }
+    return b.baseTotal - a.baseTotal || b.fitScore - a.fitScore
+  })
+
+  const chosen = affordablePackages[0]
+  let currentTotal = chosen.baseTotal
+  const suggestedAddons = { extraMain: 0, extraPasta: 0, extraDessert: 0, addonIds: [] as string[] }
+  const customizationNotes: string[] = []
+
+  // 2. Optimal Value Matching: utilize remaining headroom up to the user budget
+  let remainingBudget = budget - currentTotal
+
+  // If we have headroom for extra main dishes (up to 2 dishes)
+  const extraMainCostPerDish = guestCount * EXTRA_MAIN_RATE
+  while (suggestedAddons.extraMain < 2 && remainingBudget >= extraMainCostPerDish) {
+    suggestedAddons.extraMain += 1
+    remainingBudget -= extraMainCostPerDish
+    currentTotal += extraMainCostPerDish
+  }
+  if (suggestedAddons.extraMain > 0) {
+    customizationNotes.push(`+${suggestedAddons.extraMain} Extra Main Dish${suggestedAddons.extraMain > 1 ? 'es' : ''} (+₱${(suggestedAddons.extraMain * extraMainCostPerDish).toLocaleString()})`)
+  }
+
+  // If we have headroom for extra pasta (up to 1 dish)
+  const extraPastaCost = guestCount * EXTRA_PASTA_RATE
+  if (suggestedAddons.extraPasta < 1 && remainingBudget >= extraPastaCost) {
+    suggestedAddons.extraPasta += 1
+    remainingBudget -= extraPastaCost
+    currentTotal += extraPastaCost
+    customizationNotes.push(`+1 Extra Gourmet Pasta Dish (+₱${extraPastaCost.toLocaleString()})`)
+  }
+
+  // If we have headroom for extra dessert (up to 1 dish)
+  const extraDessertCost = guestCount * EXTRA_DESSERT_RATE
+  if (suggestedAddons.extraDessert < 1 && remainingBudget >= extraDessertCost) {
+    suggestedAddons.extraDessert += 1
+    remainingBudget -= extraDessertCost
+    currentTotal += extraDessertCost
+    customizationNotes.push(`+1 Extra Specialty Dessert Station (+₱${extraDessertCost.toLocaleString()})`)
+  }
+
+  // Include catalog add-on if applicable
+  for (const addon of AI_CATALOG_ADDONS) {
+    const addonPrice = addon.price * guestCount
+    if (remainingBudget >= addonPrice) {
+      suggestedAddons.addonIds.push(addon.id)
+      currentTotal += addonPrice
+      customizationNotes.push(`+${addon.name} (+₱${addonPrice.toLocaleString()})`)
+      break
+    }
+  }
+
+  return {
+    pkg: chosen.pkg,
+    tier: chosen.tier,
+    estimatedTotal: currentTotal,
+    score: chosen.fitScore + 50,
+    suggestedAddons,
+    customizationNotes,
+    budgetExceeded: false,
+  }
 }
+

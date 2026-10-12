@@ -91,13 +91,21 @@ export const sendSemaphoreSMS = async (
     if (apiRes.ok) {
       const result = await apiRes.json()
       if (result.success) {
+        const item = Array.isArray(result.data) ? result.data[0] : null
+        const msgId = result.message_id || item?.message_id
+        const network = result.network || item?.network
+        const status = result.status || item?.status || 'Queued'
+        const enrichedMessage = msgId
+          ? `${message} [Semaphore ID: ${msgId} | Net: ${network || 'PH'} | Status: ${status}]`
+          : message
+
         logNotification({
           type: 'sms',
           recipient: cleanedPhone,
-          message,
+          message: enrichedMessage,
           status: 'sent',
           provider: 'Semaphore',
-          referenceId,
+          referenceId: referenceId || (msgId ? String(msgId) : undefined),
         })
         return { success: true, simulated: false }
       }
@@ -134,11 +142,11 @@ export const sendSemaphoreSMS = async (
     type: 'sms',
     recipient: cleanedPhone,
     message,
-    status: 'sent',
+    status: 'failed',
     provider: 'Semaphore',
     referenceId,
   })
-  return { success: true, simulated: false }
+  return { success: false, simulated: false, error: 'SMS delivery was not accepted by the configured server endpoint.' }
 }
 
 /**

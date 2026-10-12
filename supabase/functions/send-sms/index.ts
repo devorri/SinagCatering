@@ -57,7 +57,8 @@ Deno.serve(async (request) => {
   }
 
   const apiKey = Deno.env.get('SEMAPHORE_API_KEY')
-  if (!apiKey) return jsonResponse({ success: true, simulated: true })
+  // Do not report a delivery success when no SMS provider is configured.
+  if (!apiKey) return jsonResponse({ success: false, error: 'Semaphore SMS is not configured on the server' }, 503)
 
   try {
     if (!await isWithinRateLimit(request)) return jsonResponse({ success: false, error: 'SMS request limit reached or rate limiter unavailable' }, 429)

@@ -24,7 +24,7 @@ interface AppContextType {
   addReview: (rating: number, comment: string, imageUrl: string | null) => void
   replyReview: (reviewId: string, reply: string) => void
   deleteReview: (reviewId: string) => void
-  allocateStaff: (bookingId: string, staffIds: string[]) => void
+  allocateStaff: (bookingId: string, staffIds: string[], assignedServices?: string[]) => void
   blockDate: (date: string) => void
   unblockDate: (date: string) => void
   respondInquiry: (inquiryId: string, replyText: string) => void
@@ -65,6 +65,7 @@ const mapDbBooking = (row: any): Booking => ({
   gcashRefNumber: row.gcash_ref_number,
   proofOfPaymentUrl: row.proof_of_payment_url,
   staffIds: Array.isArray(row.staff_ids) ? row.staff_ids : [],
+  assignedServices: Array.isArray(row.assigned_services) ? row.assigned_services : [],
   notes: row.notes || '',
   createdAt: row.created_at || new Date().toISOString(),
 })
@@ -93,6 +94,7 @@ const mapToDbBooking = (b: Booking) => ({
   gcash_ref_number: b.gcashRefNumber || null,
   proof_of_payment_url: b.proofOfPaymentUrl || null,
   staff_ids: b.staffIds,
+  assigned_services: b.assignedServices || [],
   notes: b.notes,
   created_at: b.createdAt,
   updated_at: new Date().toISOString(),
@@ -136,6 +138,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         sessionStorage.removeItem(LOCAL_USER_BACKUP_KEY)
       }
     }
+    if (!supabase) return
+    const client = supabase
+    const channel = client.channel('sinag-live-bookings')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
+        client.from('bookings').select('*').order('created_at', { ascending: false }).then(({ data }) => {
+          if (data) setBookings(data.map(mapDbBooking))
+        })
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'blocked_dates' }, () => {
+        client.from('blocked_dates').select('date').then(({ data }) => {
+          if (data) setBlockedDates(data.map((d: any) => d.date))
+        })
+      }).subscribe()
+    return () => { client.removeChannel(channel) }
   }, [])
 
   // 2. Load DB data from Supabase
@@ -251,7 +267,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const signUp = async (name: string, email: string, phone: string, password: string): Promise<{ user: User | null; error: string | null }> => {
     const normEmail = email.trim().toLowerCase()
-    const role = normEmail.includes('admin') ? 'admin' : 'client'
+    // Public registration is always client-only. Administrator accounts must be
+    // provisioned securely outside the public portal.
+    const role: User['role'] = 'client'
 
     if (supabase) {
       try {
@@ -310,6 +328,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       paymentStatus: isPaymentSubmitted ? 'pending_verification' : 'unpaid',
       proofOfPaymentUrl: null,
       staffIds: [],
+      assignedServices: [],
     }
 
     setBookings((prev) => [newBooking, ...prev])
@@ -400,8 +419,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const eventTime = new Date(newDate).getTime()
     const nowTime = new Date().getTime()
     const diffDays = Math.ceil((eventTime - nowTime) / (1000 * 60 * 60 * 24))
-    if (diffDays < 7) {
-      return { success: false, message: 'Rebooking must be scheduled at least 1 week before the event.' }
+    if (diffDays < 14) {
+      return { success: false, message: 'Rebooking must be scheduled at least 14 days before the event.' }
     }
 
     setBookings((prev) =>
@@ -467,11 +486,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }
 
-  const allocateStaff = (bookingId: string, staffIds: string[]) => {
-    setBookings((prev) => prev.map((bk) => (bk.id === bookingId ? { ...bk, staffIds } : bk)))
+  const allocateStaff = (bookingId: string, staffIds: string[], assignedServices: string[] = []) => {
+    setBookings((prev) => prev.map((bk) => (bk.id === bookingId ? { ...bk, staffIds, assignedServices } : bk)))
 
     if (supabase) {
-      supabase.from('bookings').update({ staff_ids: staffIds }).eq('id', bookingId).then(({ error }) => {
+      supabase.from('bookings').update({ staff_ids: staffIds, assigned_services: assignedServices }).eq('id', bookingId).then(({ error }) => {
         if (error) console.error('Error allocating staff in Supabase:', error.message)
       })
     }
@@ -541,6 +560,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       prev.map((bk) => {
         if (bk.id !== bookingId) return bk
         const updated: Booking = { ...bk, paymentStatus }
+        if (paymentStatus === 'fully_paid') updated.bookingStatus = 'completed'
         if (paymentStatus === 'downpayment_paid') {
           updated.downpaymentAmount = amount ?? bk.downpaymentAmount ?? bk.totalPrice * 0.5
         }
@@ -551,6 +571,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (supabase) {
       supabase.from('bookings').update({
         payment_status: paymentStatus,
+        ...(paymentStatus === 'fully_paid' ? { booking_status: 'completed' } : {}),
         ...(amount ? { downpayment_amount: amount } : {}),
       }).eq('id', bookingId).then(({ error }) => {
         if (error) console.error('Error updating payment status in Supabase:', error.message)

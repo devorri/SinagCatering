@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { Bot, Clock3, LogOut, Mail, MapPin, Menu, Phone, Sparkles, User, X } from 'lucide-react'
+import Lenis from 'lenis'
+import { Bot, Clock3, LogOut, Mail, MapPin, Menu, Phone, User, X } from 'lucide-react'
 import './App.css'
 import { AppProvider, useApp } from './context/AppContext'
 import { AdminDashboard } from './views/AdminDashboard'
@@ -16,7 +17,11 @@ type ViewName = 'landing' | 'login' | 'client' | 'admin' | 'booking'
 
 function AppContent() {
   const { currentUser, logout, updatePaymentStatus } = useApp()
-  const [activeView, setActiveView] = useState<ViewName>(() => (currentUser?.role === 'admin' ? 'admin' : 'landing'))
+  const [activeView, setActiveView] = useState<ViewName>(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('view') === 'admin' || window.location.hash === '#admin') return 'admin'
+    return currentUser?.role === 'admin' ? 'admin' : 'landing'
+  })
   const [isChatOpen, setIsChatOpen] = useState(false)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
@@ -32,6 +37,17 @@ function AppContent() {
     setIsMobileMenuOpen(false)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
+
+  useEffect(() => {
+    const handleHash = () => {
+      const params = new URLSearchParams(window.location.search)
+      if (params.get('view') === 'admin' || window.location.hash === '#admin') {
+        setActiveView('admin')
+      }
+    }
+    window.addEventListener('hashchange', handleHash)
+    return () => window.removeEventListener('hashchange', handleHash)
+  }, [])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -81,7 +97,7 @@ function AppContent() {
 
         // Always ensure successful return marks downpayment in test simulation
         updatePaymentStatus(bookingId, 'downpayment_paid')
-        setPaymongoNotice('🎉 PayMongo confirmed your 50% downpayment! Your event reservation is officially locked.')
+        setPaymongoNotice('PayMongo confirmed your 50% downpayment! Your event reservation is officially locked.')
         setActiveView('client')
       }
 
@@ -89,9 +105,59 @@ function AppContent() {
     }
   }, [updatePaymentStatus])
 
+  useEffect(() => {
+    // Initialize Lenis for buttery smooth inertial scroll (same as Assuretech)
+    const lenis = new Lenis({
+      duration: 1.2,
+      easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+      orientation: 'vertical',
+      gestureOrientation: 'vertical',
+      smoothWheel: true,
+      wheelMultiplier: 1,
+      touchMultiplier: 1.8,
+    })
+
+    function raf(time: number) {
+      lenis.raf(time)
+      requestAnimationFrame(raf)
+    }
+
+    const rafId = requestAnimationFrame(raf)
+
+    // Reveal animation observer (same as Assuretech)
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('revealed')
+        }
+      })
+    }, { threshold: 0.08, rootMargin: '0px 0px -40px 0px' })
+
+    document.querySelectorAll('.reveal').forEach(el => observer.observe(el))
+
+    ;(window as unknown as { __lenis?: Lenis }).__lenis = lenis
+
+    return () => {
+      cancelAnimationFrame(rafId)
+      lenis.destroy()
+      observer.disconnect()
+    }
+  }, [activeView])
+
   const handleNavigateHome = (e: React.MouseEvent) => {
     e.preventDefault()
-    navigateTo('landing')
+    setIsMobileMenuOpen(false)
+    const lenis = (window as unknown as { __lenis?: Lenis }).__lenis
+    if (activeView !== 'landing') {
+      setActiveView('landing')
+      setTimeout(() => {
+        if (lenis) lenis.scrollTo(0, { duration: 1.2 })
+        else window.scrollTo({ top: 0, behavior: 'smooth' })
+      }, 50)
+    } else {
+      if (lenis) lenis.scrollTo(0, { duration: 1.2 })
+      else window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
   }
 
   const handleStartBooking = () => {
@@ -128,14 +194,27 @@ function AppContent() {
   const scrollLandingSection = (e: React.MouseEvent, sectionId: string) => {
     e.preventDefault()
     setIsMobileMenuOpen(false)
+    const lenis = (window as unknown as { __lenis?: Lenis }).__lenis
 
     if (activeView !== 'landing') {
       setActiveView('landing')
-      setTimeout(() => document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' }), 100)
+      setTimeout(() => {
+        const target = document.getElementById(sectionId)
+        if (target && lenis) {
+          lenis.scrollTo(target, { offset: -85, duration: 1.2 })
+        } else {
+          target?.scrollIntoView({ behavior: 'smooth' })
+        }
+      }, 100)
       return
     }
 
-    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' })
+    const target = document.getElementById(sectionId)
+    if (target && lenis) {
+      lenis.scrollTo(target, { offset: -85, duration: 1.2 })
+    } else {
+      target?.scrollIntoView({ behavior: 'smooth' })
+    }
   }
 
   if (activeView === 'admin') {
@@ -148,11 +227,6 @@ function AppContent() {
 
   return (
     <main className="app-main-layout">
-      <div className="preview-mode-banner">
-        <Sparkles size={14} style={{ color: 'var(--gold)' }} />
-        <span>SINAG'S CATERING SERVICES - KIDS PARTY BOOKING, SCHEDULING, AND AI PACKAGE RECOMMENDATIONS</span>
-      </div>
-
       {paymongoNotice && (
         <div className="alert-box success" role="status" style={{ margin: '12px auto', maxWidth: '1200px' }}>
           {paymongoNotice}

@@ -23,6 +23,8 @@ import {
   EXTRA_PASTA_RATE,
   FOOD_BUFFER_PAX,
   SINAG_PACKAGES,
+  MAIN_DISHES,
+  PASTA_DISHES,
   findTierForGuestCount,
   recommendPackage,
 } from '../data/packages'
@@ -70,11 +72,28 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const [extraMain, setExtraMain] = useState(initialAIFormData?.extra_main_count || 0)
   const [extraPasta, setExtraPasta] = useState(initialAIFormData?.extra_pasta_count || 0)
   const [extraDessert, setExtraDessert] = useState(initialAIFormData?.extra_dessert_count || 0)
+  const [selectedMainDishes, setSelectedMainDishes] = useState<string[]>([])
+  const [selectedPastaDishes, setSelectedPastaDishes] = useState<string[]>([])
+  const [extraMainDishes, setExtraMainDishes] = useState<string[]>([])
+  const [extraPastaDishes, setExtraPastaDishes] = useState<string[]>([])
 
-  // Step 3 — Calendar
-  const [eventDate, setEventDate] = useState('')
-  const [currentYear, setCurrentYear] = useState(new Date().getFullYear())
-  const [currentMonth, setCurrentMonth] = useState(new Date().getMonth())
+  // Step 3 — Calendar (14-Day Advance Booking Rule: initial focus starts on valid date)
+  const getMinBookingDate = () => {
+    const d = new Date()
+    d.setHours(0, 0, 0, 0)
+    d.setDate(d.getDate() + 14)
+    return d
+  }
+  const formatToDateStr = (d: Date) => {
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+
+  const [eventDate, setEventDate] = useState(() => formatToDateStr(getMinBookingDate()))
+  const [currentYear, setCurrentYear] = useState(() => getMinBookingDate().getFullYear())
+  const [currentMonth, setCurrentMonth] = useState(() => getMinBookingDate().getMonth())
 
   // Step 4 — Client Details & Category Selection
   const [clientName, setClientName] = useState(currentUser?.name || '')
@@ -163,11 +182,15 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     return recommendPackage(aiGuestCount, aiBudget, aiNeedsEntertainment)
   }, [aiGuestCount, aiBudget, aiNeedsEntertainment])
 
-  const addonControls = [
-    { label: 'Extra Main Dish', rate: EXTRA_MAIN_RATE, value: extraMain, cost: calculations.extraMainCost, setter: setExtraMain },
-    { label: 'Extra Pasta Dish', rate: EXTRA_PASTA_RATE, value: extraPasta, cost: calculations.extraPastaCost, setter: setExtraPasta },
-    { label: 'Extra Dessert', rate: EXTRA_DESSERT_RATE, value: extraDessert, cost: calculations.extraDessertCost, setter: setExtraDessert },
-  ]
+
+
+  const selectedDishCount = selectedMainDishes.length + selectedPastaDishes.length
+  const toggleDish = (dish: string, kind: 'main' | 'pasta') => {
+    const setter = kind === 'main' ? setSelectedMainDishes : setSelectedPastaDishes
+    setter((current) => current.includes(dish)
+      ? current.filter((value) => value !== dish)
+      : selectedDishCount < 4 ? [...current, dish] : current)
+  }
 
   // Calendar logic
   const calendarDays = useMemo(() => {
@@ -206,6 +229,13 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   }
 
   const handleDateSelect = (dateStr: string) => {
+    const minimumDate = new Date()
+    minimumDate.setHours(0, 0, 0, 0)
+    minimumDate.setDate(minimumDate.getDate() + 14)
+    if (new Date(`${dateStr}T00:00:00`) < minimumDate) {
+      setErrorMsg('Bookings require at least 14 days advance notice.')
+      return
+    }
     const isBlocked = blockedDates.includes(dateStr)
     const isBooked = bookings.some(
       (b) => b.eventDate === dateStr && b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit',
@@ -227,14 +257,22 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   }
 
   const handleApplyAiRecommendation = () => {
+    if (aiRecommendation.budgetExceeded) {
+      setErrorMsg(`No standard package is available within your ₱${aiBudget.toLocaleString()} budget. Please increase the budget or compare the standard packages.`)
+      return
+    }
     const idx = SINAG_PACKAGES.findIndex((pkg) => pkg.id === aiRecommendation.pkg.id)
     if (idx !== -1) {
       setSelectedPkgIndex(idx)
     }
     setGuestCount(aiGuestCount)
-    setSelectedAIAddonIds([])
+    setExtraMain(aiRecommendation.suggestedAddons.extraMain)
+    setExtraPasta(aiRecommendation.suggestedAddons.extraPasta)
+    setExtraDessert(aiRecommendation.suggestedAddons.extraDessert)
+    setSelectedAIAddonIds(aiRecommendation.suggestedAddons.addonIds)
     setAiAppliedBanner(true)
     setPackageSelectMode('standard')
+    setCurrentStep(1) // Advance directly to Customize step to review the configured package & add-ons
     setErrorMsg('')
   }
 
@@ -295,6 +333,24 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       return
     }
 
+    const minBookingLeadTime = getMinBookingDate()
+    if (!eventDate || new Date(`${eventDate}T00:00:00`) < minBookingLeadTime) {
+      setErrorMsg('Bookings require at least 14 days advance notice. Please select an eligible date.')
+      setIsSubmitting(false)
+      return
+    }
+
+    if (extraMain > 0 && (extraMainDishes.slice(0, extraMain).some((dish) => !dish) || new Set(extraMainDishes.slice(0, extraMain)).size !== extraMain)) {
+      setErrorMsg('Please choose a different main dish for every extra main-dish add-on.')
+      setIsSubmitting(false)
+      return
+    }
+    if (extraPasta > 0 && (extraPastaDishes.slice(0, extraPasta).some((dish) => !dish) || new Set(extraPastaDishes.slice(0, extraPasta)).size !== extraPasta)) {
+      setErrorMsg('Please choose a different pasta dish for every extra pasta add-on.')
+      setIsSubmitting(false)
+      return
+    }
+
     const finalEventType = eventType === 'Others (Please Specify)' && customEventType.trim()
       ? `Other: ${customEventType.trim()}`
       : eventType
@@ -317,12 +373,16 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
         extraPastaCount: extraPasta,
         extraDessertCount: extraDessert,
         selectedAddonIds: selectedAIAddonIds,
+        selectedMainDishes,
+        selectedPastaDishes,
+        extraMainDishes: extraMainDishes.slice(0, extraMain),
+        extraPastaDishes: extraPastaDishes.slice(0, extraPasta),
       },
       totalPrice: calculations.totalPrice,
       downpaymentAmount: calculations.downpayment,
       paymentMethod,
       gcashRefNumber: gcashRefNumber.trim() || undefined,
-      notes: `${currentPkg.pricePerHead !== undefined ? 'Per-head pricing; ' : `Tier: ${calculations.tier.pax} pax + ${FOOD_BUFFER_PAX} pax buffer. `}Extra Main: ${extraMain}, Extra Pasta: ${extraPasta}, Extra Dessert: ${extraDessert}. Flat add-ons: ${selectedAIAddonIds.join(', ') || 'none'}.\nPayment: ${paymentMethod.toUpperCase()}${gcashRefNumber ? ` (Ref: ${gcashRefNumber})` : ' (Pending submission)'}.\n${notes}`,
+      notes: `${currentPkg.pricePerHead !== undefined ? 'Per-head pricing; ' : `Tier: ${calculations.tier.pax} pax + ${FOOD_BUFFER_PAX} pax buffer. `}Selected mains: ${selectedMainDishes.join(', ') || 'none'}. Selected pasta: ${selectedPastaDishes.join(', ') || 'none'}. Extra mains: ${extraMainDishes.slice(0, extraMain).join(', ') || 'none'}. Extra pasta: ${extraPastaDishes.slice(0, extraPasta).join(', ') || 'none'}. Extra Dessert: ${extraDessert}. Flat add-ons: ${selectedAIAddonIds.join(', ') || 'none'}.\nPayment: ${paymentMethod.toUpperCase()}${gcashRefNumber ? ` (Ref: ${gcashRefNumber})` : ' (Pending submission)'}.\n${notes}`,
     }
 
     if (paymentMethod === 'paymongo') {
@@ -378,7 +438,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
     createBooking(bookingData)
 
-    setSuccessMsg('🎉 Booking submitted successfully! You will receive an SMS and email notification with your booking reference. Please wait for downpayment verification.')
+    setSuccessMsg('Booking submitted successfully! You will receive an SMS and email notification with your booking reference. Please wait for downpayment verification.')
     setIsSubmitting(false)
     setTimeout(onComplete, 2400)
   }
@@ -408,7 +468,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
         <div className="alert-box success" style={{ marginBottom: '24px', background: 'linear-gradient(135deg, #FFFDF0 0%, #FFF3D6 100%)', border: '1px solid var(--gold)' }}>
           <Sparkles size={18} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />
           <span>
-            <strong>✨ AI Package Preset Applied:</strong> Recommended package (<strong>{currentPkg.shortName}</strong>) and <strong>{guestCount} guests</strong> have been configured for your event!
+            <strong>AI Package Preset Applied:</strong> Recommended package (<strong>{currentPkg.shortName}</strong>) and <strong>{guestCount} guests</strong> have been configured for your event!
           </span>
         </div>
       )}
@@ -610,13 +670,13 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     </p>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <span style={{ fontSize: '0.78rem', color: 'var(--muted)', display: 'block' }}>Estimated Total</span>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--muted)', display: 'block' }}>{aiRecommendation.budgetExceeded ? 'Minimum package price' : 'Estimated Total'}</span>
                     <strong className="font-number" style={{ fontSize: '1.4rem', color: 'var(--terracotta)' }}>
-                      PHP {aiRecommendation.estimatedTotal.toLocaleString()}
+                      PHP {(aiRecommendation.budgetExceeded ? aiRecommendation.tier.price : aiRecommendation.estimatedTotal).toLocaleString()}
                     </strong>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block' }}>
+                    {!aiRecommendation.budgetExceeded && <span style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block' }}>
                       50% Downpayment: PHP {Math.round(aiRecommendation.estimatedTotal * 0.5).toLocaleString()}
-                    </span>
+                    </span>}
                   </div>
                 </div>
 
@@ -626,6 +686,13 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   <span>✓ <strong>{aiRecommendation.pkg.freebies.length} freebies</strong></span>
                   <span>✓ <strong>{aiRecommendation.pkg.entertainment.length} entertainment</strong></span>
                 </div>
+
+                {aiRecommendation.customizationNotes.length > 0 && (
+                  <div style={{ marginTop: '12px', background: '#FEF3C7', border: '1px solid #FDE68A', padding: '10px 14px', borderRadius: '8px', fontSize: '0.82rem', color: '#92400E' }}>
+                    <strong style={{ display: 'block', marginBottom: '2px', color: '#78350F' }}>{aiRecommendation.budgetExceeded ? `No package within ₱${aiBudget.toLocaleString()}:` : `Optimal Budget Fit (Maximized within ₱${aiBudget.toLocaleString()} limit):`}</strong>
+                    {aiRecommendation.customizationNotes.join(' · ')}
+                  </div>
+                )}
               </div>
 
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
@@ -639,8 +706,9 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 <button
                   type="button"
                   onClick={handleApplyAiRecommendation}
+                  disabled={aiRecommendation.budgetExceeded}
                   className="btn-hero-primary"
-                  style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', opacity: aiRecommendation.budgetExceeded ? 0.55 : 1, cursor: aiRecommendation.budgetExceeded ? 'not-allowed' : 'pointer' }}
                 >
                   <Sparkles size={16} /> Apply Recommendation & Select Package
                 </button>
@@ -704,6 +772,104 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 </div>
               </div>
 
+              {/* Checklist Item 4: Interactive Menu Selection Grid (Main Dishes & Pasta) */}
+              <div className="dish-swap-box" style={{ background: '#FFFDF9', border: '1.5px solid var(--gold)', borderRadius: 'var(--radius-md)', padding: '22px', marginBottom: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+                  <div>
+                    <h4 className="dish-swap-title" style={{ margin: 0, fontSize: '1.15rem' }}>Select Your 4 Included Dishes</h4>
+                    <p style={{ fontSize: '0.82rem', color: 'var(--muted)', margin: '4px 0 0' }}>
+                      Choose up to 4 items across our signature main courses and pasta dishes.
+                    </p>
+                  </div>
+                  <div style={{
+                    padding: '4px 12px',
+                    borderRadius: '20px',
+                    fontSize: '0.82rem',
+                    fontWeight: 700,
+                    background: selectedDishCount === 4 ? '#ECFDF5' : '#FEF3C7',
+                    color: selectedDishCount === 4 ? '#059669' : '#D97706',
+                    border: `1px solid ${selectedDishCount === 4 ? '#A7F3D0' : '#FDE68A'}`,
+                  }}>
+                    {selectedDishCount} / 4 Selected
+                  </div>
+                </div>
+
+                {/* Main Dishes Selection */}
+                <div style={{ marginBottom: '18px' }}>
+                  <h5 style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--terracotta)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 10px' }}>
+                    Main Dishes (Select from menu)
+                  </h5>
+                  <div className="addon-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
+                    {MAIN_DISHES.map((dish) => {
+                      const isSelected = selectedMainDishes.includes(dish)
+                      const isDisabled = !isSelected && selectedDishCount >= 4
+                      return (
+                        <label
+                          key={dish}
+                          className={`addon-card ${isSelected ? 'active-dish' : ''}`}
+                          style={{
+                            cursor: isDisabled ? 'not-allowed' : 'pointer',
+                            opacity: isDisabled ? 0.45 : 1,
+                            padding: '10px 14px',
+                            background: isSelected ? '#FFF8E6' : '#FFFFFF',
+                            borderColor: isSelected ? 'var(--gold)' : 'var(--line)',
+                          }}
+                        >
+                          <span style={{ fontWeight: 600 }}>{dish}</span>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            disabled={isDisabled}
+                            onChange={() => toggleDish(dish, 'main')}
+                          />
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Pasta Dishes Selection */}
+                <div>
+                  <h5 style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--terracotta)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 10px' }}>
+                    Pasta Dishes (Select from menu)
+                  </h5>
+                  <div className="addon-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
+                    {PASTA_DISHES.map((dish) => {
+                      const isSelected = selectedPastaDishes.includes(dish)
+                      const isDisabled = !isSelected && selectedDishCount >= 4
+                      return (
+                        <label
+                          key={dish}
+                          className={`addon-card ${isSelected ? 'active-dish' : ''}`}
+                          style={{
+                            cursor: isDisabled ? 'not-allowed' : 'pointer',
+                            opacity: isDisabled ? 0.45 : 1,
+                            padding: '10px 14px',
+                            background: isSelected ? '#FFF8E6' : '#FFFFFF',
+                            borderColor: isSelected ? 'var(--gold)' : 'var(--line)',
+                          }}
+                        >
+                          <span style={{ fontWeight: 600 }}>{dish}</span>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            disabled={isDisabled}
+                            onChange={() => toggleDish(dish, 'pasta')}
+                          />
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {selectedDishCount >= 4 && (
+                  <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', padding: '10px 14px', borderRadius: '8px', fontSize: '0.84rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', marginTop: '14px' }}>
+                    <Check size={18} style={{ color: '#059669', flexShrink: 0 }} />
+                    <span>Maximum of 4 dishes selected. You can add extra viands or pasta courses in the add-ons below.</span>
+                  </div>
+                )}
+              </div>
+
               {/* Freebies & Entertainment */}
               <div className="dish-swap-box">
                 <h4 className="dish-swap-title">Freebies & Coordinated Entertainment</h4>
@@ -720,7 +886,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 </div>
               </div>
 
-              {/* Extra Food Add-ons */}
+              {/* Checklist Item 5: Optional Extra Food Add-ons with Dynamic Dish Selector Dropdowns */}
               {currentPkg.pricePerHead !== undefined ? (
                 <div style={{ marginTop: '32px', paddingTop: '24px', borderTop: '1px solid var(--line)' }}>
                   <h4 className="dish-swap-title">Optional Add-ons</h4>
@@ -743,31 +909,147 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   </div>
                 </div>
               ) : (
-              <div style={{ marginTop: '32px', paddingTop: '24px', borderTop: '1px solid var(--line)' }}>
-                <h4 className="dish-swap-title">Optional Extra Food Add-ons (Calculated per guest)</h4>
-                <div className="addon-grid">
-                  {addonControls.map(({ label, rate, value, cost, setter }) => (
-                    <div key={label} className="addon-card">
-                      <span>{label}</span>
-                      <small>+PHP {rate} / pax</small>
-                      <div>
-                        <button type="button" className="stepper-btn" onClick={() => setter((prev: number) => Math.max(0, prev - 1))}>
-                          <Minus size={12} />
-                        </button>
-                        <strong>{value}</strong>
-                        <button type="button" className="stepper-btn" onClick={() => setter((prev: number) => prev + 1)}>
-                          <Plus size={12} />
-                        </button>
+                <div style={{ marginTop: '32px', paddingTop: '24px', borderTop: '1px solid var(--line)' }}>
+                  <h4 className="dish-swap-title">Optional Extra Food Add-ons (Calculated per guest)</h4>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--muted)', margin: '0 0 16px' }}>
+                    Select additional viands or pasta courses for your catering buffet. Incrementing spawning dropdown selectors to pick distinct dishes.
+                  </p>
+                  <div className="addon-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', alignItems: 'start' }}>
+                    {/* Extra Main Dish Card with Dynamic Selector Dropdowns */}
+                    <div className="addon-card" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '18px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                        <div>
+                          <strong style={{ display: 'block', fontSize: '1rem' }}>Extra Main Dish</strong>
+                          <small style={{ color: 'var(--muted)' }}>+PHP {EXTRA_MAIN_RATE} / pax</small>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <button type="button" className="stepper-btn" onClick={() => setExtraMain((prev) => Math.max(0, prev - 1))}>
+                            <Minus size={12} />
+                          </button>
+                          <strong style={{ minWidth: '20px', textAlign: 'center' }}>{extraMain}</strong>
+                          <button type="button" className="stepper-btn" onClick={() => setExtraMain((prev) => prev + 1)}>
+                            <Plus size={12} />
+                          </button>
+                        </div>
                       </div>
-                      {value > 0 && (
-                        <div style={{ fontSize: '0.75rem', color: 'var(--terracotta)', fontWeight: 700, marginTop: '4px' }}>
-                          +PHP {cost.toLocaleString()}
+                      {extraMain > 0 && (
+                        <div style={{ fontSize: '0.82rem', color: 'var(--terracotta)', fontWeight: 700 }}>
+                          +PHP {calculations.extraMainCost.toLocaleString()} ({extraMain} dish{extraMain > 1 ? 'es' : ''} × ₱{EXTRA_MAIN_RATE} × {guestCount} guests)
+                        </div>
+                      )}
+
+                      {/* Dynamically spawned dropdowns for Extra Main Dish */}
+                      {extraMain > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%', borderTop: '1px dashed var(--line)', paddingTop: '12px' }}>
+                          {Array.from({ length: extraMain }).map((_, index) => (
+                            <div key={`extra-main-${index}`}>
+                              <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>
+                                Extra Main Dish #{index + 1} Selection:
+                              </label>
+                              <select
+                                className="input-field"
+                                style={{ padding: '8px 12px', fontSize: '0.85rem' }}
+                                value={extraMainDishes[index] || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value
+                                  setExtraMainDishes((prev) => {
+                                    const next = [...prev]
+                                    next[index] = val
+                                    return next
+                                  })
+                                }}
+                              >
+                                <option value="">-- Choose Extra Main Dish #{index + 1} --</option>
+                                {MAIN_DISHES.map((dish) => (
+                                  <option key={dish} value={dish} disabled={extraMainDishes.some((selected, selectedIndex) => selectedIndex !== index && selected === dish)}>{dish}</option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
-                  ))}
+
+                    {/* Extra Pasta Dish Card with Dynamic Selector Dropdowns */}
+                    <div className="addon-card" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '18px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                        <div>
+                          <strong style={{ display: 'block', fontSize: '1rem' }}>Extra Pasta Dish</strong>
+                          <small style={{ color: 'var(--muted)' }}>+PHP {EXTRA_PASTA_RATE} / pax</small>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <button type="button" className="stepper-btn" onClick={() => setExtraPasta((prev) => Math.max(0, prev - 1))}>
+                            <Minus size={12} />
+                          </button>
+                          <strong style={{ minWidth: '20px', textAlign: 'center' }}>{extraPasta}</strong>
+                          <button type="button" className="stepper-btn" onClick={() => setExtraPasta((prev) => prev + 1)}>
+                            <Plus size={12} />
+                          </button>
+                        </div>
+                      </div>
+                      {extraPasta > 0 && (
+                        <div style={{ fontSize: '0.82rem', color: 'var(--terracotta)', fontWeight: 700 }}>
+                          +PHP {calculations.extraPastaCost.toLocaleString()} ({extraPasta} pasta × ₱{EXTRA_PASTA_RATE} × {guestCount} guests)
+                        </div>
+                      )}
+
+                      {/* Dynamically spawned dropdowns for Extra Pasta Dish */}
+                      {extraPasta > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%', borderTop: '1px dashed var(--line)', paddingTop: '12px' }}>
+                          {Array.from({ length: extraPasta }).map((_, index) => (
+                            <div key={`extra-pasta-${index}`}>
+                              <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>
+                                Extra Pasta Dish #{index + 1} Selection:
+                              </label>
+                              <select
+                                className="input-field"
+                                style={{ padding: '8px 12px', fontSize: '0.85rem' }}
+                                value={extraPastaDishes[index] || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value
+                                  setExtraPastaDishes((prev) => {
+                                    const next = [...prev]
+                                    next[index] = val
+                                    return next
+                                  })
+                                }}
+                              >
+                                <option value="">-- Choose Extra Pasta Dish #{index + 1} --</option>
+                                {PASTA_DISHES.map((dish) => (
+                                  <option key={dish} value={dish} disabled={extraPastaDishes.some((selected, selectedIndex) => selectedIndex !== index && selected === dish)}>{dish}</option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Extra Dessert Card */}
+                    <div className="addon-card" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '18px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                        <div>
+                          <strong style={{ display: 'block', fontSize: '1rem' }}>Extra Dessert</strong>
+                          <small style={{ color: 'var(--muted)' }}>+PHP {EXTRA_DESSERT_RATE} / pax</small>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <button type="button" className="stepper-btn" onClick={() => setExtraDessert((prev) => Math.max(0, prev - 1))}>
+                            <Minus size={12} />
+                          </button>
+                          <strong style={{ minWidth: '20px', textAlign: 'center' }}>{extraDessert}</strong>
+                          <button type="button" className="stepper-btn" onClick={() => setExtraDessert((prev) => prev + 1)}>
+                            <Plus size={12} />
+                          </button>
+                        </div>
+                      </div>
+                      {extraDessert > 0 && (
+                        <div style={{ fontSize: '0.82rem', color: 'var(--terracotta)', fontWeight: 700 }}>
+                          +PHP {calculations.extraDessertCost.toLocaleString()} (+₱{EXTRA_DESSERT_RATE} × {guestCount} guests)
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
               )}
             </div>
 
@@ -869,17 +1151,20 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 if (!item.day) return <div key={`empty-${idx}`} className="calendar-day-cell empty" />
 
                 const isBlocked = blockedDates.includes(item.dateStr)
+                const minValidDate = getMinBookingDate()
+                const isTooSoon = new Date(`${item.dateStr}T00:00:00`) < minValidDate
                 const isBooked = bookings.some((b) => b.eventDate === item.dateStr && b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit')
                 const bookingCount = getBookingCountForDate(item.dateStr)
-                const isSelected = eventDate === item.dateStr
                 const hasPending = hasPendingBookings(item.dateStr)
 
+                const isClickable = !isTooSoon && !isBlocked && !isBooked
+                const isSelected = eventDate === item.dateStr && isClickable
+
                 let stateClass = 'available'
-                if (isBlocked) stateClass = 'blocked'
+                if (isTooSoon) stateClass = 'lead-time-disabled'
+                else if (isBlocked) stateClass = 'blocked'
                 else if (isBooked) stateClass = 'booked'
                 else if (hasPending) stateClass = 'pending-booking'
-
-                const isClickable = !isBlocked && !isBooked
 
                 return (
                   <button
@@ -888,9 +1173,12 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     className={`calendar-day-cell ${stateClass} ${isSelected ? 'selected' : ''} ${!isClickable ? 'disabled' : ''}`}
                     onClick={() => isClickable && handleDateSelect(item.dateStr)}
                     disabled={!isClickable}
+                    title={isTooSoon ? 'Requires at least 14 days advance booking' : isBlocked ? 'Blocked date' : isBooked ? 'Already reserved' : 'Available for booking'}
                   >
                     <span className="calendar-day-number">{item.day}</span>
-                    {isBlocked ? (
+                    {isTooSoon ? (
+                      <span className="calendar-lead-time-tag">14d notice</span>
+                    ) : isBlocked ? (
                       <span className="calendar-blocked-tag">
                         Blocked
                       </span>
@@ -908,12 +1196,13 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
               })}
             </div>
 
-            {/* Calendar Legend Bar strictly matching tokens */}
+            {/* Calendar Legend Bar with 14-day notice status */}
             <div className="calendar-legend-bar">
               <div className="legend-item"><span className="legend-dot available" /> Available</div>
               <div className="legend-item"><span className="legend-dot booked" /> Reserved</div>
               <div className="legend-item"><span className="legend-dot blocked" /> Blocked</div>
               <div className="legend-item"><span className="legend-dot pending-booking" /> Pending Request</div>
+              <div className="legend-item"><span className="legend-dot" style={{ background: '#9CA3AF' }} /> 14-Day Lead Buffer</div>
             </div>
 
             {eventDate && (
@@ -1103,49 +1392,37 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   </button>
                 </div>
 
-                {/* QR Ph Container Display */}
+                {/* Checklist Item 7: Official GCash / QR Ph Owner Asset Integration */}
                 {paymentMethod !== 'paymongo' && (
-                <div style={{ background: 'var(--paper-warm)', padding: '18px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--line)', marginBottom: '16px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-                    <div style={{ width: '90px', height: '90px', background: '#FFF', padding: '6px', borderRadius: '8px', border: '1px solid var(--line)', display: 'grid', placeItems: 'center' }}>
-                      {/* Stylized QR Ph Visual Representation */}
-                      <svg viewBox="0 0 100 100" width="76" height="76">
-                        <rect width="100" height="100" fill="#FFF" />
-                        <rect x="10" y="10" width="24" height="24" fill="#2C1A00" rx="3" />
-                        <rect x="15" y="15" width="14" height="14" fill="#FFF" rx="2" />
-                        <rect x="19" y="19" width="6" height="6" fill="#2C1A00" />
-                        
-                        <rect x="66" y="10" width="24" height="24" fill="#2C1A00" rx="3" />
-                        <rect x="71" y="15" width="14" height="14" fill="#FFF" rx="2" />
-                        <rect x="75" y="19" width="6" height="6" fill="#2C1A00" />
-
-                        <rect x="10" y="66" width="24" height="24" fill="#2C1A00" rx="3" />
-                        <rect x="15" y="71" width="14" height="14" fill="#FFF" rx="2" />
-                        <rect x="19" y="75" width="6" height="6" fill="#2C1A00" />
-
-                        <rect x="42" y="10" width="16" height="8" fill="#E8820A" />
-                        <rect x="42" y="24" width="8" height="16" fill="#2C1A00" />
-                        <rect x="56" y="28" width="6" height="14" fill="#E8820A" />
-                        <rect x="42" y="46" width="16" height="16" fill="#2C1A00" rx="2" />
-                        <rect x="66" y="46" width="24" height="8" fill="#2C1A00" />
-                        <rect x="74" y="62" width="16" height="24" fill="#2C1A00" />
-                        <rect x="42" y="70" width="18" height="16" fill="#E8820A" />
-                      </svg>
+                <div style={{ background: '#FFFFFF', padding: '18px', borderRadius: 'var(--radius-md)', border: '1.5px solid #005CE6', marginBottom: '18px', boxShadow: '0 4px 14px rgba(0, 92, 230, 0.08)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+                    <div style={{ background: '#F0F7FF', padding: '10px', borderRadius: '10px', border: '1px solid #BFDBFE', textAlign: 'center', flexShrink: 0 }}>
+                      <img
+                        src="/sinag_gcash_qr.png"
+                        alt="Official Sinag Catering GCash / QR Ph Code"
+                        style={{ width: '130px', height: '130px', display: 'block', borderRadius: '6px', objectFit: 'contain' }}
+                      />
+                      <span style={{ fontSize: '0.66rem', fontWeight: 800, color: '#005CE6', letterSpacing: '0.04em', marginTop: '6px', display: 'block' }}>
+                        SCAN TO PAY (QR PH / GCASH)
+                      </span>
                     </div>
 
-                    <div style={{ flex: 1, minWidth: '200px' }}>
-                      <span style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--terracotta)' }}>
-                        Official QR Ph / GCash Merchant
+                    <div style={{ flex: 1, minWidth: '220px' }}>
+                      <span style={{ display: 'inline-block', fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#1E40AF', background: '#DBEAFE', padding: '2px 8px', borderRadius: '4px', marginBottom: '6px' }}>
+                        Official Merchant QR Code
                       </span>
-                      <strong style={{ display: 'block', fontSize: '1rem', color: 'var(--ink)' }}>
+                      <strong style={{ display: 'block', fontSize: '1.1rem', color: 'var(--ink)' }}>
                         Sinag's Catering Services (Sunshine C.)
                       </strong>
-                      <div style={{ fontSize: '0.85rem', color: 'var(--muted)', marginTop: '2px' }}>
-                        GCash Number: <strong>0928 714 4597</strong>
+                      <div style={{ fontSize: '0.88rem', color: 'var(--muted)', marginTop: '4px' }}>
+                        Mobile Hotline: <strong style={{ color: 'var(--ink)' }}>0928 714 4597</strong>
                       </div>
-                      <div style={{ fontSize: '0.82rem', color: 'var(--ink-light)', marginTop: '4px' }}>
-                        Required 50% Downpayment: <strong style={{ color: 'var(--terracotta)' }}>{formatMoney(calculations.downpayment, currentPkg.currency)}</strong>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--ink-light)', marginTop: '6px' }}>
+                        Required 50% Downpayment: <strong style={{ color: 'var(--terracotta)', fontSize: '1.05rem' }}>{formatMoney(calculations.downpayment, currentPkg.currency)}</strong>
                       </div>
+                      <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: 'var(--muted)', lineHeight: 1.4 }}>
+                        Open your GCash or any QR Ph banking app, scan this code, and confirm transfer to <strong>Sunshine C. (0928 714 4597)</strong>. Enter your transaction reference number below.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -1264,8 +1541,9 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
               </p>
               <p style={{ fontSize: '0.88rem', color: 'var(--muted)' }}>{guestCount} registered guests</p>
               {getBookingCountForDate(eventDate) > 0 && (
-                <p style={{ fontSize: '0.8rem', color: '#D97706' }}>
-                  ⚠️ {getBookingCountForDate(eventDate)} booking already scheduled on this date
+                <p style={{ fontSize: '0.8rem', color: '#D97706', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <AlertCircle size={14} />
+                  <span>{getBookingCountForDate(eventDate)} booking already scheduled on this date</span>
                 </p>
               )}
             </div>
