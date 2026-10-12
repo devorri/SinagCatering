@@ -417,6 +417,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
                       placeholder="Your name"
                       value={inquiryName}
                       onChange={(e) => setInquiryName(e.target.value)}
+                      style={{ width: '100%', boxSizing: 'border-box' }}
                     />
                   </div>
                   <div>
@@ -428,19 +429,21 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
                       placeholder="Your email"
                       value={inquiryEmail}
                       onChange={(e) => setInquiryEmail(e.target.value)}
+                      style={{ width: '100%', boxSizing: 'border-box' }}
                     />
                   </div>
                 </div>
 
-                <div style={{ marginBottom: '16px' }}>
+                <div style={{ marginBottom: '18px' }}>
                   <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Message</label>
                   <textarea
                     className="input-field"
-                    rows={3}
+                    rows={4}
                     required
                     placeholder="Ask about dates, menus, or custom setups..."
                     value={inquiryMessage}
                     onChange={(e) => setInquiryMessage(e.target.value)}
+                    style={{ width: '100%', boxSizing: 'border-box', minHeight: '120px', resize: 'vertical', display: 'block' }}
                   />
                 </div>
 

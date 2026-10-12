@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import Lenis from 'lenis'
-import { Bot, Clock3, LogOut, Mail, MapPin, Menu, Phone, User, X } from 'lucide-react'
+import { Bot, CalendarDays, Clock3, LogOut, Mail, MapPin, Menu, Phone, User, X } from 'lucide-react'
 import './App.css'
 import { AppProvider, useApp } from './context/AppContext'
 import { AdminDashboard } from './views/AdminDashboard'
@@ -16,7 +16,13 @@ import { supabase } from './lib/supabase'
 type ViewName = 'landing' | 'login' | 'client' | 'admin' | 'booking'
 
 function AppContent() {
-  const { currentUser, logout, updatePaymentStatus } = useApp()
+  const { currentUser, bookings, logout, updatePaymentStatus } = useApp()
+  const userBookings = currentUser
+    ? bookings.filter((b) => b.email?.toLowerCase().trim() === currentUser.email?.toLowerCase().trim())
+    : []
+  const userBookingsCount = userBookings.length
+  const latestBooking = userBookings[0] || null
+
   const [activeView, setActiveView] = useState<ViewName>(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('view') === 'admin' || window.location.hash === '#admin') return 'admin'
@@ -248,9 +254,44 @@ function AppContent() {
           <a href="#about-section" onClick={(e) => scrollLandingSection(e, 'about-section')}>About</a>
           <a href="#services-section" onClick={(e) => scrollLandingSection(e, 'services-section')}>Services</a>
           <a href="#contact-section" onClick={(e) => scrollLandingSection(e, 'contact-section')}>Contact</a>
+          <button
+            type="button"
+            className={`nav-link-btn ${activeView === 'client' ? 'active' : ''}`}
+            onClick={() => {
+              setIsMobileMenuOpen(false)
+              if (!currentUser) {
+                setIsAuthModalOpen(true)
+              } else if (currentUser.role === 'admin') {
+                navigateTo('admin')
+              } else {
+                navigateTo('client')
+              }
+            }}
+          >
+            <CalendarDays size={14} />
+            <span>My Bookings</span>
+            {userBookingsCount > 0 && (
+              <span className="nav-booking-badge">{userBookingsCount}</span>
+            )}
+          </button>
         </div>
 
         <div className="nav-right-actions">
+          {currentUser && currentUser.role !== 'admin' && (
+            <button
+              type="button"
+              onClick={() => navigateTo('client')}
+              className={`btn-nav-bookings ${activeView === 'client' ? 'active' : ''}`}
+              title="Track your reservations, payment status & event timeline"
+            >
+              <CalendarDays size={15} />
+              <span>My Bookings</span>
+              {userBookingsCount > 0 && (
+                <span className="nav-booking-pill-badge">{userBookingsCount}</span>
+              )}
+            </button>
+          )}
+
           <button type="button" onClick={handleStartBooking} className="btn-hero-primary" style={{ padding: '8px 18px', fontSize: '0.8rem' }}>
             Start Booking
           </button>
@@ -306,10 +347,6 @@ function AppContent() {
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         onSuccess={() => {
-          setIsAuthModalOpen(false)
-          navigateTo('booking')
-        }}
-        onContinueAsGuest={() => {
           setIsAuthModalOpen(false)
           navigateTo('booking')
         }}

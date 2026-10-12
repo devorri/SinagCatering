@@ -24,6 +24,8 @@ import {
 import { useApp } from '../context/AppContext'
 import type { Booking } from '../types'
 import { formatMoney } from '../data/packages'
+import { PasswordStrengthIndicator, getPasswordValidationError } from '../components/PasswordStrengthIndicator'
+import { EmbeddedCheckoutModal } from '../components/EmbeddedCheckoutModal'
 
 export const ClientPortal: React.FC = () => {
   const {
@@ -76,7 +78,7 @@ export const ClientPortal: React.FC = () => {
   }
 
   // Filter bookings for current logged in client
-  const clientBookings = bookings.filter((b) => b.email === currentUser?.email)
+  const clientBookings = bookings.filter((b) => b.email?.toLowerCase().trim() === currentUser?.email?.toLowerCase().trim())
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -84,14 +86,21 @@ export const ClientPortal: React.FC = () => {
 
     if (!emailInput.trim()) return
 
-    if (!passwordInput || passwordInput.length < 8) {
-      setErrorMsg('Password must be at least 8 characters.')
-      return
-    }
-
-    if (isRegistering && !nameInput.trim()) {
-      setErrorMsg('Please enter your full name to register.')
-      return
+    if (isRegistering) {
+      if (!nameInput.trim()) {
+        setErrorMsg('Please enter your full name to register.')
+        return
+      }
+      const passwordError = getPasswordValidationError(passwordInput)
+      if (passwordError) {
+        setErrorMsg(passwordError)
+        return
+      }
+    } else {
+      if (!passwordInput) {
+        setErrorMsg('Please enter your password.')
+        return
+      }
     }
 
     const result = isRegistering
@@ -111,7 +120,7 @@ export const ClientPortal: React.FC = () => {
   }
 
   const [uploadedReceipt, setUploadedReceipt] = useState<string | null>(null)
-  const [isProcessingPayMongo, setIsProcessingPayMongo] = useState<string | null>(null)
+  const [checkoutBooking, setCheckoutBooking] = useState<Booking | null>(null)
 
   const handlePaymentUpload = (bookingId: string) => {
     const ref = paymentRefInput.trim()
@@ -126,34 +135,8 @@ export const ClientPortal: React.FC = () => {
     setPaymentProofError('')
   }
 
-  const handlePayMongoCheckout = async (booking: Booking) => {
-    setIsProcessingPayMongo(booking.id)
-    const downpaymentReq = booking.downpaymentAmount || Math.round(booking.totalPrice * 0.5)
-
-    try {
-      const res = await fetch('/api/paymongo/create-checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          bookingId: booking.id,
-          packageName: booking.packageName,
-          amount: downpaymentReq,
-          guestCount: booking.guestCount,
-          eventDate: booking.eventDate,
-          email: booking.email,
-        }),
-      })
-      const data = await res.json()
-      if (res.ok && data.checkout_url) {
-        window.location.assign(data.checkout_url)
-        return
-      }
-      alert('Could not start PayMongo session: ' + (data.error || 'Please try again'))
-    } catch {
-      alert('Network error initiating PayMongo checkout.')
-    } finally {
-      setIsProcessingPayMongo(null)
-    }
+  const handlePayMongoCheckout = (booking: Booking) => {
+    setCheckoutBooking(booking)
   }
 
   const openRebook = (booking: Booking) => {
@@ -277,9 +260,13 @@ export const ClientPortal: React.FC = () => {
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
-              <span style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '4px' }}>
-                At least 8 characters
-              </span>
+              {isRegistering ? (
+                <PasswordStrengthIndicator password={passwordInput} showChecklist={true} />
+              ) : (
+                <span style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '4px' }}>
+                  Enter your account password
+                </span>
+              )}
             </div>
 
             {errorMsg && (
@@ -559,15 +546,10 @@ export const ClientPortal: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => handlePayMongoCheckout(booking)}
-                          disabled={isProcessingPayMongo === booking.id}
                           className="portal-paymongo-btn"
                         >
                           <CreditCard size={15} />
-                          <span>
-                            {isProcessingPayMongo === booking.id
-                              ? 'Opening PayMongo Checkout...'
-                              : 'Pay with PayMongo (Card / GCash)'}
-                          </span>
+                          <span>Pay Online (GCash / Card / Maya)</span>
                         </button>
                       </div>
 
@@ -886,6 +868,26 @@ export const ClientPortal: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* EMBEDDED CHECKOUT MODAL (No external PayMongo redirect, 100% Sinag Branded) */}
+      {checkoutBooking && (
+        <EmbeddedCheckoutModal
+          isOpen={!!checkoutBooking}
+          onClose={() => setCheckoutBooking(null)}
+          bookingId={checkoutBooking.id}
+          packageName={checkoutBooking.packageName}
+          guestCount={checkoutBooking.guestCount}
+          eventDate={checkoutBooking.eventDate}
+          amount={checkoutBooking.downpaymentAmount || Math.round(checkoutBooking.totalPrice * 0.5)}
+          totalPrice={checkoutBooking.totalPrice}
+          customerName={currentUser?.name || checkoutBooking.customerName}
+          customerEmail={currentUser?.email || checkoutBooking.email}
+          customerPhone={currentUser?.phone || checkoutBooking.phone}
+          onPaymentSuccess={(_ref) => {
+            // Updated directly in database & AppContext
+          }}
+        />
       )}
     </div>
   )

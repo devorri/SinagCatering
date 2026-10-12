@@ -67,8 +67,60 @@ export const calculateTotalForPackage = (
 }
 
 export const generateLocalAIResponse = (input: string, livePackages: CateringPackage[] = SINAG_PACKAGES): AIResponse => {
-  const count = extractGuestCount(input) || 70
   const inputLower = input.toLowerCase()
+
+  // 1. FAQ: Refund & Cancellation Policy
+  if (/refund|cancell?ation|cancel|rebook|resched/i.test(inputLower)) {
+    return {
+      text: `Mabuhay! Here is Sinag Catering's official **Cancellation & Refund Policy**:\n\n` +
+        `• **30 or more days before event:** **100% Full Refund** of the amount paid.\n` +
+        `• **14 to 29 days before event:** **50% Refund** of the amount paid.\n` +
+        `• **Less than 14 days before event:** **0% Refund (Non-refundable)** because kitchen preparations, chef scheduling, and event staff are already finalized.\n\n` +
+        `✦ **Date Rescheduling:** You can rebook to another available date with at least **14 days advance notice** via the Client Portal without forfeiting your downpayment.\n\n` +
+        `For specific reservation assistance, you can also manage your booking in the Client Portal or reach our Baliwag, Bulacan desk at **0928 714 4597**!`,
+      escalate: false,
+      isLiveApi: false,
+    }
+  }
+
+  // 2. FAQ: Payment Terms, GCash, Downpayment
+  if (/downpayment|payment|deposit|gcash|paymongo|how to pay|terms of payment/i.test(inputLower) && !/recommend|package|pax|guest/i.test(inputLower)) {
+    return {
+      text: `Mabuhay! Here are our official **Payment & Reservation Terms**:\n\n` +
+        `• **50% Downpayment:** Required upon booking to officially reserve your date and lock in catering preparations.\n` +
+        `• **Remaining 50% Balance:** Settleable on or before the day of your event.\n` +
+        `• **Payment Channels:** We accept **GCash** (instant PayMongo verification or direct transfer to **0928 714 4597**), Bank Transfer, and Cash.\n\n` +
+        `You can easily upload GCash receipts or verify payment directly in your Sinag Client Portal!`,
+      escalate: false,
+      isLiveApi: false,
+    }
+  }
+
+  // 3. FAQ: Lead Time
+  if (/lead time|advance|notice|how early|how many days/i.test(inputLower) && !/recommend|package/i.test(inputLower)) {
+    return {
+      text: `Mabuhay! We require a **minimum of 14 days advance notice** for all catering bookings.\n\n` +
+        `This ensures our culinary team in Baliwag, Bulacan can source the freshest ingredients, prepare custom styling, and coordinate complete event staffing for your celebration.`,
+      escalate: false,
+      isLiveApi: false,
+    }
+  }
+
+  // 4. FAQ: Location / Contact Info
+  if (/where|location|address|contact|phone|call|situated|based/i.test(inputLower) && !/recommend|package/i.test(inputLower)) {
+    return {
+      text: `Mabuhay! We are based in **Baliwag, Bulacan, Philippines** and cater celebrations across Bulacan and adjacent provinces.\n\n` +
+        `• **Hotline & GCash:** 0928 714 4597\n` +
+        `• **Lead Time Rule:** Minimum 14 days advance booking\n` +
+        `• **Operating Hours:** Concierge desk open daily 8:00 AM – 6:00 PM\n\n` +
+        `Let us know if you'd like a package recommendation or quote for your upcoming event!`,
+      escalate: false,
+      isLiveApi: false,
+    }
+  }
+
+  // 5. Package Recommendation & Planning
+  const count = extractGuestCount(input) || 70
   const needsEntertainment = /clown|magic|entertainment|host|photo|sounds/i.test(inputLower)
   const isGrand = /grand|blast|premium|full|ceiling/i.test(inputLower)
 
@@ -166,7 +218,23 @@ export const querySinagAI = async (
       }).join('\n')
 
       const systemPrompt = `You are Sinag Catering's warm, expert AI Concierge based in Baliwag, Bulacan.
-Your role: Recommend the best kids party or celebration package from our official database. Answer questions accurately with authentic Filipino hospitality.
+Your role: Provide authentic Filipino hospitality, answer questions accurately according to official policies, and recommend celebration packages when clients inquire about planning or pricing an event.
+
+OFFICIAL POLICIES & BUSINESS RULES:
+1. Cancellation & Refund Policy:
+   - 30 or more days before event date: 100% full refund of amount paid.
+   - 14 to 29 days before event date: 50% refund of amount paid.
+   - Less than 14 days before event date: 0% refund (Non-refundable, because ingredients, chef scheduling, and event staff are already finalized).
+   - Rebooking / Rescheduling: Allowed with at least 14 days advance notice via the Client Portal subject to date availability without forfeiting downpayment.
+2. Payment & Reservation Terms:
+   - 50% downpayment required to lock in the event date.
+   - Remaining 50% balance payable on or before the event day.
+   - Payment channels: GCash (direct transfer to 0928 714 4597 or PayMongo), Bank Transfer, Cash.
+3. Lead Time:
+   - Minimum 14 days advance booking required.
+4. Location & Contact:
+   - Baliwag, Bulacan, Philippines.
+   - Hotline & GCash: 0928 714 4597.
 
 Official Packages Database:
 ${packageCatalogDescription}
@@ -179,17 +247,25 @@ Add-ons Catalog:
 - Extra Pasta Course: PHP 80 per guest
 - Extra Dessert Course: PHP 50 per guest
 
-Payment Policy: 50% downpayment locks the date. Remaining balance payable on event day.
+CRITICAL INSTRUCTIONS ON WHEN TO RECOMMEND A PACKAGE:
+- If the user is asking FAQ or general policy questions (such as refund policy, cancellation terms, payments, downpayment, location, contact info, lead time, or greetings):
+  Answer their question directly and accurately in markdown. DO NOT recommend a package or event setup. Set "form_data" to null.
+- ONLY populate "form_data" if the user is explicitly inquiring about packages, party planning, menu recommendations, guest pricing/estimates, or wanting to book an event.
 
 Return your response in strict JSON format with this structure:
 {
-  "chat_reply": "Friendly response explaining the package and breakdown in markdown",
+  "chat_reply": "Accurate, helpful answer in markdown",
+  "form_data": null
+}
+OR if recommending a package:
+{
+  "chat_reply": "Friendly package recommendation and breakdown in markdown",
   "form_data": {
     "package_id": "budget-basic | budget-entertainment | full-blast",
     "package_name": "Exact package name",
     "guest_count": number,
     "event_type": "Kids Birthday | Debut | Wedding | Others (Please Specify)",
-    "addons": ["ADD-CANDY-01", etc],
+    "addons": ["ADD-CANDY-01"],
     "extra_main_count": number,
     "extra_pasta_count": number,
     "extra_dessert_count": number,
@@ -225,8 +301,10 @@ Return your response in strict JSON format with this structure:
           const parsed = JSON.parse(text)
           const replyText = parsed.chat_reply || ''
           const rawForm = parsed.form_data
+          const isPurePolicyQuery = /^(what|how|where|when|can i|is there|do you).*(refund|cancel|resched|rebook|lead time|location|address|contact)/i.test(userInput) ||
+            /refund policy|cancellation policy/i.test(userInput)
 
-          if (rawForm && rawForm.package_id) {
+          if (!isPurePolicyQuery && rawForm && rawForm.package_id) {
             const chosenPkg = currentPackages.find((p) => p.id === rawForm.package_id) || currentPackages[0]
             const guestCount = Number(rawForm.guest_count) || extractGuestCount(userInput) || chosenPkg.defaultPax || 50
             const rawAddons = rawForm.addons || rawForm.selected_addons || []

@@ -32,6 +32,7 @@ import { CATEGORY_SHOWCASE_GALLERY } from '../data/eventGalleries'
 import { AI_CATALOG_ADDONS, formatMoney } from '../data/packages'
 import type { AIFormData } from '../lib/ai'
 import { supabase } from '../lib/supabase'
+import { EmbeddedCheckoutModal } from '../components/EmbeddedCheckoutModal'
 
 interface BookingWizardProps {
   onComplete: () => void
@@ -133,6 +134,17 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   // Step 4 — Dedicated Payment Method Section
   const [paymentMethod, setPaymentMethod] = useState<'qrph' | 'gcash' | 'maya' | 'bank_transfer' | 'paymongo'>('qrph')
   const [gcashRefNumber, setGcashRefNumber] = useState('')
+  const [pendingOnlineCheckout, setPendingOnlineCheckout] = useState<{
+    bookingId: string
+    packageName: string
+    guestCount: number
+    eventDate: string
+    amount: number
+    totalPrice: number
+    customerName: string
+    customerEmail: string
+    customerPhone: string
+  } | null>(null)
 
   // Messages & Form Status
   const [errorMsg, setErrorMsg] = useState('')
@@ -387,51 +399,27 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
     if (paymentMethod === 'paymongo') {
       const bookingId = `bk-${crypto.randomUUID()}`
-      let checkoutUrl = ''
+      createBooking(
+        {
+          ...bookingData,
+          totalPrice: calculations.totalPrice,
+          downpaymentAmount: calculations.downpayment,
+        },
+        bookingId
+      )
 
-      // 1. Try local server API endpoint
-      try {
-        const apiRes = await fetch('/api/paymongo/create-checkout', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            bookingId,
-            packageName: currentPkg.name,
-            amount: calculations.downpayment,
-            guestCount,
-            eventDate,
-            email: currentUser?.email || clientEmail.trim(),
-          }),
-        })
-        const apiData = await apiRes.json()
-        if (apiRes.ok && apiData.checkout_url) {
-          checkoutUrl = apiData.checkout_url
-        }
-      } catch {
-        // Fall back to Supabase function
-      }
-
-      // 2. Fall back to Supabase function
-      if (!checkoutUrl && supabase) {
-        try {
-          const { data } = await supabase.functions.invoke('create-paymongo-checkout', {
-            body: { bookingId, booking: { ...bookingData, userId: currentUser?.id ?? 'guest' } },
-          })
-          if (typeof data?.checkout_url === 'string') {
-            checkoutUrl = data.checkout_url
-          }
-        } catch {
-          // Ignore
-        }
-      }
-
-      if (checkoutUrl) {
-        createBooking({ ...bookingData, totalPrice: calculations.totalPrice, downpaymentAmount: calculations.downpayment }, bookingId)
-        window.location.assign(checkoutUrl)
-        return
-      }
-
-      setErrorMsg('Could not initialize PayMongo checkout session. Please check your network or try another payment method.')
+      // Open in-app embedded checkout gateway (100% Sinag Branded, no personal name or external redirect)
+      setPendingOnlineCheckout({
+        bookingId,
+        packageName: currentPkg.name,
+        guestCount,
+        eventDate,
+        amount: calculations.downpayment,
+        totalPrice: calculations.totalPrice,
+        customerName: currentUser?.name || clientName.trim(),
+        customerEmail: currentUser?.email || clientEmail.trim(),
+        customerPhone: currentUser?.phone || clientPhone.trim(),
+      })
       setIsSubmitting(false)
       return
     }
@@ -1386,8 +1374,8 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   >
                     <CreditCard size={22} style={{ color: 'var(--terracotta)' }} />
                     <div>
-                      <strong style={{ display: 'block', fontSize: '0.9rem' }}>PayMongo Checkout</strong>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>GCash, Maya, QR Ph, cards</span>
+                      <strong style={{ display: 'block', fontSize: '0.9rem' }}>Instant Online Checkout</strong>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>GCash, QR Ph, Maya, Cards</span>
                     </div>
                   </button>
                 </div>
@@ -1429,9 +1417,15 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 )}
 
                 {paymentMethod === 'paymongo' && (
-                  <p role="note" style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0 0 16px' }}>
-                    Submitting will open PayMongo's secure hosted checkout. Your booking is saved only after the server validates the PHP package total.
-                  </p>
+                  <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', padding: '14px 18px', borderRadius: 'var(--radius-md)', margin: '0 0 16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0F172A', fontWeight: 600, fontSize: '0.88rem', marginBottom: '4px' }}>
+                      <ShieldCheck size={16} style={{ color: 'var(--terracotta)' }} />
+                      Sinag Secure In-App Gateway
+                    </div>
+                    <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--muted)', lineHeight: 1.5 }}>
+                      Upon submitting, our embedded Sinag gateway will open instantly on this screen. Pay via GCash (QR Ph or OTP), Maya, or Credit/Debit Card without leaving the Sinag website.
+                    </p>
+                  </div>
                 )}
 
                 {/* Reference Number Field */}
@@ -1619,6 +1613,29 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
             </button>
           )}
         </div>
+      )}
+
+      {/* EMBEDDED CHECKOUT MODAL (No external PayMongo redirect, 100% Sinag Branded) */}
+      {pendingOnlineCheckout && (
+        <EmbeddedCheckoutModal
+          isOpen={!!pendingOnlineCheckout}
+          onClose={() => {
+            setPendingOnlineCheckout(null)
+            onComplete()
+          }}
+          bookingId={pendingOnlineCheckout.bookingId}
+          packageName={pendingOnlineCheckout.packageName}
+          guestCount={pendingOnlineCheckout.guestCount}
+          eventDate={pendingOnlineCheckout.eventDate}
+          amount={pendingOnlineCheckout.amount}
+          totalPrice={pendingOnlineCheckout.totalPrice}
+          customerName={pendingOnlineCheckout.customerName}
+          customerEmail={pendingOnlineCheckout.customerEmail}
+          customerPhone={pendingOnlineCheckout.customerPhone}
+          onPaymentSuccess={(_ref) => {
+            // Already synced to db & context
+          }}
+        />
       )}
     </div>
   )

@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { ArrowRight, Eye, EyeOff } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { PasswordStrengthIndicator, getPasswordValidationError } from '../components/PasswordStrengthIndicator'
 
 interface LoginPageProps {
   onLoginSuccess: (role: 'client' | 'admin') => void
@@ -30,15 +31,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       return
     }
 
-    // Password validation (Item 6)
-    if (!clientPassword || clientPassword.length < 8) {
-      setClientError('Password must be at least 8 characters long.')
-      return
-    }
-
     if (isRegistering) {
       if (!clientName.trim()) {
         setClientError('Please enter your full name to register.')
+        return
+      }
+
+      const passwordError = getPasswordValidationError(clientPassword)
+      if (passwordError) {
+        setClientError(passwordError)
         return
       }
 
@@ -46,7 +47,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         setClientError('Passwords do not match. Please verify both fields.')
         return
       }
-
+    } else {
+      if (!clientPassword) {
+        setClientError('Please enter your password.')
+        return
+      }
     }
 
     const result = isRegistering
@@ -148,9 +153,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
-            <span style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '4px' }}>
-              Must be at least 8 characters
-            </span>
+            {isRegistering ? (
+              <PasswordStrengthIndicator password={clientPassword} showChecklist={true} />
+            ) : (
+              <span style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '4px' }}>
+                Enter your account password
+              </span>
+            )}
           </div>
 
           {isRegistering && (

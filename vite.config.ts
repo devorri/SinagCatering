@@ -135,6 +135,160 @@ function apiServerPlugin(): Plugin {
           }
         }
 
+        // 2b. Generate Real PayMongo QR Ph Dynamic Code (In-App Embedding)
+        if (url === '/api/paymongo/generate-qrph' && req.method === 'POST') {
+          try {
+            const body = await readJsonBody()
+            const secretKey = process.env.VITE_PAYMONGO_SECRET_KEY || process.env.PAYMONGO_SECRET_KEY || 'sk_test_c45YuqZKv46a1C22BDm5VbDB'
+            const authHeader = 'Basic ' + Buffer.from(secretKey + ':').toString('base64')
+            const amountMinor = Math.round((body.amount || 25000) * 100)
+
+            // Step 1: Create Payment Intent
+            const piRes = await fetch('https://api.paymongo.com/v1/payment_intents', {
+              method: 'POST',
+              headers: {
+                Authorization: authHeader,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                data: {
+                  attributes: {
+                    amount: amountMinor,
+                    payment_method_allowed: ['qrph'],
+                    payment_method_options: { card: { request_three_d_secure: 'any' } },
+                    currency: 'PHP',
+                    description: `Sinag Catering 50% Downpayment - ${body.packageName || 'Banquet'} (Booking #${body.bookingId || 'New'})`,
+                  },
+                },
+              }),
+            })
+            const piData: any = await piRes.json()
+            if (!piRes.ok) {
+              res.statusCode = piRes.status
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ error: piData?.errors?.[0]?.detail || 'Failed to create payment intent' }))
+              return
+            }
+
+            const piId = piData.data?.id
+            const clientKey = piData.data?.attributes?.client_key
+
+            // Step 2: Create Payment Method of type qrph
+            const pmRes = await fetch('https://api.paymongo.com/v1/payment_methods', {
+              method: 'POST',
+              headers: {
+                Authorization: authHeader,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                data: {
+                  attributes: {
+                    type: 'qrph',
+                  },
+                },
+              }),
+            })
+            const pmData: any = await pmRes.json()
+            if (!pmRes.ok) {
+              res.statusCode = pmRes.status
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ error: pmData?.errors?.[0]?.detail || 'Failed to create QR Ph payment method' }))
+              return
+            }
+            const pmId = pmData.data?.id
+
+            // Step 3: Attach Payment Method to Payment Intent
+            const attachRes = await fetch(`https://api.paymongo.com/v1/payment_intents/${piId}/attach`, {
+              method: 'POST',
+              headers: {
+                Authorization: authHeader,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                data: {
+                  attributes: {
+                    payment_method: pmId,
+                    client_key: clientKey,
+                  },
+                },
+              }),
+            })
+            const attachData: any = await attachRes.json()
+            if (!attachRes.ok) {
+              res.statusCode = attachRes.status
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ error: attachData?.errors?.[0]?.detail || 'Failed to attach QR Ph payment method' }))
+              return
+            }
+
+            const nextAction = attachData.data?.attributes?.next_action
+            const qrImageUrl = nextAction?.code?.image_url
+            const expiresAt = nextAction?.code?.expires_at
+
+            res.statusCode = 200
+            res.setHeader('Content-Type', 'application/json')
+            res.end(JSON.stringify({
+              success: true,
+              payment_intent_id: piId,
+              client_key: clientKey,
+              qr_image: qrImageUrl,
+              expires_at: expiresAt,
+            }))
+            return
+          } catch (err: any) {
+            res.statusCode = 500
+            res.setHeader('Content-Type', 'application/json')
+            res.end(JSON.stringify({ error: err.message || 'Internal QR Ph error' }))
+            return
+          }
+        }
+
+        // 2c. Check Payment Intent Status
+        if (url === '/api/paymongo/check-payment-intent' && req.method === 'POST') {
+          try {
+            const body = await readJsonBody()
+            const secretKey = process.env.VITE_PAYMONGO_SECRET_KEY || process.env.PAYMONGO_SECRET_KEY || 'sk_test_c45YuqZKv46a1C22BDm5VbDB'
+            const authHeader = 'Basic ' + Buffer.from(secretKey + ':').toString('base64')
+            const piId = body.paymentIntentId
+
+            if (!piId) {
+              res.statusCode = 400
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ error: 'paymentIntentId is required' }))
+              return
+            }
+
+            const checkRes = await fetch(`https://api.paymongo.com/v1/payment_intents/${encodeURIComponent(piId)}`, {
+              headers: { Authorization: authHeader },
+            })
+            const checkData: any = await checkRes.json()
+            if (!checkRes.ok) {
+              res.statusCode = checkRes.status
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ error: 'Failed to check payment status' }))
+              return
+            }
+
+            const status = checkData.data?.attributes?.status
+            const isPaid = status === 'succeeded'
+            const payments = checkData.data?.attributes?.payments || []
+
+            res.statusCode = 200
+            res.setHeader('Content-Type', 'application/json')
+            res.end(JSON.stringify({
+              status,
+              paid: isPaid,
+              payments,
+            }))
+            return
+          } catch (err: any) {
+            res.statusCode = 500
+            res.setHeader('Content-Type', 'application/json')
+            res.end(JSON.stringify({ error: err.message || 'Internal check error' }))
+            return
+          }
+        }
+
         // 3. Dispatch Semaphore SMS
         if (url === '/api/sms/send' && req.method === 'POST') {
           try {

@@ -198,28 +198,44 @@ h1, h2, h3, h4, .font-heading {
   pointer-events: none;
 }
 
-/* Reveal Animations from Assuretech */
+/* Reveal Animations — Fluid & Cinematic */
 @keyframes reveal {
-  from { opacity: 0; transform: translateY(28px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(22px);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
 }
 
 .reveal {
   opacity: 0;
+  will-change: transform, opacity, filter;
 }
 
 .revealed {
-  animation: reveal 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: reveal 0.72s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+.reveal-stagger > *:nth-child(1) { animation-delay: 0.04s; }
+.reveal-stagger > *:nth-child(2) { animation-delay: 0.10s; }
+.reveal-stagger > *:nth-child(3) { animation-delay: 0.16s; }
+.reveal-stagger > *:nth-child(4) { animation-delay: 0.22s; }
+.reveal-stagger > *:nth-child(5) { animation-delay: 0.28s; }
+.reveal-stagger > *:nth-child(6) { animation-delay: 0.34s; }
+
 @keyframes swoosh {
-  0% { transform: perspective(1000px) rotateX(10deg) translateY(20px); opacity: 0; }
-  100% { transform: perspective(1000px) rotateX(0deg) translateY(0); opacity: 1; }
+  0% { transform: perspective(1000px) rotateX(8deg) translateY(16px); opacity: 0; filter: blur(3px); }
+  100% { transform: perspective(1000px) rotateX(0deg) translateY(0); opacity: 1; filter: blur(0); }
 }
 
 .swoosh-title {
   display: inline-block;
-  animation: swoosh 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: swoosh 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   transform-style: preserve-3d;
 }
 
