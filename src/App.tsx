@@ -40,6 +40,19 @@ function AppContent() {
       : '',
   )
 
+  useEffect(() => {
+    const pageTitles: Record<ViewName, string> = {
+      landing: 'Sinag Catering | Events Made Memorable',
+      gallery: 'Gallery | Sinag Catering',
+      testimonials: 'Client Testimonials | Sinag Catering',
+      login: 'Sign In | Sinag Catering',
+      client: 'My Bookings | Sinag Catering',
+      admin: 'Admin Dashboard | Sinag Catering',
+      booking: 'Book Your Event | Sinag Catering',
+    }
+    document.title = pageTitles[activeView]
+  }, [activeView])
+
   const navigateTo = (view: ViewName) => {
     setActiveView(view)
     setIsMobileMenuOpen(false)
@@ -215,18 +228,14 @@ function AppContent() {
 
     const scrollToSection = () => {
       const section = document.getElementById(sectionId)
-      // Sections have generous visual padding. Scrolling to the heading instead
-      // of the section wrapper avoids a blank band above its content.
-      const target = section?.querySelector<HTMLElement>('.section-header-center') ?? section
-      if (!target) return
+      if (!section) return
 
       const navHeight = document.querySelector<HTMLElement>('.site-nav')?.offsetHeight ?? 72
-      const headerGap = 16
       if (lenis) {
-        lenis.scrollTo(target, { offset: -(navHeight + headerGap), duration: 1.2 })
+        lenis.scrollTo(section, { offset: -navHeight, duration: 1.0 })
       } else {
         window.scrollTo({
-          top: Math.max(0, target.getBoundingClientRect().top + window.scrollY - navHeight - headerGap),
+          top: Math.max(0, section.getBoundingClientRect().top + window.scrollY - navHeight),
           behavior: 'smooth',
         })
       }
@@ -431,7 +440,7 @@ function AppContent() {
               <span><Phone size={16} /> Hotline: <strong>0928 714 4597</strong></span>
               <span><Clock3 size={16} /> Mon-Sat, 9:00 AM - 7:00 PM</span>
               <span><MapPin size={16} /> Baliwag, Bulacan</span>
-              <span><Mail size={16} /> cruzsunshine19@yahoo.com</span>
+              <span><Mail size={16} /> <a href="mailto:cruzsunshine19@yahoo.com">cruzsunshine19@yahoo.com</a></span>
             </div>
           </div>
 
@@ -451,7 +460,6 @@ function AppContent() {
 
         <div className="footer-bottom-strip">
           <span>&copy; {new Date().getFullYear()} Sinag's Catering Services. Planning and event coordination.</span>
-          <span>Package estimates in PHP</span>
         </div>
       </footer>
     </main>

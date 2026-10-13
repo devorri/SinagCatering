@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { ArrowRight, X, Eye, EyeOff, AlertCircle, Lock, Sparkles, CheckCircle2 } from 'lucide-react'
+import { ArrowRight, X, Eye, EyeOff, AlertCircle, Lock, Sparkles, CheckCircle2, ShieldCheck } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { PasswordStrengthIndicator, getPasswordValidationError } from './PasswordStrengthIndicator'
 
@@ -16,6 +16,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
   const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [agreedToPrivacy, setAgreedToPrivacy] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [isRegistering, setIsRegistering] = useState(false)
@@ -45,9 +46,20 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
       return
     }
 
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError('Please enter a valid email format (e.g. name@domain.com).')
+      return
+    }
+
     if (isRegistering) {
-      if (!name.trim()) {
-        setError('Please enter your full name to register.')
+      if (!name.trim() || name.trim().length < 2) {
+        setError('Please enter your full name (minimum 2 characters).')
+        return
+      }
+
+      const cleanedPhone = phone.replace(/[^0-9]/g, '')
+      if (!phone.trim() || cleanedPhone.length < 10) {
+        setError('Please provide a valid Philippine mobile number (e.g. 0928 714 4597).')
         return
       }
 
@@ -59,6 +71,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
 
       if (password !== confirmPassword) {
         setError('Passwords do not match. Please verify both fields.')
+        return
+      }
+
+      if (!agreedToPrivacy) {
+        setError('Please agree to the Data Privacy consent in compliance with Republic Act No. 10173 to proceed.')
         return
       }
     } else {
@@ -142,7 +159,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
           {isRegistering && (
             <>
               <div className="form-group">
-                <label>Full Name</label>
+                <label>
+                  Full Name <span className="required-star">*</span>
+                </label>
                 <input
                   type="text"
                   className="input-field"
@@ -155,10 +174,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
               </div>
 
               <div className="form-group">
-                <label>Mobile Number (For SMS & Updates)</label>
+                <label>
+                  Mobile Number (For SMS & Updates) <span className="required-star">*</span>
+                </label>
                 <input
                   type="tel"
                   className="input-field"
+                  required
                   placeholder="0928 714 4597"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
@@ -169,7 +191,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
           )}
 
           <div className="form-group">
-            <label>Email Address</label>
+            <label>
+              Email Address <span className="required-star">*</span>
+            </label>
             <input
               type="email"
               className="input-field"
@@ -182,7 +206,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
           </div>
 
           <div className="form-group">
-            <label>Password</label>
+            <label>
+              Password <span className="required-star">*</span>
+            </label>
             <div style={{ position: 'relative' }}>
               <input
                 type={showPassword ? 'text' : 'password'}
@@ -226,42 +252,70 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
           </div>
 
           {isRegistering && (
-            <div className="form-group">
-              <label>Confirm Password</label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  className="input-field"
-                  required
-                  placeholder="••••••••"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  disabled={isSubmitting}
-                  style={{ width: '100%', paddingRight: '44px' }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
-                  style={{
-                    position: 'absolute',
-                    right: '12px',
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    color: 'var(--muted)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: '4px',
-                  }}
-                >
-                  {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
+            <>
+              <div className="form-group">
+                <label>
+                  Confirm Password <span className="required-star">*</span>
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    className="input-field"
+                    required
+                    placeholder="••••••••"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    disabled={isSubmitting}
+                    style={{ width: '100%', paddingRight: '44px' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                    style={{
+                      position: 'absolute',
+                      right: '12px',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: 'var(--muted)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '4px',
+                    }}
+                  >
+                    {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
-            </div>
+
+              {/* Republic Act No. 10173 Data Privacy Act Notice & Consent */}
+              <div className="privacy-consent-box">
+                <ShieldCheck size={18} />
+                <div>
+                  <strong>Republic Act No. 10173 (Data Privacy Act of 2012)</strong>
+                  <p>
+                    Your personal information is collected solely for event reservation, booking verification, date protection, and concierge support by Sinag Catering. Your data is protected with strict confidentiality and will never be shared with unauthorized third parties.
+                  </p>
+                </div>
+              </div>
+
+              <label className="privacy-checkbox-label">
+                <input
+                  type="checkbox"
+                  required
+                  checked={agreedToPrivacy}
+                  onChange={(e) => setAgreedToPrivacy(e.target.checked)}
+                  disabled={isSubmitting}
+                />
+                <span>
+                  I have read and consent to the collection and processing of my personal data under <strong>Republic Act No. 10173</strong>. <span className="required-star">*</span>
+                </span>
+              </label>
+            </>
           )}
 
           {error && (

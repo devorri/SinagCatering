@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { ArrowRight, Eye, EyeOff } from 'lucide-react'
+import { ArrowRight, Eye, EyeOff, ShieldCheck } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { PasswordStrengthIndicator, getPasswordValidationError } from '../components/PasswordStrengthIndicator'
 
@@ -16,11 +16,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   const [clientPhone, setClientPhone] = useState('')
   const [clientPassword, setClientPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [agreedToPrivacy, setAgreedToPrivacy] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [isRegistering, setIsRegistering] = useState(false)
   const [clientError, setClientError] = useState('')
-
 
   const handleClientSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -31,9 +31,20 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       return
     }
 
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail.trim())) {
+      setClientError('Please enter a valid email format (e.g. name@domain.com).')
+      return
+    }
+
     if (isRegistering) {
-      if (!clientName.trim()) {
-        setClientError('Please enter your full name to register.')
+      if (!clientName.trim() || clientName.trim().length < 2) {
+        setClientError('Please enter your full name (minimum 2 characters).')
+        return
+      }
+
+      const cleanedPhone = clientPhone.replace(/[^0-9]/g, '')
+      if (!clientPhone.trim() || cleanedPhone.length < 10) {
+        setClientError('Please provide a valid Philippine mobile number (e.g. 0928 714 4597).')
         return
       }
 
@@ -45,6 +56,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
       if (clientPassword !== confirmPassword) {
         setClientError('Passwords do not match. Please verify both fields.')
+        return
+      }
+
+      if (!agreedToPrivacy) {
+        setClientError('Please agree to the Data Privacy consent in compliance with Republic Act No. 10173 to proceed.')
         return
       }
     } else {
@@ -70,8 +86,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
   return (
     <div className="portal-container">
-      <div className="portal-auth-card" style={{ maxWidth: '520px' }}>
-        <h2 className="portal-auth-title" style={{ fontFamily: 'var(--font-serif)', fontSize: '2.4rem' }}>
+      <div className="portal-auth-card" style={{ maxWidth: '520px', textAlign: 'center' }}>
+        <img
+          src="/sinag_logo.png"
+          alt="Sinag Catering"
+          className="brand-logo-img"
+          style={{ width: '56px', height: '56px', margin: '0 auto 14px', display: 'block' }}
+        />
+        <h2 className="portal-auth-title" style={{ fontFamily: 'var(--font-serif)', fontSize: '2.2rem' }}>
           Sinag Portal Access
         </h2>
         <p className="portal-auth-sub">Sign in or register to manage your event reservation.</p>
@@ -80,8 +102,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         <form onSubmit={handleClientSubmit}>
           {isRegistering && (
             <>
-              <div className="form-group">
-                <label>Full Name</label>
+              <div className="form-group" style={{ textAlign: 'left' }}>
+                <label>
+                  Full Name <span className="required-star">*</span>
+                </label>
                 <input
                   type="text"
                   className="input-field"
@@ -92,8 +116,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 />
               </div>
 
-              <div className="form-group">
-                <label>Mobile Number (For Semaphore SMS & OTP)</label>
+              <div className="form-group" style={{ textAlign: 'left' }}>
+                <label>
+                  Mobile Number (For SMS & Updates) <span className="required-star">*</span>
+                </label>
                 <input
                   type="tel"
                   className="input-field"
@@ -106,8 +132,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             </>
           )}
 
-          <div className="form-group">
-            <label>Email Address</label>
+          <div className="form-group" style={{ textAlign: 'left' }}>
+            <label>
+              Email Address <span className="required-star">*</span>
+            </label>
             <input
               type="email"
               className="input-field"
@@ -119,8 +147,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
           </div>
 
           {/* Checklist Item 6: Password Input with Masking & Visibility Toggle */}
-          <div className="form-group">
-            <label>Password</label>
+          <div className="form-group" style={{ textAlign: 'left' }}>
+            <label>
+              Password <span className="required-star">*</span>
+            </label>
             <div style={{ position: 'relative' }}>
               <input
                 type={showPassword ? 'text' : 'password'}
@@ -156,48 +186,75 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             {isRegistering ? (
               <PasswordStrengthIndicator password={clientPassword} showChecklist={true} />
             ) : (
-              <span style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '4px' }}>
+              <span style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '4px', display: 'block' }}>
                 Enter your account password
               </span>
             )}
           </div>
 
           {isRegistering && (
-            <div className="form-group">
-              <label>Confirm Password</label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  className="input-field"
-                  required
-                  placeholder="••••••••"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  style={{ width: '100%', paddingRight: '44px' }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
-                  style={{
-                    position: 'absolute',
-                    right: '12px',
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    color: 'var(--muted)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: '4px',
-                  }}
-                >
-                  {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
+            <>
+              <div className="form-group" style={{ textAlign: 'left' }}>
+                <label>
+                  Confirm Password <span className="required-star">*</span>
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    className="input-field"
+                    required
+                    placeholder="••••••••"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    style={{ width: '100%', paddingRight: '44px' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                    style={{
+                      position: 'absolute',
+                      right: '12px',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: 'var(--muted)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '4px',
+                    }}
+                  >
+                    {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
-            </div>
+
+              {/* Republic Act No. 10173 Data Privacy Act Notice & Consent */}
+              <div className="privacy-consent-box" style={{ textAlign: 'left' }}>
+                <ShieldCheck size={18} />
+                <div>
+                  <strong>Republic Act No. 10173 (Data Privacy Act of 2012)</strong>
+                  <p>
+                    Your personal information is collected solely for event reservation, booking verification, date protection, and concierge support by Sinag Catering. Your data is protected with strict confidentiality and will never be shared with unauthorized third parties.
+                  </p>
+                </div>
+              </div>
+
+              <label className="privacy-checkbox-label" style={{ textAlign: 'left' }}>
+                <input
+                  type="checkbox"
+                  required
+                  checked={agreedToPrivacy}
+                  onChange={(e) => setAgreedToPrivacy(e.target.checked)}
+                />
+                <span>
+                  I have read and consent to the collection and processing of my personal data under <strong>Republic Act No. 10173</strong>. <span className="required-star">*</span>
+                </span>
+              </label>
+            </>
           )}
 
           {clientError && (

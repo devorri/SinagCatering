@@ -5,7 +5,7 @@ import {
   Sparkles,
   Phone,
   MapPin,
-  Calendar,
+  Mail,
   Send,
   PartyPopper,
   UtensilsCrossed,
@@ -447,10 +447,26 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </div>
 
               <div className="simple-contact-line">
-                <Calendar size={20} className="simple-contact-icon" />
+                <Mail size={20} className="simple-contact-icon" />
                 <div>
-                  <strong>Lead Time Rule</strong>
-                  <span>Minimum 14 days advance booking</span>
+                  <strong>Email</strong>
+                  <a href="mailto:cruzsunshine19@yahoo.com">cruzsunshine19@yahoo.com</a>
+                </div>
+              </div>
+
+              <div className="simple-contact-line">
+                <svg className="simple-contact-icon" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+                  <path d="M13.7 21v-8h2.7l.4-3h-3.1V8.1c0-.9.3-1.6 1.7-1.6H17V3.8c-.3 0-1.3-.1-2.4-.1-2.4 0-4 1.5-4 4.1V10H7.9v3h2.7v8h3.1Z" />
+                </svg>
+                <div>
+                  <strong>Facebook</strong>
+                  <a
+                    href="https://www.facebook.com/profile.php?id=100089638001338"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Follow Sinag Catering
+                  </a>
                 </div>
               </div>
             </div>

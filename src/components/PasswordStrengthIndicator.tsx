@@ -92,10 +92,13 @@ export const getPasswordValidationError = (password: string): string | null => {
     return 'Password must be at least 8 characters long.'
   }
   if (!/[A-Z]/.test(password)) {
-    return 'Password must contain at least one uppercase letter (caps).'
+    return 'Password must contain at least one uppercase letter (A-Z).'
   }
   if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?~`]/.test(password)) {
     return 'Password must contain at least one special character (!@#$%...).'
+  }
+  if (!/[0-9]/.test(password)) {
+    return 'Password must contain at least one number (0-9).'
   }
   return null
 }
@@ -109,8 +112,6 @@ export const PasswordStrengthIndicator: React.FC<PasswordStrengthIndicatorProps>
   password,
   showChecklist = true,
 }) => {
-  if (!password) return null
-
   const analysis = analyzePassword(password)
 
   const getSegmentColor = (segmentIndex: number) => {
