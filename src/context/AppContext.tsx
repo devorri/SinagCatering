@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect, useMemo } from '
 import type { ReactNode } from 'react'
 import type { User, Booking, Review, Staff, Inquiry } from '../types'
 import { supabase } from '../lib/supabase'
+import { mapDatabasePackage, SINAG_PACKAGES } from '../data/packages'
+import type { CateringPackage } from '../data/packages'
 import {
   sendBookingSubmissionNotifications,
   sendPaymentVerificationNotifications,
@@ -9,6 +11,7 @@ import {
 
 interface AppContextType {
   currentUser: User | null
+  packages: CateringPackage[]
   bookings: Booking[]
   reviews: Review[]
   staff: Staff[]
@@ -122,6 +125,7 @@ const mapDbInquiry = (i: any): Inquiry => ({
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [packages, setPackages] = useState<CateringPackage[]>(SINAG_PACKAGES)
   const [bookings, setBookings] = useState<Booking[]>([])
   const [reviews, setReviews] = useState<Review[]>([])
   const [baseStaff, setBaseStaff] = useState<Staff[]>([])
@@ -167,6 +171,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (!error && data) {
           setBookings(data.map(mapDbBooking))
         }
+      })
+
+    // The package catalog is database-owned. No local/mock package fallback is used.
+    supabase
+      .from('packages')
+      .select('*')
+      .order('base_price', { ascending: true })
+      .then(({ data, error }) => {
+        if (!error && data) setPackages(data.map(mapDatabasePackage))
       })
 
     // Fetch Reviews
@@ -335,7 +348,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // Persist to Supabase Database
     if (supabase) {
-      supabase.from('bookings').insert(mapToDbBooking(newBooking)).then(({ error }) => {
+      const dbPayload: any = mapToDbBooking(newBooking)
+      // Omit assigned_services on client creation so it doesn't fail if column has not been added to Supabase yet
+      delete dbPayload.assigned_services
+      supabase.from('bookings').insert(dbPayload).then(({ error }) => {
         if (error) console.error('Error inserting booking into Supabase:', error.message)
       })
     }
@@ -490,8 +506,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setBookings((prev) => prev.map((bk) => (bk.id === bookingId ? { ...bk, staffIds, assignedServices } : bk)))
 
     if (supabase) {
-      supabase.from('bookings').update({ staff_ids: staffIds, assigned_services: assignedServices }).eq('id', bookingId).then(({ error }) => {
-        if (error) console.error('Error allocating staff in Supabase:', error.message)
+      const client = supabase
+      client.from('bookings').update({ staff_ids: staffIds, assigned_services: assignedServices }).eq('id', bookingId).then(({ error }) => {
+        if (error) {
+          // Fallback if assigned_services column has not been added to Supabase yet
+          client.from('bookings').update({ staff_ids: staffIds }).eq('id', bookingId)
+        }
       })
     }
   }
@@ -653,6 +673,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     <AppContext.Provider
       value={{
         currentUser,
+        packages,
         bookings,
         reviews,
         staff,

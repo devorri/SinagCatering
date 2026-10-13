@@ -7,13 +7,15 @@ import { AdminDashboard } from './views/AdminDashboard'
 import { AIAssistant } from './views/AIAssistant'
 import { BookingWizard } from './views/BookingWizard'
 import { ClientPortal } from './views/ClientPortal'
+import { GalleryPage } from './views/GalleryPage'
 import { LandingPage } from './views/LandingPage'
 import { LoginPage } from './views/LoginPage'
+import { TestimonialsPage } from './views/TestimonialsPage'
 import { LoginModal } from './components/LoginModal'
 import type { AIFormData } from './lib/ai'
 import { supabase } from './lib/supabase'
 
-type ViewName = 'landing' | 'login' | 'client' | 'admin' | 'booking'
+type ViewName = 'landing' | 'gallery' | 'testimonials' | 'login' | 'client' | 'admin' | 'booking'
 
 function AppContent() {
   const { currentUser, bookings, logout, updatePaymentStatus } = useApp()
@@ -21,7 +23,7 @@ function AppContent() {
     ? bookings.filter((b) => b.email?.toLowerCase().trim() === currentUser.email?.toLowerCase().trim())
     : []
   const userBookingsCount = userBookings.length
-  const latestBooking = userBookings[0] || null
+
 
   const [activeView, setActiveView] = useState<ViewName>(() => {
     const params = new URLSearchParams(window.location.search)
@@ -130,16 +132,24 @@ function AppContent() {
 
     const rafId = requestAnimationFrame(raf)
 
-    // Reveal animation observer (same as Assuretech)
+    // Reveal animation observer (dynamic and resilient)
     const observer = new IntersectionObserver((entries) => {
       entries.forEach(entry => {
         if (entry.isIntersecting) {
           entry.target.classList.add('revealed')
         }
       })
-    }, { threshold: 0.08, rootMargin: '0px 0px -40px 0px' })
+    }, { threshold: 0.05, rootMargin: '0px 0px 40px 0px' })
 
-    document.querySelectorAll('.reveal').forEach(el => observer.observe(el))
+    const observeReveals = () => {
+      document.querySelectorAll('.reveal:not(.revealed)').forEach(el => observer.observe(el))
+    }
+    observeReveals()
+
+    const mutationObserver = new MutationObserver(() => {
+      observeReveals()
+    })
+    mutationObserver.observe(document.body, { childList: true, subtree: true })
 
     ;(window as unknown as { __lenis?: Lenis }).__lenis = lenis
 
@@ -147,6 +157,7 @@ function AppContent() {
       cancelAnimationFrame(rafId)
       lenis.destroy()
       observer.disconnect()
+      mutationObserver.disconnect()
     }
   }, [activeView])
 
@@ -202,25 +213,32 @@ function AppContent() {
     setIsMobileMenuOpen(false)
     const lenis = (window as unknown as { __lenis?: Lenis }).__lenis
 
+    const scrollToSection = () => {
+      const section = document.getElementById(sectionId)
+      // Sections have generous visual padding. Scrolling to the heading instead
+      // of the section wrapper avoids a blank band above its content.
+      const target = section?.querySelector<HTMLElement>('.section-header-center') ?? section
+      if (!target) return
+
+      const navHeight = document.querySelector<HTMLElement>('.site-nav')?.offsetHeight ?? 72
+      const headerGap = 16
+      if (lenis) {
+        lenis.scrollTo(target, { offset: -(navHeight + headerGap), duration: 1.2 })
+      } else {
+        window.scrollTo({
+          top: Math.max(0, target.getBoundingClientRect().top + window.scrollY - navHeight - headerGap),
+          behavior: 'smooth',
+        })
+      }
+    }
+
     if (activeView !== 'landing') {
       setActiveView('landing')
-      setTimeout(() => {
-        const target = document.getElementById(sectionId)
-        if (target && lenis) {
-          lenis.scrollTo(target, { offset: -85, duration: 1.2 })
-        } else {
-          target?.scrollIntoView({ behavior: 'smooth' })
-        }
-      }, 100)
+      setTimeout(scrollToSection, 100)
       return
     }
 
-    const target = document.getElementById(sectionId)
-    if (target && lenis) {
-      lenis.scrollTo(target, { offset: -85, duration: 1.2 })
-    } else {
-      target?.scrollIntoView({ behavior: 'smooth' })
-    }
+    scrollToSection()
   }
 
   if (activeView === 'admin') {
@@ -253,6 +271,26 @@ function AppContent() {
           <a href="#top" className={activeView === 'landing' ? 'active' : ''} onClick={handleNavigateHome}>Home</a>
           <a href="#about-section" onClick={(e) => scrollLandingSection(e, 'about-section')}>About</a>
           <a href="#services-section" onClick={(e) => scrollLandingSection(e, 'services-section')}>Services</a>
+          <a
+            href="#gallery"
+            className={activeView === 'gallery' ? 'active' : ''}
+            onClick={(e) => {
+              e.preventDefault()
+              navigateTo('gallery')
+            }}
+          >
+            Gallery
+          </a>
+          <a
+            href="#testimonials"
+            className={activeView === 'testimonials' ? 'active' : ''}
+            onClick={(e) => {
+              e.preventDefault()
+              navigateTo('testimonials')
+            }}
+          >
+            Testimonials
+          </a>
           <a href="#contact-section" onClick={(e) => scrollLandingSection(e, 'contact-section')}>Contact</a>
           <button
             type="button"
@@ -329,6 +367,19 @@ function AppContent() {
             <LandingPage
               onNavigateToClient={() => navigateTo(currentUser ? (currentUser.role === 'admin' ? 'admin' : 'client') : 'login')}
               onStartBooking={handleStartBooking}
+              onNavigateToGallery={() => navigateTo('gallery')}
+              onNavigateToTestimonials={() => navigateTo('testimonials')}
+            />
+          )}
+          {activeView === 'gallery' && (
+            <GalleryPage
+              onStartBooking={handleStartBooking}
+              onNavigateHome={() => navigateTo('landing')}
+            />
+          )}
+          {activeView === 'testimonials' && (
+            <TestimonialsPage
+              onStartBooking={handleStartBooking}
             />
           )}
           {activeView === 'login' && <LoginPage onLoginSuccess={(role) => navigateTo(role === 'admin' ? 'admin' : 'client')} />}
@@ -389,6 +440,8 @@ function AppContent() {
             <a href="#top" onClick={handleNavigateHome}>Home</a>
             <a href="#about-section" onClick={(e) => scrollLandingSection(e, 'about-section')}>About Us</a>
             <a href="#services-section" onClick={(e) => scrollLandingSection(e, 'services-section')}>Services & Packages</a>
+            <a href="#gallery" onClick={(e) => { e.preventDefault(); navigateTo('gallery'); }}>Photo Gallery</a>
+            <a href="#testimonials" onClick={(e) => { e.preventDefault(); navigateTo('testimonials'); }}>Client Testimonials</a>
             <a href="#contact-section" onClick={(e) => scrollLandingSection(e, 'contact-section')}>Contact Concierge</a>
             <button onClick={handleDashboardClick} className="footer-text-button">
               {currentUser ? 'My Dashboard' : 'Account Sign In'}

@@ -6,7 +6,7 @@ import {
   EXTRA_MAIN_RATE,
   EXTRA_PASTA_RATE,
   FOOD_BUFFER_PAX,
-  SINAG_PACKAGES,
+  mapDatabasePackage,
   findTierForGuestCount,
   formatMoney,
   recommendPackage,
@@ -66,7 +66,7 @@ export const calculateTotalForPackage = (
   return baseCost + excessPaxFee + extraMainCost + extraPastaCost + extraDessertCost + flatAddonsCost
 }
 
-export const generateLocalAIResponse = (input: string, livePackages: CateringPackage[] = SINAG_PACKAGES): AIResponse => {
+export const generateLocalAIResponse = (input: string, livePackages: CateringPackage[] = []): AIResponse => {
   const inputLower = input.toLowerCase()
 
   // 1. FAQ: Refund & Cancellation Policy
@@ -120,6 +120,13 @@ export const generateLocalAIResponse = (input: string, livePackages: CateringPac
   }
 
   // 5. Package Recommendation & Planning
+  if (livePackages.length === 0) {
+    return {
+      text: 'Our official package catalog is temporarily unavailable. Please contact Sinag Catering at 0928 714 4597 for a verified quotation.',
+      escalate: true,
+      isLiveApi: false,
+    }
+  }
   const count = extractGuestCount(input) || 70
   const needsEntertainment = /clown|magic|entertainment|host|photo|sounds/i.test(inputLower)
   const isGrand = /grand|blast|premium|full|ceiling/i.test(inputLower)
@@ -130,7 +137,7 @@ export const generateLocalAIResponse = (input: string, livePackages: CateringPac
   } else if (!needsEntertainment && /simple|basic|budget|low cost/i.test(inputLower)) {
     chosenPkg = livePackages.find((p) => p.id === 'budget-basic') || chosenPkg
   } else {
-    const reco = recommendPackage(count, 60000, needsEntertainment)
+    const reco = recommendPackage(livePackages, count, 60000, needsEntertainment)
     if (reco?.pkg) chosenPkg = reco.pkg
   }
 
@@ -180,29 +187,14 @@ export const querySinagAI = async (
   history: { role: 'user' | 'assistant'; content: string }[] = [],
 ): Promise<AIResponse> => {
   // 1. Fetch live packages from Supabase DB to ensure chatbot uses current DB data
-  let currentPackages = SINAG_PACKAGES
+  let currentPackages: CateringPackage[] = []
   if (supabase) {
     try {
       const { data: dbPackages } = await supabase.from('packages').select('*')
       if (dbPackages && dbPackages.length > 0) {
-        currentPackages = dbPackages.map((p) => ({
-          id: p.id,
-          name: p.name,
-          shortName: p.name.split(' ')[0] || p.name,
-          bestFor: p.ideal_for || '',
-          description: p.ideal_for || '',
-          tiers: Array.isArray(p.tier_prices) ? p.tier_prices : [{ pax: 50, price: p.base_price || 35000 }],
-          pricePerHead: p.price_per_head || undefined,
-          defaultPax: p.default_pax || 50,
-          currency: 'PHP',
-          inclusions: Array.isArray(p.included_menu) ? p.included_menu : [],
-          entertainment: p.id === 'budget-basic' ? [] : ['Clown / host', 'Magician', 'Photo booth', 'Photographer', 'Lights & sounds'],
-          freebies: ['Candy & sweet corner', 'Event coordinator', 'Souvenirs', 'Standee'],
-        }))
+        currentPackages = dbPackages.map(mapDatabasePackage)
       }
-    } catch {
-      // Use SINAG_PACKAGES
-    }
+    } catch { /* The assistant will request a verified manual quotation. */ }
   }
 
   // 2. Call Google Gemini with gemini-3.8-flash if API key is present

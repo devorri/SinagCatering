@@ -1,9 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react'
 import {
-  DollarSign,
-  CheckCircle,
-  Clock,
-  Award,
   Eye,
   ShieldCheck,
   Trash,
@@ -18,14 +14,16 @@ import {
   Users,
   Star,
   MessageSquare,
-  TrendingUp,
-  UsersRound,
   Bell,
   Send,
   CreditCard,
   Ban,
   Check,
   KeyRound,
+  Printer,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import type { Booking, Inquiry, NotificationLog } from '../types'
@@ -84,6 +82,151 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [tempStaffIds, setTempStaffIds] = useState<string[]>([])
   const [tempServices, setTempServices] = useState<string[]>([])
 
+  // TrackErentory Print Modal State
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false)
+  const [printScope, setPrintScope] = useState<'all' | 'confirmed' | 'pending' | 'downpayment'>('all')
+  const [printDateFilter, setPrintDateFilter] = useState<'all' | 'current_month' | 'today'>('all')
+
+  const handleTriggerPrint = () => {
+    setIsPrintModalOpen(false)
+    let filteredList = [...bookings]
+    if (printScope === 'confirmed') {
+      filteredList = filteredList.filter((b) => b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed')
+    } else if (printScope === 'pending') {
+      filteredList = filteredList.filter((b) => b.bookingStatus === 'pending')
+    } else if (printScope === 'downpayment') {
+      filteredList = filteredList.filter((b) => b.paymentStatus === 'downpayment_paid' || b.paymentStatus === 'fully_paid')
+    }
+
+    const todayStr = new Date().toISOString().slice(0, 10)
+    const currentMonthStr = todayStr.slice(0, 7)
+
+    if (printDateFilter === 'today') {
+      filteredList = filteredList.filter((b) => b.eventDate === todayStr)
+    } else if (printDateFilter === 'current_month') {
+      filteredList = filteredList.filter((b) => b.eventDate.startsWith(currentMonthStr))
+    }
+
+    const totalRevenue = filteredList.reduce((acc, b) => acc + b.totalPrice, 0)
+    const totalDownpayment = filteredList.reduce((acc, b) => acc + (b.downpaymentAmount || (b.paymentStatus === 'downpayment_paid' || b.paymentStatus === 'fully_paid' ? b.totalPrice * 0.5 : 0)), 0)
+
+    const reportScopeLabel = printScope === 'all'
+      ? 'All Event Reservations'
+      : printScope === 'confirmed'
+      ? 'Confirmed & Locked Events'
+      : printScope === 'pending'
+      ? 'Pending Verification Requests'
+      : 'Downpayment & Paid Collections'
+
+    const dateScopeLabel = printDateFilter === 'today'
+      ? `Today (${todayStr})`
+      : printDateFilter === 'current_month'
+      ? `Month of ${new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`
+      : 'All Scheduled Dates'
+
+    const rowsHtml = filteredList.length === 0
+      ? `<tr><td colspan="7" style="text-align:center;padding:2rem;color:#6b7280;">No reservations match this report filter.</td></tr>`
+      : filteredList.map((b) => `
+        <tr>
+          <td><strong style="font-family:monospace;font-size:0.85rem;">#${b.id.slice(0, 14)}</strong></td>
+          <td><strong>${b.customerName}</strong><div style="font-size:0.75rem;color:#64748b;">${b.email} | ${b.phone}</div></td>
+          <td>${b.eventType} (${b.guestCount} pax)</td>
+          <td>${b.eventDate}</td>
+          <td><span style="font-size:0.75rem;padding:3px 8px;border-radius:999px;font-weight:700;background:#f3f4f6;text-transform:uppercase;">${b.paymentStatus.replace('_', ' ')}</span></td>
+          <td><span style="font-size:0.75rem;padding:3px 8px;border-radius:999px;font-weight:700;background:${b.bookingStatus === 'confirmed' ? '#dcfce7;color:#15803d;' : '#fef3c7;color:#b45309;'}text-transform:uppercase;">${b.bookingStatus}</span></td>
+          <td style="text-align:right;font-weight:800;">${formatMoney(b.totalPrice, b.currency)}</td>
+        </tr>
+      `).join('')
+
+    const reportHtml = `<!doctype html>
+      <html lang="en">
+        <head>
+          <meta charset="UTF-8" />
+          <title>Sinag Catering - Operations Report</title>
+          <style>
+            body { font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 2.5rem; color: #111827; background: #fff; line-height: 1.4; }
+            .toolbar { display: flex; gap: 10px; margin-bottom: 2rem; }
+            .toolbar button { background: #000; color: #fff; border: none; padding: 0.6rem 1.2rem; border-radius: 8px; font-weight: 700; cursor: pointer; }
+            .toolbar button.secondary { background: #f3f4f6; color: #000; }
+            .header { border-bottom: 2px solid #000; padding-bottom: 1.2rem; margin-bottom: 1.5rem; }
+            h1 { margin: 0; font-size: 1.6rem; text-transform: uppercase; letter-spacing: -0.02em; }
+            h2 { margin: 0.25rem 0 0.75rem; font-size: 1.15rem; color: #4b5563; }
+            .meta { display: flex; gap: 2rem; font-size: 0.85rem; color: #4b5563; flex-wrap: wrap; }
+            table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; font-size: 0.88rem; }
+            th { background: #f4f5f7; border-bottom: 2px solid #e5e7eb; padding: 0.75rem 0.9rem; text-align: left; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 800; }
+            td { padding: 0.75rem 0.9rem; border-bottom: 1px solid #f3f4f6; }
+            tfoot td { background: #f4f5f7; font-weight: 900; border-top: 2px solid #000; padding: 0.9rem; }
+            .signatures { display: flex; justify-content: space-between; margin-top: 4rem; padding-top: 1rem; }
+            .sig-line { width: 220px; border-bottom: 1px solid #000; margin-bottom: 0.5rem; }
+            @media print {
+              .toolbar { display: none !important; }
+              body { padding: 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="toolbar">
+            <button type="button" onclick="window.print()">Print / Save as PDF</button>
+            <button type="button" class="secondary" onclick="window.close()">Close</button>
+          </div>
+          <div class="header">
+            <h1>Sinag Catering Services</h1>
+            <h2>Executive Operations & Banquet Register Report</h2>
+            <div class="meta">
+              <span><strong>Scope:</strong> ${reportScopeLabel}</span>
+              <span><strong>Period:</strong> ${dateScopeLabel}</span>
+              <span><strong>Date Generated:</strong> ${new Date().toLocaleDateString('en-PH', { dateStyle: 'long' })}</span>
+              <span><strong>Generated By:</strong> ${currentUser?.name || 'Administrator'}</span>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Reference</th>
+                <th>Client</th>
+                <th>Event & Pax</th>
+                <th>Date</th>
+                <th>Payment</th>
+                <th>Status</th>
+                <th style="text-align:right;">Total Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="5"><strong>Overall Total (${filteredList.length} Reservations)</strong></td>
+                <td><strong>Deposit: ${formatMoney(totalDownpayment, 'PHP')}</strong></td>
+                <td style="text-align:right;"><strong>${formatMoney(totalRevenue, 'PHP')}</strong></td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <div class="signatures">
+            <div>
+              <div class="sig-line"></div>
+              <div style="font-size:0.85rem;font-weight:700;">Prepared By (Operations / Admin)</div>
+            </div>
+            <div>
+              <div class="sig-line"></div>
+              <div style="font-size:0.85rem;font-weight:700;">Acknowledged By (Management)</div>
+            </div>
+          </div>
+        </body>
+      </html>`
+
+    const printWin = window.open('', '_blank', 'width=1100,height=850')
+    if (printWin) {
+      printWin.document.open()
+      printWin.document.write(reportHtml)
+      printWin.document.close()
+    } else {
+      window.print()
+    }
+  }
+
   // Date blocking form state & interactive operations calendar (Item 10)
   const [newBlockDate, setNewBlockDate] = useState('')
   const [calMonth, setCalMonth] = useState(() => new Date().getMonth())
@@ -140,8 +283,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [replyingReviewId, setReplyingReviewId] = useState<string | null>(null)
   const [reviewReplyText, setReviewReplyText] = useState('')
 
-  // Booking list filters
+  // Booking list filters & sorting
   const [bookingFilter, setBookingFilter] = useState<'all' | 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'forfeit'>('all')
+  type BookingSortCol = 'id' | 'customerName' | 'eventDate' | 'totalPrice' | 'paymentStatus' | 'bookingStatus'
+  const [bookingSortCol, setBookingSortCol] = useState<BookingSortCol>('eventDate')
+  const [bookingSortDir, setBookingSortDir] = useState<'asc' | 'desc'>('desc')
+
+  const handleToggleBookingSort = (col: BookingSortCol) => {
+    if (bookingSortCol === col) {
+      setBookingSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setBookingSortCol(col)
+      setBookingSortDir('asc')
+    }
+  }
+
+  // Sorting state for Concierge Inquiries & Testimonials
+  const [inquirySort, setInquirySort] = useState<'newest' | 'oldest' | 'unreplied'>('newest')
+  const [reviewSort, setReviewSort] = useState<'newest' | 'highest' | 'lowest'>('newest')
 
   // Downpayment management
   const [showDownpaymentModal, setShowDownpaymentModal] = useState(false)
@@ -428,6 +587,56 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     return matchesFilter && matchesSearch
   })
 
+  // Sorted bookings for the crowded register
+  const sortedBookings = useMemo(() => {
+    return [...filteredBookings].sort((a, b) => {
+      let valA: string | number = a[bookingSortCol] ?? ''
+      let valB: string | number = b[bookingSortCol] ?? ''
+
+      if (bookingSortCol === 'totalPrice') {
+        valA = Number(a.totalPrice) || 0
+        valB = Number(b.totalPrice) || 0
+      } else if (bookingSortCol === 'eventDate') {
+        valA = new Date(a.eventDate).getTime() || 0
+        valB = new Date(b.eventDate).getTime() || 0
+      } else if (typeof valA === 'string') {
+        valA = valA.toLowerCase()
+        valB = ((valB as string) || '').toLowerCase()
+      }
+
+      if (valA < valB) return bookingSortDir === 'asc' ? -1 : 1
+      if (valA > valB) return bookingSortDir === 'asc' ? 1 : -1
+      return 0
+    })
+  }, [filteredBookings, bookingSortCol, bookingSortDir])
+
+  // Sorted inquiries
+  const sortedInquiries = useMemo(() => {
+    return [...inquiries].sort((a, b) => {
+      if (inquirySort === 'unreplied') {
+        if (!a.replied && b.replied) return -1
+        if (a.replied && !b.replied) return 1
+      }
+      if (inquirySort === 'oldest') {
+        return new Date(a.date).getTime() - new Date(b.date).getTime()
+      }
+      return new Date(b.date).getTime() - new Date(a.date).getTime()
+    })
+  }, [inquiries, inquirySort])
+
+  // Sorted reviews
+  const sortedReviews = useMemo(() => {
+    return [...reviews].sort((a, b) => {
+      if (reviewSort === 'highest') {
+        return b.rating - a.rating
+      }
+      if (reviewSort === 'lowest') {
+        return a.rating - b.rating
+      }
+      return new Date(b.date).getTime() - new Date(a.date).getTime()
+    })
+  }, [reviews, reviewSort])
+
   // Auth Screen for Admin
   if (!currentUser || currentUser.role !== 'admin') {
     return (
@@ -435,7 +644,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         <div className="portal-auth-card" style={{ maxWidth: '480px', width: '100%', background: '#FFFFFF', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.08)', padding: '36px' }}>
           <div style={{ textAlign: 'center', marginBottom: '24px' }}>
             <img src="/sinag_logo.png" alt="Sinag Catering" style={{ width: '54px', height: '54px', marginBottom: '12px' }} />
-            <h2 className="portal-auth-title" style={{ fontFamily: 'var(--font-serif)', fontSize: '2rem', margin: '0 0 6px' }}>Admin Console</h2>
+            <h2 className="portal-auth-title" style={{ fontFamily: 'var(--font-sans)', fontWeight: 800, fontSize: '1.75rem', margin: '0 0 6px', color: '#0F172A' }}>Admin Console</h2>
             <p className="portal-auth-sub" style={{ color: '#64748B', fontSize: '0.9rem' }}>Sign in to access executive management dashboards.</p>
           </div>
 
@@ -572,9 +781,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           <div className="admin-user-chip">
             <div className="admin-avatar">A</div>
             <div>
-              <strong style={{ display: 'block', fontSize: '0.86rem', color: '#FFF' }}>{currentUser.name}</strong>
-              <span style={{ fontSize: '0.74rem', color: '#10B981', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10B981', display: 'inline-block' }}></span> Active Session
+              <strong style={{ display: 'block', fontSize: '0.86rem', color: '#18181B' }}>{currentUser.name}</strong>
+              <span style={{ fontSize: '0.74rem', color: '#71717A', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#71717A', display: 'inline-block' }}></span> Active Session
               </span>
             </div>
           </div>
@@ -624,99 +833,69 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
         {/* Content Body */}
         <div className="admin-body-content">
-          <div className="admin-page-header">
+          {/* TRACKERENTORY EDITORIAL HERO STRIP */}
+          <div className="hero-strip no-print">
             <div>
-              <span className="admin-header-kicker">01 / OPERATIONS & ANALYTICS</span>
-              <h1 className="admin-page-title">
-                {activeTab === 'analytics' ? (
-                  <>Executive <span className="serif-italic" style={{ fontWeight: 400 }}>Dashboard</span></>
-                ) : activeTab === 'bookings' ? (
-                  <>Master <span className="serif-italic" style={{ fontWeight: 400 }}>Reservations</span></>
-                ) : activeTab === 'calendar' ? (
-                  <>Operations <span className="serif-italic" style={{ fontWeight: 400 }}>Calendar</span></>
-                ) : activeTab === 'staff' ? (
-                  <>Staff <span className="serif-italic" style={{ fontWeight: 400 }}>Roster</span></>
-                ) : activeTab === 'reviews' ? (
-                  <>Reviews <span className="serif-italic" style={{ fontWeight: 400 }}>Moderation</span></>
-                ) : (
-                  <>Inquiry <span className="serif-italic" style={{ fontWeight: 400 }}>Inbox</span></>
-                )}
+              <h1>
+                {activeTab === 'analytics'
+                  ? 'Executive Overview'
+                  : activeTab === 'bookings'
+                  ? 'Master Reservations'
+                  : activeTab === 'calendar'
+                  ? 'Operations Calendar'
+                  : activeTab === 'staff'
+                  ? 'Staff Deployment'
+                  : activeTab === 'reviews'
+                  ? 'Reviews & Moderation'
+                  : activeTab === 'inquiries'
+                  ? 'Customer Inquiries'
+                  : 'SMS & Email Hub'}
               </h1>
-              <p className="admin-page-sub">
-                Welcome back, <strong>{currentUser.name}</strong>. Here's your real-time catering operations overview.
+              <p className="lede">
+                Welcome back, <strong>{currentUser.name}</strong>. Real-time banquet schedules, verified downpayments, kitchen staffing, and revenue registers.
               </p>
+            </div>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button className="btn" type="button" onClick={() => setIsPrintModalOpen(true)}>
+                <Printer size={16} /> Print Report
+              </button>
             </div>
           </div>
 
           {/* KPI Stats Cards — show on analytics tab */}
           {activeTab === 'analytics' && (
             <>
-              <div className="kpi-card-grid">
-                <div className="kpi-card">
-                  <div className="kpi-card-top">
-                    <span className="kpi-lbl">Gross Revenue</span>
-                    <div className="kpi-icon-box"><DollarSign size={16} /></div>
-                  </div>
-                  <div>
-                    <div className="kpi-val font-number">{formatMoney(analyticsData.totalRevenue, 'PHP')}</div>
-                    <div className="kpi-subtext">Active & confirmed event packages</div>
-                  </div>
+              <div className="stat-grid">
+                <div className="stat">
+                  <div className="label">Gross Revenue</div>
+                  <div className="value">{formatMoney(analyticsData.totalRevenue, 'PHP')}</div>
+                  <div className="subtext">Active & confirmed event packages</div>
                 </div>
 
-                <div className="kpi-card">
-                  <div className="kpi-card-top">
-                    <span className="kpi-lbl">Confirmed Events</span>
-                    <div className="kpi-icon-box"><CheckCircle size={16} /></div>
-                  </div>
-                  <div>
-                    <div className="kpi-val font-number">{analyticsData.confirmedCount}</div>
-                    <div className="kpi-subtext">Locked in catering calendar</div>
-                  </div>
+                <div className="stat">
+                  <div className="label">Confirmed Events</div>
+                  <div className="value">{analyticsData.confirmedCount}</div>
+                  <div className="subtext">Locked in catering calendar</div>
                 </div>
 
-                <div className="kpi-card">
-                  <div className="kpi-card-top">
-                    <span className="kpi-lbl">Pending Approval</span>
-                    <div className="kpi-icon-box"><Clock size={16} /></div>
-                  </div>
-                  <div>
-                    <div className="kpi-val font-number">{analyticsData.pendingCount}</div>
-                    <div className="kpi-subtext">Awaiting admin or deposit check</div>
-                  </div>
+                <div className="stat">
+                  <div className="label">Pending Approval</div>
+                  <div className="value" style={{ color: '#d97706' }}>{analyticsData.pendingCount}</div>
+                  <div className="subtext">Awaiting admin or deposit check</div>
                 </div>
 
-                <div className="kpi-card">
-                  <div className="kpi-card-top">
-                    <span className="kpi-lbl">Top Package Tier</span>
-                    <div className="kpi-icon-box"><Award size={16} /></div>
-                  </div>
-                  <div>
-                    <div className="kpi-val" style={{ fontSize: '1.15rem' }}>{analyticsData.popularPackageName}</div>
-                    <div className="kpi-subtext">Most frequent reservation tier</div>
-                  </div>
+                <div className="stat">
+                  <div className="label">Avg. Booking Value</div>
+                  <div className="value">{formatMoney(analyticsData.avgBookingValue, 'PHP')}</div>
+                  <div className="subtext">Average spend per client reservation</div>
                 </div>
 
-                <div className="kpi-card">
-                  <div className="kpi-card-top">
-                    <span className="kpi-lbl">Avg. Booking Value</span>
-                    <div className="kpi-icon-box"><TrendingUp size={16} /></div>
-                  </div>
-                  <div>
-                    <div className="kpi-val font-number">{formatMoney(analyticsData.avgBookingValue, 'PHP')}</div>
-                    <div className="kpi-subtext">Average spend per client reservation</div>
-                  </div>
+                <div className="stat">
+                  <div className="label">Guests Served</div>
+                  <div className="value">{analyticsData.totalGuests.toLocaleString()}</div>
+                  <div className="subtext">Total attendees across all events</div>
                 </div>
 
-                <div className="kpi-card">
-                  <div className="kpi-card-top">
-                    <span className="kpi-lbl">Guests Served</span>
-                    <div className="kpi-icon-box"><UsersRound size={16} /></div>
-                  </div>
-                  <div>
-                    <div className="kpi-val font-number">{analyticsData.totalGuests.toLocaleString()}</div>
-                    <div className="kpi-subtext">Total attendees across all events</div>
-                  </div>
-                </div>
               </div>
 
               {/* Charts Grid */}
@@ -939,21 +1118,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   <h3 style={{ fontFamily: 'var(--font-sans)', fontSize: '1.25rem', fontWeight: 800, margin: '0 0 4px', color: '#18181B' }}>Master Reservations Register</h3>
                   <span style={{ fontSize: '0.84rem', color: '#71717A' }}>Filter, verify deposits, allocate event staff, and download contracts</span>
                 </div>
-                <div className="admin-filter-bar">
-                  {(['all', 'pending', 'confirmed', 'completed', 'cancelled', 'forfeit'] as const).map((filter) => {
-                    const count = filter === 'all'
-                      ? bookings.length
-                      : bookings.filter((b) => b.bookingStatus === filter).length
-                    return (
-                      <button
-                        key={filter}
-                        onClick={() => setBookingFilter(filter)}
-                        className={`admin-filter-pill ${bookingFilter === filter ? 'active' : ''}`}
-                      >
-                        {filter.toUpperCase()} ({count})
-                      </button>
-                    )
-                  })}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                  <div className="admin-filter-bar">
+                    {(['all', 'pending', 'confirmed', 'completed', 'cancelled', 'forfeit'] as const).map((filter) => {
+                      const count = filter === 'all'
+                        ? bookings.length
+                        : bookings.filter((b) => b.bookingStatus === filter).length
+                      return (
+                        <button
+                          key={filter}
+                          onClick={() => setBookingFilter(filter)}
+                          className={`admin-filter-pill ${bookingFilter === filter ? 'active' : ''}`}
+                        >
+                          {filter.toUpperCase()} ({count})
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#71717A', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      Sort:
+                    </span>
+                    <select
+                      className="admin-sort-select"
+                      aria-label="Sort bookings register"
+                      value={`${bookingSortCol}-${bookingSortDir}`}
+                      onChange={(e) => {
+                        const [col, dir] = e.target.value.split('-') as [BookingSortCol, 'asc' | 'desc']
+                        setBookingSortCol(col)
+                        setBookingSortDir(dir)
+                      }}
+                    >
+                      <option value="eventDate-desc">Date (Newest First)</option>
+                      <option value="eventDate-asc">Date (Oldest First)</option>
+                      <option value="totalPrice-desc">Total Amount (Highest)</option>
+                      <option value="totalPrice-asc">Total Amount (Lowest)</option>
+                      <option value="customerName-asc">Client Name (A–Z)</option>
+                      <option value="customerName-desc">Client Name (Z–A)</option>
+                      <option value="bookingStatus-asc">Booking Status (A–Z)</option>
+                      <option value="paymentStatus-asc">Payment Status (A–Z)</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
@@ -961,17 +1167,95 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                 <table className="admin-table">
                   <thead>
                     <tr>
-                      <th>REF ID</th>
-                      <th>Client</th>
-                      <th>Event & Date</th>
-                      <th>Total Amount</th>
-                      <th>Payment</th>
-                      <th>Status</th>
+                      <th
+                        onClick={() => handleToggleBookingSort('id')}
+                        className="sortable-th"
+                        title="Sort by REF ID"
+                      >
+                        <div className="sortable-th-content">
+                          <span>REF ID</span>
+                          {bookingSortCol === 'id' ? (
+                            bookingSortDir === 'asc' ? <ArrowUp size={13} style={{ color: '#18181b' }} /> : <ArrowDown size={13} style={{ color: '#18181b' }} />
+                          ) : (
+                            <ArrowUpDown size={13} style={{ opacity: 0.35 }} />
+                          )}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleToggleBookingSort('customerName')}
+                        className="sortable-th"
+                        title="Sort by Client Name"
+                      >
+                        <div className="sortable-th-content">
+                          <span>Client</span>
+                          {bookingSortCol === 'customerName' ? (
+                            bookingSortDir === 'asc' ? <ArrowUp size={13} style={{ color: '#18181b' }} /> : <ArrowDown size={13} style={{ color: '#18181b' }} />
+                          ) : (
+                            <ArrowUpDown size={13} style={{ opacity: 0.35 }} />
+                          )}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleToggleBookingSort('eventDate')}
+                        className="sortable-th"
+                        title="Sort by Event Date"
+                      >
+                        <div className="sortable-th-content">
+                          <span>Event & Date</span>
+                          {bookingSortCol === 'eventDate' ? (
+                            bookingSortDir === 'asc' ? <ArrowUp size={13} style={{ color: '#18181b' }} /> : <ArrowDown size={13} style={{ color: '#18181b' }} />
+                          ) : (
+                            <ArrowUpDown size={13} style={{ opacity: 0.35 }} />
+                          )}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleToggleBookingSort('totalPrice')}
+                        className="sortable-th"
+                        title="Sort by Total Amount"
+                      >
+                        <div className="sortable-th-content">
+                          <span>Total Amount</span>
+                          {bookingSortCol === 'totalPrice' ? (
+                            bookingSortDir === 'asc' ? <ArrowUp size={13} style={{ color: '#18181b' }} /> : <ArrowDown size={13} style={{ color: '#18181b' }} />
+                          ) : (
+                            <ArrowUpDown size={13} style={{ opacity: 0.35 }} />
+                          )}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleToggleBookingSort('paymentStatus')}
+                        className="sortable-th"
+                        title="Sort by Payment Status"
+                      >
+                        <div className="sortable-th-content">
+                          <span>Payment</span>
+                          {bookingSortCol === 'paymentStatus' ? (
+                            bookingSortDir === 'asc' ? <ArrowUp size={13} style={{ color: '#18181b' }} /> : <ArrowDown size={13} style={{ color: '#18181b' }} />
+                          ) : (
+                            <ArrowUpDown size={13} style={{ opacity: 0.35 }} />
+                          )}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleToggleBookingSort('bookingStatus')}
+                        className="sortable-th"
+                        title="Sort by Booking Status"
+                      >
+                        <div className="sortable-th-content">
+                          <span>Status</span>
+                          {bookingSortCol === 'bookingStatus' ? (
+                            bookingSortDir === 'asc' ? <ArrowUp size={13} style={{ color: '#18181b' }} /> : <ArrowDown size={13} style={{ color: '#18181b' }} />
+                          ) : (
+                            <ArrowUpDown size={13} style={{ opacity: 0.35 }} />
+                          )}
+                        </div>
+                      </th>
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredBookings.map((b) => (
+                    {sortedBookings.map((b) => (
                       <tr key={b.id}>
                         <td className="font-number" style={{ fontWeight: 700, fontSize: '0.8rem', color: '#78716C' }}>
                           #{b.id.slice(0, 14)}...
@@ -1069,7 +1353,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             <div className="data-table-card" style={{ padding: '36px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
                 <div>
-                  <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.6rem', margin: '0 0 6px' }}>
+                  <h3 style={{ fontFamily: 'var(--font-sans)', fontSize: '1.25rem', fontWeight: 800, margin: '0 0 4px', color: '#18181B' }}>
                     Master Operations Calendar & Date Availability
                   </h3>
                   <p style={{ color: 'var(--muted)', fontSize: '0.9rem', margin: 0 }}>
@@ -1097,7 +1381,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
               <div className="calendar-card" style={{ maxWidth: '100%', margin: '0 0 32px' }}>
                 <div className="calendar-header-bar">
                   <button type="button" className="stepper-btn" onClick={handlePrevCalMonth}>&lt;</button>
-                  <h3 className="calendar-month-title">{monthsList[calMonth]} {calYear}</h3>
+                  <h3 className="calendar-month-title" style={{ fontFamily: 'var(--font-sans)', fontWeight: 800, fontSize: '1.3rem', color: '#18181B' }}>{monthsList[calMonth]} {calYear}</h3>
                   <button type="button" className="stepper-btn" onClick={handleNextCalMonth}>&gt;</button>
                 </div>
 
@@ -1224,8 +1508,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             <div className="data-table-card" style={{ padding: '36px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                 <div>
-                  <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.6rem', margin: '0 0 10px' }}>Service Staff Directory</h3>
-                  <p style={{ color: 'var(--muted)', fontSize: '0.9rem' }}>Active personnel list for event deployment.</p>
+                  <h3 style={{ fontFamily: 'var(--font-sans)', fontSize: '1.25rem', fontWeight: 800, margin: '0 0 4px', color: '#18181B' }}>Service Staff Directory</h3>
+                  <p style={{ color: 'var(--muted)', fontSize: '0.9rem', margin: 0 }}>Active personnel list for event deployment.</p>
                 </div>
                 <button className="btn-submit-primary" style={{ padding: '8px 16px' }}>
                   <Plus size={16} /> Add Staff
@@ -1251,10 +1535,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           {/* Tab 5: Reviews Moderation */}
           {activeTab === 'reviews' && (
             <div className="data-table-card" style={{ padding: '36px' }}>
-              <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.6rem', margin: '0 0 24px' }}>Testimonial Moderation & Responses</h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
+                <div>
+                  <h3 style={{ fontFamily: 'var(--font-sans)', fontSize: '1.25rem', fontWeight: 800, margin: '0 0 4px', color: '#18181B' }}>Testimonial Moderation & Responses</h3>
+                  <span style={{ fontSize: '0.84rem', color: '#71717A' }}>Verified client feedback and executive replies ({reviews.length} total)</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#71717A', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Sort:
+                  </span>
+                  <select
+                    className="admin-sort-select"
+                    aria-label="Sort reviews"
+                    value={reviewSort}
+                    onChange={(e) => setReviewSort(e.target.value as any)}
+                  >
+                    <option value="newest">Newest First</option>
+                    <option value="highest">Highest Rating (5★ → 1★)</option>
+                    <option value="lowest">Lowest Rating (1★ → 5★)</option>
+                  </select>
+                </div>
+              </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                {reviews.map((rev) => (
+                {sortedReviews.map((rev) => (
                   <div key={rev.id} style={{ background: 'var(--paper-warm)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: '20px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
                       <div>
@@ -1303,17 +1607,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           {/* Tab 6: Inquiry Inbox */}
           {activeTab === 'inquiries' && (
             <div className="data-table-card" style={{ padding: '36px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
                 <div>
-                  <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.6rem', margin: '0 0 10px' }}>Customer Concierge Inquiry Inbox</h3>
-                  <p style={{ color: 'var(--muted)', fontSize: '0.9rem' }}>
+                  <h3 style={{ fontFamily: 'var(--font-sans)', fontSize: '1.25rem', fontWeight: 800, margin: '0 0 4px', color: '#18181B' }}>Customer Concierge Inquiry Inbox</h3>
+                  <span style={{ fontSize: '0.84rem', color: '#71717A' }}>
                     {inquiries.filter(i => !i.replied).length} unanswered inquiries
-                  </p>
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#71717A', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Sort:
+                  </span>
+                  <select
+                    className="admin-sort-select"
+                    aria-label="Sort inquiries"
+                    value={inquirySort}
+                    onChange={(e) => setInquirySort(e.target.value as any)}
+                  >
+                    <option value="newest">Newest First</option>
+                    <option value="oldest">Oldest First</option>
+                    <option value="unreplied">Unanswered First</option>
+                  </select>
                 </div>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                {inquiries.map((inq) => (
+                {sortedInquiries.map((inq) => (
                   <div key={inq.id} style={{ background: 'var(--paper-warm)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: '20px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
                       <div>
@@ -1367,7 +1686,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             <div className="modal-overlay">
               <div className="modal-card" style={{ maxWidth: '800px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                  <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.8rem', margin: 0 }}>Booking Inspection & Staffing</h3>
+                  <h3 style={{ fontFamily: 'var(--font-sans)', fontSize: '1.25rem', fontWeight: 800, margin: 0, color: '#18181B' }}>Booking Inspection & Staffing</h3>
                   <button onClick={() => setShowBookingModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
                     <X size={20} />
                   </button>
@@ -1384,6 +1703,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     <h4 style={{ fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '8px' }}>
                       Package & Event Details
                     </h4>
+                    <p style={{ margin: '0 0 4px' }}><strong>Event:</strong> {selectedBooking.eventType}</p>
                     <p style={{ margin: '0 0 4px' }}><strong>Tier:</strong> {selectedBooking.packageName}</p>
                     <p style={{ margin: '0 0 4px' }}><strong>Date:</strong> {selectedBooking.eventDate}</p>
                     <p style={{ margin: '0 0 4px' }}><strong>Attendees:</strong> {selectedBooking.guestCount} pax</p>
@@ -1486,7 +1806,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
                     {selectedBooking.bookingStatus === 'pending' && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        <button onClick={() => handleApproveBooking(selectedBooking)} className="btn-submit-primary" style={{ background: '#10B981' }}>
+                        <button onClick={() => handleApproveBooking(selectedBooking)} className="btn-submit-primary" style={{ background: '#18181B' }}>
                           <ShieldCheck size={16} /> VERIFY DOWNPAYMENT & APPROVE BOOKING
                         </button>
                         <button onClick={() => handleRejectBooking(selectedBooking.id)} className="btn-nav-logout" style={{ color: 'var(--terracotta)' }}>
@@ -1595,7 +1915,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             <div className="data-table-card" style={{ padding: '36px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
                 <div>
-                  <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.6rem', margin: '0 0 6px' }}>
+                  <h3 style={{ fontFamily: 'var(--font-sans)', fontSize: '1.25rem', fontWeight: 800, margin: '0 0 4px', color: '#18181B' }}>
                     Semaphore SMS & Transactional Notification Hub
                   </h3>
                   <p style={{ color: 'var(--muted)', fontSize: '0.9rem', margin: 0 }}>
@@ -1666,7 +1986,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                       {isSendingTestSms ? 'Dispatching...' : 'Dispatch Test SMS'}
                     </button>
                     {testSmsStatus && (
-                      <span style={{ fontSize: '0.78rem', color: testSmsStatus.includes('Failed') ? 'var(--terracotta)' : '#10B981', fontWeight: 600 }}>
+                      <span style={{ fontSize: '0.78rem', color: testSmsStatus.includes('Failed') ? 'var(--terracotta)' : '#18181B', fontWeight: 600 }}>
                         {testSmsStatus}
                       </span>
                     )}
@@ -1749,7 +2069,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
               <div className="modal-card" style={{ maxWidth: '560px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
                   <div>
-                    <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.6rem', margin: '0 0 4px' }}>
+                    <h3 style={{ fontFamily: 'var(--font-sans)', fontSize: '1.25rem', fontWeight: 800, margin: '0 0 4px', color: '#18181B' }}>
                       Verify Downpayment & Approve Booking
                     </h3>
                     <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--muted)' }}>
@@ -1847,9 +2167,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   </span>
                 </div>
 
-                <div style={{ background: '#ECFDF5', padding: '12px 16px', borderRadius: 'var(--radius-md)', marginBottom: '20px', border: '1px solid #A7F3D0' }}>
-                  <p style={{ margin: 0, fontSize: '0.82rem', color: '#065F46' }}>
-                    <ShieldCheck size={16} style={{ color: '#059669', verticalAlign: 'middle', marginRight: '6px' }} />
+                <div style={{ background: '#F4F5F7', padding: '12px 16px', borderRadius: 'var(--radius-md)', marginBottom: '20px', border: '1px solid #E5E7EB' }}>
+                  <p style={{ margin: 0, fontSize: '0.82rem', color: '#1F2937' }}>
+                    <ShieldCheck size={16} style={{ color: '#18181B', verticalAlign: 'middle', marginRight: '6px' }} />
                     <strong>Admin Verification Confirmation:</strong> Clicking the button below confirms that you received the funds. The date will be officially locked, and a real-time Semaphore SMS and Email confirmation will be triggered to the client.
                   </p>
                 </div>
@@ -1866,9 +2186,117 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   <button
                     onClick={handleConfirmDownpayment}
                     className="btn-submit-primary"
-                    style={{ flex: 2, background: '#10B981', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                    style={{ flex: 2, background: '#18181B', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
                   >
                     <ShieldCheck size={16} /> VERIFY DOWNPAYMENT & APPROVE BOOKING
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TRACKERENTORY REPORT PRINT MODAL */}
+          {isPrintModalOpen && (
+            <div
+              className="modal-overlay"
+              onClick={() => setIsPrintModalOpen(false)}
+            >
+              <div
+                className="modal-card"
+                style={{
+                  maxWidth: '540px',
+                  padding: '2rem',
+                  borderRadius: '20px',
+                  background: '#ffffff',
+                  border: '1px solid #e5e7eb',
+                  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                  <div>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#71717A', display: 'block', marginBottom: '4px' }}>
+                      OPERATIONS & FINANCIAL AUDIT
+                    </span>
+                    <h3 style={{ fontFamily: 'var(--font-display, Plus Jakarta Sans, sans-serif)', fontSize: '1.35rem', fontWeight: 900, textTransform: 'uppercase', margin: 0, color: '#000000', letterSpacing: '-0.03em' }}>
+                      Generate Printable Report
+                    </h3>
+                  </div>
+                  <button
+                    onClick={() => setIsPrintModalOpen(false)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#666666' }}
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <p style={{ fontSize: '0.88rem', color: '#666666', lineHeight: 1.5, margin: '0 0 1.5rem' }}>
+                  Compile a print-ready PDF audit sheet complete with official company header, financial ledger, attendee headcount, and signature validation.
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem', marginBottom: '1.75rem' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#000000', marginBottom: '6px' }}>
+                      Report Category Scope
+                    </label>
+                    <select
+                      value={printScope}
+                      onChange={(e) => setPrintScope(e.target.value as any)}
+                      style={{ width: '100%', padding: '0.75rem 1rem', borderRadius: '12px', border: '1px solid #d1d5db', background: '#fff', fontSize: '0.9rem', fontWeight: 600 }}
+                    >
+                      <option value="all">All Event Reservations ({bookings.length})</option>
+                      <option value="confirmed">Confirmed & Locked Events Only ({bookings.filter(b => b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed').length})</option>
+                      <option value="pending">Pending Admin Review & Verifications ({bookings.filter(b => b.bookingStatus === 'pending').length})</option>
+                      <option value="downpayment">Paid & Downpayment Collections ({bookings.filter(b => b.paymentStatus === 'downpayment_paid' || b.paymentStatus === 'fully_paid').length})</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#000000', marginBottom: '6px' }}>
+                      Event Date Period Filter
+                    </label>
+                    <select
+                      value={printDateFilter}
+                      onChange={(e) => setPrintDateFilter(e.target.value as any)}
+                      style={{ width: '100%', padding: '0.75rem 1rem', borderRadius: '12px', border: '1px solid #d1d5db', background: '#fff', fontSize: '0.9rem', fontWeight: 600 }}
+                    >
+                      <option value="all">All Scheduled Dates (Full Register)</option>
+                      <option value="current_month">Current Month ({new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })})</option>
+                      <option value="today">Today's Scheduled Events ({new Date().toISOString().slice(0, 10)})</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ background: '#f4f5f7', borderRadius: '14px', padding: '1rem 1.25rem', marginBottom: '1.5rem', border: '1px solid #e5e7eb' }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#666666', marginBottom: '6px' }}>
+                    Document Specifications
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', fontWeight: 600, color: '#111827', margin: '4px 0' }}>
+                    <span>Header Format:</span>
+                    <span>Sinag Catering Executive Letterhead</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', fontWeight: 600, color: '#111827', margin: '4px 0' }}>
+                    <span>Validation Section:</span>
+                    <span>Dual Signatures (Operations & Management)</span>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => setIsPrintModalOpen(false)}
+                    style={{ padding: '0.65rem 1.25rem', borderRadius: '10px' }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={handleTriggerPrint}
+                    style={{ padding: '0.65rem 1.5rem', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Printer size={16} /> Print / Save as PDF
                   </button>
                 </div>
               </div>

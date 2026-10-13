@@ -11,10 +11,10 @@ import {
   UtensilsCrossed,
   PackageCheck,
   CalendarClock,
+  Maximize2,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
-import { SINAG_PACKAGES, FOOD_BUFFER_PAX, formatMoney } from '../data/packages'
-import { CATEGORY_SHOWCASE_GALLERY } from '../data/eventGalleries'
+import { FOOD_BUFFER_PAX, formatMoney } from '../data/packages'
 import bg1 from '../assets/for-bg/1.jpg'
 import bg2 from '../assets/for-bg/2.jpg'
 import bg3 from '../assets/for-bg/3.jpg'
@@ -26,13 +26,21 @@ import bg8 from '../assets/for-bg/8.jpg'
 import bg9 from '../assets/for-bg/9.jpg'
 import bg10 from '../assets/for-bg/10.jpg'
 
+import { ALL_GALLERY_ITEMS, CLIENT_REACTION_SCREENSHOTS } from '../data/galleryData'
+
 interface LandingPageProps {
   onNavigateToClient: () => void
   onStartBooking: () => void
+  onNavigateToGallery?: () => void
+  onNavigateToTestimonials?: () => void
 }
 
-export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
-  const { createInquiryDirect } = useApp()
+export const LandingPage: React.FC<LandingPageProps> = ({
+  onStartBooking,
+  onNavigateToGallery,
+  onNavigateToTestimonials,
+}) => {
+  const { createInquiryDirect, packages } = useApp()
 
   const [inquiryName, setInquiryName] = useState('')
   const [inquiryEmail, setInquiryEmail] = useState('')
@@ -50,16 +58,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
     return () => window.clearInterval(timer)
   }, [heroImages.length])
 
-  // Simple curated gallery photos (6 highlights across wedding, debut, kids birthday)
-  const galleryHighlights = useMemo(() => {
-    return [
-      CATEGORY_SHOWCASE_GALLERY['Wedding'][0],
-      CATEGORY_SHOWCASE_GALLERY['Kids Birthday'][0],
-      CATEGORY_SHOWCASE_GALLERY['Debut'][0],
-      CATEGORY_SHOWCASE_GALLERY['Wedding'][1],
-      CATEGORY_SHOWCASE_GALLERY['Kids Birthday'][2],
-      CATEGORY_SHOWCASE_GALLERY['Debut'][1],
-    ].filter(Boolean)
+  // Curated 4 highlights for the clean, uncrowded landing preview
+  const curatedPreviewItems = useMemo(() => {
+    const previewIds = ['wed-1', 'bday-1', 'food-1', 'setup-1']
+    return ALL_GALLERY_ITEMS.filter((item) => previewIds.includes(item.id))
   }, [])
 
   return (
@@ -85,9 +87,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
             </div>
 
             <h1 className="hero-display-serif swoosh-title">
-              <span className="hero-line">Thoughtful catering</span>{' '}
-              <span className="serif-italic">for gatherings</span>{' '}
-              <span className="hero-line">worth remembering.</span>
+              <span className="hero-line">We want you to</span>{' '}
+              <span className="serif-italic">SHINE like a SUN</span>{' '}
+              <span className="hero-line">on your special day.</span>
             </h1>
 
             <p className="hero-lead-text">
@@ -248,12 +250,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
           </div>
 
           <div className="simple-packages-grid">
-            {SINAG_PACKAGES.map((pkg, idx) => {
+            {packages.map((pkg, idx) => {
               const isFeatured = idx === 1
+              const defaultGuests = pkg.defaultPax ?? pkg.tiers[0]?.pax ?? 50
               const startingPrice = pkg.pricePerHead !== undefined
-                ? pkg.pricePerHead * (pkg.defaultPax ?? pkg.tiers[0].pax)
-                : pkg.tiers[0].price
-              const defaultGuests = pkg.defaultPax ?? pkg.tiers[0].pax
+                ? pkg.pricePerHead * defaultGuests
+                : (pkg.tiers[0]?.price ?? 35000)
 
               return (
                 <div key={pkg.id} className={`simple-package-card reveal ${isFeatured ? 'featured' : ''}`}>
@@ -285,11 +287,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
                 </div>
               )
             })}
+            {packages.length === 0 && (
+              <p className="simple-subtitle">Packages are being loaded from the official catalog. Please check back shortly.</p>
+            )}
           </div>
         </div>
       </section>
 
-      {/* 4. PAST EVENTS GALLERY — Assuretech-style Clean Grid */}
+      {/* 4. PAST EVENTS GALLERY TEASER — Clean, Uncrowded 4-Card Highlight */}
       <section id="gallery-section" className="simple-section simple-bg-soft">
         <div className="landing-container">
           <div className="reveal section-header-center">
@@ -298,16 +303,23 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
               Celebrations & <span className="serif-italic">Gathering Moments.</span>
             </h2>
             <p className="simple-subtitle">
-              A small look at weddings, debuts, and kids' birthday parties we've recently catered.
+              A curated preview of real Sinag weddings, birthdays, menus, and handcrafted styling.
             </p>
           </div>
 
-          <div className="simple-gallery-grid">
-            {galleryHighlights.map((photo) => (
-              <div key={photo.id} className="simple-gallery-item reveal">
-                <img src={photo.url} alt={photo.title} loading="lazy" />
-                <div className="simple-gallery-overlay">
-                  <span className="simple-gallery-tag">{photo.tag}</span>
+          <div className="landing-preview-grid">
+            {curatedPreviewItems.map((photo) => (
+              <div
+                key={photo.id}
+                className="landing-preview-card reveal"
+                onClick={onNavigateToGallery || onStartBooking}
+                role="button"
+                tabIndex={0}
+                aria-label={`View ${photo.title} in gallery`}
+              >
+                <img src={photo.url} alt={`${photo.category}: ${photo.title}`} loading="lazy" />
+                <div className="landing-preview-overlay">
+                  <span className="landing-preview-badge">{photo.category}</span>
                   <h4>{photo.title}</h4>
                 </div>
               </div>
@@ -315,8 +327,61 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
           </div>
 
           <div className="gallery-action-wrap">
-            <button type="button" onClick={onStartBooking} className="btn-hero-primary">
-              Book Your Date Now <ChevronRight size={16} />
+            <button
+              type="button"
+              onClick={onNavigateToGallery || onStartBooking}
+              className="btn-hero-primary"
+            >
+              Explore Full Gallery (30+ Photos) <ChevronRight size={16} />
+            </button>
+            <a className="gallery-video-link" href="https://www.facebook.com/share/v/1C4swY3CAo/" target="_blank" rel="noreferrer">
+              Watch Sinag’s owner video on Facebook
+            </a>
+          </div>
+        </div>
+      </section>
+
+      {/* 4. TESTIMONIALS TEASER — Clean Client Reactions Preview */}
+      <section id="testimonials-section" className="simple-section">
+        <div className="landing-container">
+          <div className="reveal section-header-center">
+            <span className="stats-label">04 / Client Reactions</span>
+            <h2 className="simple-title">
+              Real Messages from <span className="serif-italic">Families We Served.</span>
+            </h2>
+            <p className="simple-subtitle">
+              Authentic feedback and message screenshots shared by clients after their celebrations.
+            </p>
+          </div>
+
+          <div className="reactions-interactive-grid">
+            {CLIENT_REACTION_SCREENSHOTS.slice(0, 3).map((reax) => (
+              <div
+                key={reax.id}
+                className="reaction-interactive-card"
+                onClick={onNavigateToTestimonials || onStartBooking}
+                role="button"
+                tabIndex={0}
+                aria-label={`View feedback from ${reax.title}`}
+              >
+                <div className="reax-img-wrap">
+                  <img src={reax.url} alt={reax.title} loading="lazy" />
+                  <div className="reax-zoom-hint">
+                    <Maximize2 size={15} />
+                    <span>View Feedback</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="gallery-action-wrap" style={{ marginTop: '36px' }}>
+            <button
+              type="button"
+              onClick={onNavigateToTestimonials || onStartBooking}
+              className="btn-hero-primary"
+            >
+              View All 9 Client Reactions & Feedback <ChevronRight size={16} />
             </button>
           </div>
         </div>
@@ -326,7 +391,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
       <section className="simple-section">
         <div className="landing-container">
           <div className="reveal section-header-center">
-            <span className="stats-label">04 / Planning Framework</span>
+            <span className="stats-label">05 / Planning Framework</span>
             <h2 className="simple-title">
               Seamless 3-Step <span className="serif-italic">Reservation.</span>
             </h2>
@@ -356,7 +421,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartBooking }) => {
       <section id="contact-section" className="simple-section simple-bg-soft">
         <div className="landing-container">
           <div className="reveal section-header-center">
-            <span className="stats-label">05 / Concierge Desk</span>
+            <span className="stats-label">06 / Concierge Desk</span>
             <h2 className="simple-title">
               Connect with Our <span className="serif-italic">Event Specialists.</span>
             </h2>

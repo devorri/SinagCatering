@@ -146,6 +146,25 @@ export const AI_CATALOG_ADDONS: CateringAddon[] = [
   { id: 'ADD-DESSERT-03', name: 'Assorted Dessert Station', price: 100, currency: 'PHP' },
 ]
 
+export const mapDatabasePackage = (record: any): CateringPackage => {
+  const details = record.details && typeof record.details === 'object' ? record.details : {}
+  const tiers = Array.isArray(record.tier_prices) ? record.tier_prices : []
+  return {
+    id: record.id,
+    name: record.name,
+    shortName: record.name,
+    bestFor: record.ideal_for || '',
+    description: record.ideal_for || '',
+    tiers,
+    pricePerHead: record.price_per_head ?? undefined,
+    defaultPax: record.default_pax ?? tiers[0]?.pax,
+    currency: 'PHP',
+    inclusions: Array.isArray(details.inclusions) ? details.inclusions : (Array.isArray(record.included_menu) ? record.included_menu : []),
+    entertainment: Array.isArray(details.entertainment) ? details.entertainment : [],
+    freebies: Array.isArray(details.freebies) ? details.freebies : [],
+  }
+}
+
 export const formatMoney = (amount: number, currency: 'PHP' = 'PHP'): string =>
   `${currency} ${amount.toLocaleString('en-PH', { maximumFractionDigits: 2 })}`
 
@@ -180,13 +199,45 @@ export interface RecommendedPackageResult {
   budgetExceeded?: boolean
 }
 
-export const recommendPackage = (
+export function recommendPackage(
   guestCount: number,
   budget: number,
   needsEntertainment: boolean,
-): RecommendedPackageResult => {
+  packagesList?: CateringPackage[]
+): RecommendedPackageResult
+export function recommendPackage(
+  packagesList: CateringPackage[],
+  guestCount: number,
+  budget: number,
+  needsEntertainment: boolean
+): RecommendedPackageResult
+export function recommendPackage(
+  arg1: number | CateringPackage[],
+  arg2: number,
+  arg3: number | boolean,
+  arg4?: boolean | CateringPackage[]
+): RecommendedPackageResult {
+  let pkgList = SINAG_PACKAGES
+  let guestCount = 50
+  let budget = 50000
+  let needsEntertainment = false
+
+  if (Array.isArray(arg1)) {
+    pkgList = arg1.length > 0 ? arg1 : SINAG_PACKAGES
+    guestCount = arg2
+    budget = Number(arg3)
+    needsEntertainment = Boolean(arg4)
+  } else {
+    guestCount = arg1
+    budget = arg2
+    needsEntertainment = Boolean(arg3)
+    if (Array.isArray(arg4) && arg4.length > 0) {
+      pkgList = arg4
+    }
+  }
+
   // 1. Evaluate each package base configuration
-  const evaluatedPackages = SINAG_PACKAGES.map((pkg) => {
+  const evaluatedPackages = pkgList.map((pkg) => {
     const tier = findTierForGuestCount(pkg, guestCount)
     const overage = Math.max(0, guestCount - (tier.pax + FOOD_BUFFER_PAX))
     const baseTotal = tier.price + overage * EXCESS_PAX_RATE

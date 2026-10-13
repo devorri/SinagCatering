@@ -6,8 +6,6 @@ import {
   Lock,
   ArrowRight,
   X,
-  Copy,
-  Check,
   CheckCircle2,
   Loader2,
   Smartphone,
@@ -54,8 +52,6 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
   const [realQrCode, setRealQrCode] = useState<string | null>(null)
   const [isLoadingQr, setIsLoadingQr] = useState<boolean>(false)
   const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null)
-  const [qrExpiresAt, setQrExpiresAt] = useState<string | null>(null)
-
   // Form states
   const [gcashPhone, setGcashPhone] = useState(customerPhone || '09287144597')
   const [gcashRef, setGcashRef] = useState('')
@@ -67,7 +63,6 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
   const [cardExpiry, setCardExpiry] = useState('')
   const [cardCvc, setCardCvc] = useState('')
 
-  const [copiedAccount, setCopiedAccount] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [processingStep, setProcessingStep] = useState('')
   const [isSuccess, setIsSuccess] = useState(false)
@@ -95,7 +90,6 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
         if (isMounted && res.ok && data.qr_image) {
           setRealQrCode(data.qr_image)
           setPaymentIntentId(data.payment_intent_id)
-          setQrExpiresAt(data.expires_at)
         }
       } catch (err) {
         console.warn('Real QR Ph generation fallback:', err)
@@ -137,12 +131,6 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
   }, [isOpen, paymentIntentId, isSuccess, isProcessing])
 
   if (!isOpen) return null
-
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text)
-    setCopiedAccount(true)
-    setTimeout(() => setCopiedAccount(false), 2000)
-  }
 
   const formatCardNumber = (val: string) => {
     const raw = val.replace(/\D/g, '').slice(0, 16)

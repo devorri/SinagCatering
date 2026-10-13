@@ -22,7 +22,6 @@ import {
   EXTRA_MAIN_RATE,
   EXTRA_PASTA_RATE,
   FOOD_BUFFER_PAX,
-  SINAG_PACKAGES,
   MAIN_DISHES,
   PASTA_DISHES,
   findTierForGuestCount,
@@ -31,7 +30,6 @@ import {
 import { CATEGORY_SHOWCASE_GALLERY } from '../data/eventGalleries'
 import { AI_CATALOG_ADDONS, formatMoney } from '../data/packages'
 import type { AIFormData } from '../lib/ai'
-import { supabase } from '../lib/supabase'
 import { EmbeddedCheckoutModal } from '../components/EmbeddedCheckoutModal'
 
 interface BookingWizardProps {
@@ -47,7 +45,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   onBack,
   initialAIFormData,
 }) => {
-  const { blockedDates, bookings, createBooking, currentUser } = useApp()
+  const { blockedDates, bookings, createBooking, currentUser, packages } = useApp()
 
   const [currentStep, setCurrentStep] = useState(0)
 
@@ -55,10 +53,10 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const [packageSelectMode, setPackageSelectMode] = useState<'standard' | 'ai'>('standard')
   const [selectedPkgIndex, setSelectedPkgIndex] = useState(() => {
     if (initialAIFormData?.package_id) {
-      const idx = SINAG_PACKAGES.findIndex((p) => p.id === initialAIFormData.package_id)
+      const idx = packages.findIndex((p) => p.id === initialAIFormData.package_id)
       if (idx !== -1) return idx
     }
-    return 1
+    return 0
   })
 
   // Dedicated AI Recommendation Inputs (Step 1 AI Tab)
@@ -109,7 +107,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   React.useEffect(() => {
     if (initialAIFormData) {
       if (initialAIFormData.package_id) {
-        const idx = SINAG_PACKAGES.findIndex((p) => p.id === initialAIFormData.package_id)
+        const idx = packages.findIndex((p) => p.id === initialAIFormData.package_id)
         if (idx !== -1) setSelectedPkgIndex(idx)
       }
       if (initialAIFormData.guest_count) setGuestCount(initialAIFormData.guest_count)
@@ -129,7 +127,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       setAiAppliedBanner(true)
       setCurrentStep(1) // Jump straight to Customize step so all fields are visibly populated
     }
-  }, [initialAIFormData])
+  }, [initialAIFormData, packages])
 
   // Step 4 — Dedicated Payment Method Section
   const [paymentMethod, setPaymentMethod] = useState<'qrph' | 'gcash' | 'maya' | 'bank_transfer' | 'paymongo'>('qrph')
@@ -151,10 +149,13 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const [successMsg, setSuccessMsg] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const currentPkg = SINAG_PACKAGES[selectedPkgIndex]
+  const currentPkg = packages[selectedPkgIndex] ?? packages[0]
 
   // Task 3: Precise Math Logic for Package, Buffers, Add-ons & 50% Downpayment
   const calculations = useMemo(() => {
+    if (!currentPkg) {
+      return { tier: { pax: 0, price: 0 }, baseCost: 0, servicePax: 0, excessGuests: 0, excessPaxFee: 0, extraMainCost: 0, extraPastaCost: 0, extraDessertCost: 0, flatAddonsCost: 0, addOnCost: 0, totalPrice: 0, downpayment: 0 }
+    }
     const tier = findTierForGuestCount(currentPkg, guestCount)
     const isPerHeadPackage = currentPkg.pricePerHead !== undefined
     const baseCost = isPerHeadPackage ? guestCount * (currentPkg.pricePerHead ?? 0) : tier.price
@@ -191,8 +192,8 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
   // Dedicated AI Recommendation Calculation (For Step 1 AI Tab)
   const aiRecommendation = useMemo(() => {
-    return recommendPackage(aiGuestCount, aiBudget, aiNeedsEntertainment)
-  }, [aiGuestCount, aiBudget, aiNeedsEntertainment])
+    return recommendPackage(packages, aiGuestCount, aiBudget, aiNeedsEntertainment)
+  }, [packages, aiGuestCount, aiBudget, aiNeedsEntertainment])
 
 
 
@@ -273,7 +274,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       setErrorMsg(`No standard package is available within your ₱${aiBudget.toLocaleString()} budget. Please increase the budget or compare the standard packages.`)
       return
     }
-    const idx = SINAG_PACKAGES.findIndex((pkg) => pkg.id === aiRecommendation.pkg.id)
+    const idx = packages.findIndex((pkg) => pkg.id === aiRecommendation.pkg.id)
     if (idx !== -1) {
       setSelectedPkgIndex(idx)
     }
@@ -507,7 +508,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
           {/* Mode 1: Standard Packages Grid */}
           {packageSelectMode === 'standard' && (
             <div className="wizard-packages-grid">
-              {SINAG_PACKAGES.map((pkg, idx) => (
+              {packages.map((pkg, idx) => (
                 <div
                   key={pkg.id}
                   className={`wizard-package-card ${selectedPkgIndex === idx ? 'selected' : ''}`}

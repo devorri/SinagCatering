@@ -80,6 +80,7 @@ export const sendSemaphoreSMS = async (
   referenceId?: string,
 ): Promise<{ success: boolean; simulated: boolean; error?: string }> => {
   const cleanedPhone = normalizePhPhoneNumber(recipientPhone)
+  let lastErrorMessage = 'SMS delivery was not accepted by the configured server endpoint.'
 
   // 1. Try local Vite API server endpoint
   try {
@@ -88,30 +89,30 @@ export const sendSemaphoreSMS = async (
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ recipientPhone: cleanedPhone, message, referenceId }),
     })
-    if (apiRes.ok) {
-      const result = await apiRes.json()
-      if (result.success) {
-        const item = Array.isArray(result.data) ? result.data[0] : null
-        const msgId = result.message_id || item?.message_id
-        const network = result.network || item?.network
-        const status = result.status || item?.status || 'Queued'
-        const enrichedMessage = msgId
-          ? `${message} [Semaphore ID: ${msgId} | Net: ${network || 'PH'} | Status: ${status}]`
-          : message
+    const result = await apiRes.json().catch(() => null)
+    if (apiRes.ok && result?.success) {
+      const item = Array.isArray(result.data) ? result.data[0] : (result.data || null)
+      const msgId = result.message_id || item?.message_id
+      const network = result.network || item?.network
+      const status = result.status || item?.status || 'Queued'
+      const enrichedMessage = msgId
+        ? `${message} [Semaphore ID: ${msgId} | Net: ${network || 'PH'} | Status: ${status}]`
+        : message
 
-        logNotification({
-          type: 'sms',
-          recipient: cleanedPhone,
-          message: enrichedMessage,
-          status: 'sent',
-          provider: 'Semaphore',
-          referenceId: referenceId || (msgId ? String(msgId) : undefined),
-        })
-        return { success: true, simulated: false }
-      }
+      logNotification({
+        type: 'sms',
+        recipient: cleanedPhone,
+        message: enrichedMessage,
+        status: 'sent',
+        provider: 'Semaphore',
+        referenceId: referenceId || (msgId ? String(msgId) : undefined),
+      })
+      return { success: true, simulated: false }
+    } else if (result?.error) {
+      lastErrorMessage = String(result.error)
     }
-  } catch {
-    // Fall back to Supabase function
+  } catch (err: any) {
+    if (err?.message) lastErrorMessage = err.message
   }
 
   // 2. Fall back to Supabase Edge Function
@@ -132,21 +133,23 @@ export const sendSemaphoreSMS = async (
           referenceId,
         })
         return { success: true, simulated }
+      } else if (error?.message) {
+        lastErrorMessage = error.message
       }
     } catch {
-      // Ignore and log failed
+      // Ignore
     }
   }
 
   logNotification({
     type: 'sms',
     recipient: cleanedPhone,
-    message,
+    message: `${message} [Failed: ${lastErrorMessage}]`,
     status: 'failed',
     provider: 'Semaphore',
     referenceId,
   })
-  return { success: false, simulated: false, error: 'SMS delivery was not accepted by the configured server endpoint.' }
+  return { success: false, simulated: false, error: lastErrorMessage }
 }
 
 /**

@@ -107,6 +107,30 @@ create table if not exists public.bookings (
   updated_at timestamptz not null default now()
 );
 
+-- A date can have only one active event. Cancelled/forfeited records remain
+-- available for audit while releasing the date for a new reservation.
+create unique index if not exists bookings_one_active_event_per_date_idx
+  on public.bookings (event_date)
+  where booking_status not in ('cancelled', 'forfeit');
+
+create or replace function public.enforce_booking_lead_time()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if new.event_date < ((now() at time zone 'Asia/Manila')::date + 14) then
+    raise exception 'Bookings must be scheduled at least 14 days in advance';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists bookings_lead_time_guard on public.bookings;
+create trigger bookings_lead_time_guard
+  before insert or update of event_date on public.bookings
+  for each row execute function public.enforce_booking_lead_time();
+
 alter table public.bookings
   drop constraint if exists bookings_payment_method_check;
 alter table public.bookings
@@ -266,7 +290,6 @@ drop policy if exists "Allow all on addons" on public.package_addons;
 
 -- Clients may submit bookings but cannot read or alter booking records directly.
 drop policy if exists "Allow anyone to create bookings" on public.bookings;
-create policy "Allow anyone to create bookings" on public.bookings for insert with check (true);
 drop policy if exists "Allow public read on bookings" on public.bookings;
 drop policy if exists "Allow update on bookings" on public.bookings;
 drop policy if exists "Allow delete on bookings" on public.bookings;
@@ -289,7 +312,6 @@ drop policy if exists "Allow all on reviews" on public.reviews;
 
 -- The public may submit an inquiry, but inquiry contents are never publicly readable.
 drop policy if exists "Allow anyone to insert inquiries" on public.catering_inquiries;
-create policy "Allow anyone to insert inquiries" on public.catering_inquiries for insert with check (true);
 drop policy if exists "Allow public read on inquiries" on public.catering_inquiries;
 drop policy if exists "Allow all on inquiries" on public.catering_inquiries;
 
