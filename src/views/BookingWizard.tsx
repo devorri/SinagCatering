@@ -48,6 +48,8 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const { blockedDates, bookings, createBooking, currentUser, packages } = useApp()
 
   const [currentStep, setCurrentStep] = useState(0)
+  const [maxVisitedStep, setMaxVisitedStep] = useState(initialAIFormData ? 1 : 0)
+  const initialPresetAppliedRef = React.useRef(false)
 
   // Step 1 — Package Selection & AI Recommendation Mode
   const [packageSelectMode, setPackageSelectMode] = useState<'standard' | 'ai'>('standard')
@@ -105,7 +107,8 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
   // Reactively auto-fill and advance wizard whenever an AI recommendation is applied
   React.useEffect(() => {
-    if (initialAIFormData) {
+    if (initialAIFormData && !initialPresetAppliedRef.current) {
+      initialPresetAppliedRef.current = true
       if (initialAIFormData.package_id) {
         const idx = packages.findIndex((p) => p.id === initialAIFormData.package_id)
         if (idx !== -1) setSelectedPkgIndex(idx)
@@ -126,6 +129,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       if (initialAIFormData.notes) setNotes(initialAIFormData.notes)
       setAiAppliedBanner(true)
       setCurrentStep(1) // Jump straight to Customize step so all fields are visibly populated
+      setMaxVisitedStep((prev) => Math.max(prev, 1))
     }
   }, [initialAIFormData, packages])
 
@@ -286,42 +290,121 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     setAiAppliedBanner(true)
     setPackageSelectMode('standard')
     setCurrentStep(1) // Advance directly to Customize step to review the configured package & add-ons
+    setMaxVisitedStep((prev) => Math.max(prev, 1))
     setErrorMsg('')
   }
 
-  // Navigation validation
-  const canGoNext = () => {
-    if (currentStep === 2 && !eventDate) return false
-    if (currentStep === 3) {
-      if (!currentUser && (!clientName.trim() || !clientEmail.trim() || !clientPhone.trim())) return false
-      if (currentUser && !clientPhone.trim()) return false
-      if (eventType === 'Others (Please Specify)' && !customEventType.trim()) return false
+  // Step-level form validation guardrails
+  const validateStep = (stepIndex: number): { valid: boolean; error?: string } => {
+    if (stepIndex === 0) {
+      if (selectedPkgIndex < 0 || selectedPkgIndex >= packages.length) {
+        return { valid: false, error: 'Please choose a package to proceed.' }
+      }
+      return { valid: true }
     }
-    return true
+    if (stepIndex === 1) {
+      if (guestCount < 1) {
+        return { valid: false, error: 'Please specify a valid guest count.' }
+      }
+      return { valid: true }
+    }
+    if (stepIndex === 2) {
+      if (!eventDate) {
+        return { valid: false, error: 'Please select an available event date on the calendar.' }
+      }
+      return { valid: true }
+    }
+    if (stepIndex === 3) {
+      if (!currentUser && (!clientName.trim() || !clientEmail.trim())) {
+        return { valid: false, error: 'Please enter your full name and email address.' }
+      }
+      if (!clientPhone.trim()) {
+        return { valid: false, error: 'Please provide a mobile phone number for SMS booking updates.' }
+      }
+      if (eventType === 'Others (Please Specify)' && !customEventType.trim()) {
+        return { valid: false, error: 'Please specify your custom event type.' }
+      }
+      return { valid: true }
+    }
+    return { valid: true }
+  }
+
+  // Navigation validation for primary next button
+  const canGoNext = () => validateStep(currentStep).valid
+
+  // Check if a step indicator in the header bar is clickable
+  const isStepClickable = (idx: number) => {
+    if (idx === currentStep) return false
+    // Backward steps are always clickable
+    if (idx < currentStep) return true
+    // Immediate next step is clickable if current step inputs are valid
+    if (idx === currentStep + 1) {
+      return validateStep(currentStep).valid
+    }
+    // Future visited steps: only reachable if all prior steps currently validate
+    if (idx <= maxVisitedStep) {
+      for (let s = 0; s < idx; s++) {
+        if (!validateStep(s).valid) return false
+      }
+      return true
+    }
+    return false
+  }
+
+  // Click handler for interactive step indicator buttons with validation guardrails
+  const handleStepClick = (targetIndex: number) => {
+    if (targetIndex === currentStep) return
+
+    // Backward navigation: allow users to freely click backward to any previously completed step
+    if (targetIndex < currentStep) {
+      setErrorMsg('')
+      setCurrentStep(targetIndex)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+      return
+    }
+
+    // Forward navigation guardrails:
+    // 1. Prevent jumping forward if the current step's required form inputs are invalid
+    const currentValidation = validateStep(currentStep)
+    if (!currentValidation.valid) {
+      setErrorMsg(currentValidation.error || 'Please complete the required fields on this step before proceeding.')
+      return
+    }
+
+    // 2. Validate all intermediate steps between current step and target step
+    for (let s = currentStep; s < targetIndex; s++) {
+      const stepVal = validateStep(s)
+      if (!stepVal.valid) {
+        setErrorMsg(stepVal.error || `Please complete Step ${s + 1} (${STEP_LABELS[s]}) first.`)
+        setCurrentStep(s)
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+        return
+      }
+    }
+
+    // 3. Prevent jumping past uncompleted steps far ahead
+    if (targetIndex > maxVisitedStep && targetIndex > currentStep + 1) {
+      setErrorMsg(`Please complete each step in order before jumping to Step ${targetIndex + 1}.`)
+      return
+    }
+
+    setErrorMsg('')
+    setMaxVisitedStep((prev) => Math.max(prev, targetIndex))
+    setCurrentStep(targetIndex)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const goNext = () => {
     setErrorMsg('')
-    if (currentStep === 2 && !eventDate) {
-      setErrorMsg('Please select an available event date on the calendar.')
+    const check = validateStep(currentStep)
+    if (!check.valid) {
+      setErrorMsg(check.error || 'Please complete the required fields to continue.')
       return
     }
-    if (currentStep === 3) {
-      if (!currentUser && (!clientName.trim() || !clientEmail.trim())) {
-        setErrorMsg('Please enter your full name and email address.')
-        return
-      }
-      if (!clientPhone.trim()) {
-        setErrorMsg('Please provide a mobile phone number for SMS booking updates.')
-        return
-      }
-      if (eventType === 'Others (Please Specify)' && !customEventType.trim()) {
-        setErrorMsg('Please specify your custom event type.')
-        return
-      }
-    }
     if (currentStep < STEP_LABELS.length - 1) {
-      setCurrentStep(currentStep + 1)
+      const nextStep = currentStep + 1
+      setMaxVisitedStep((prev) => Math.max(prev, nextStep))
+      setCurrentStep(nextStep)
       window.scrollTo({ top: 0, behavior: 'smooth' })
     }
   }
@@ -439,18 +522,38 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   return (
     <div className="wizard-container">
       {/* Step Indicators */}
-      <div className="wizard-progress">
-        {STEP_LABELS.map((label, idx) => (
-          <div
-            key={label}
-            className={`wizard-step-indicator ${idx < currentStep ? 'completed' : ''} ${idx === currentStep ? 'active' : ''}`}
-          >
-            <div className="wizard-step-dot">
-              {idx < currentStep ? <Check size={14} /> : <span>{idx + 1}</span>}
-            </div>
-            <span className="wizard-step-label">{label}</span>
-          </div>
-        ))}
+      <div className="wizard-progress" role="navigation" aria-label="Booking Progress Stepper">
+        {STEP_LABELS.map((label, idx) => {
+          const isCompleted = idx < currentStep
+          const isActive = idx === currentStep
+          const isReachable = isStepClickable(idx)
+          const isLocked = !isActive && !isReachable
+
+          return (
+            <button
+              key={label}
+              type="button"
+              className={`wizard-step-indicator ${isCompleted ? 'completed' : ''} ${isActive ? 'active' : ''} ${isReachable ? 'clickable' : ''} ${isLocked ? 'locked' : ''}`}
+              onClick={() => handleStepClick(idx)}
+              aria-current={isActive ? 'step' : undefined}
+              aria-disabled={isLocked}
+              title={
+                isActive
+                  ? `Current Step: ${label}`
+                  : isCompleted
+                  ? `Return to Step ${idx + 1}: ${label}`
+                  : isReachable
+                  ? `Jump to Step ${idx + 1}: ${label}`
+                  : `Complete previous steps to unlock Step ${idx + 1}: ${label}`
+              }
+            >
+              <div className="wizard-step-dot">
+                {isCompleted ? <Check size={14} /> : <span>{idx + 1}</span>}
+              </div>
+              <span className="wizard-step-label">{label}</span>
+            </button>
+          )
+        })}
       </div>
 
       {aiAppliedBanner && (
@@ -1572,12 +1675,35 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
               </div>
             )}
           </div>
+        </div>
+      )}
 
-          <div style={{ textAlign: 'center', marginTop: '32px' }}>
+      {/* Navigation Buttons */}
+      {!successMsg && (
+        <div className="wizard-nav-buttons">
+          <button
+            type="button"
+            className="btn-hero-outline wizard-back-btn"
+            onClick={goBack}
+            disabled={isSubmitting}
+          >
+            <ArrowLeft size={16} /> {currentStep === 0 ? 'Back to Home' : 'Previous Step'}
+          </button>
+
+          {currentStep < STEP_LABELS.length - 1 ? (
             <button
               type="button"
-              className="btn-hero-primary"
-              style={{ fontSize: '1rem', padding: '16px 40px' }}
+              className="btn-hero-primary wizard-next-btn"
+              onClick={goNext}
+              disabled={!canGoNext() || isSubmitting}
+            >
+              Next Step <ArrowRight size={16} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn-hero-primary wizard-submit-btn"
+              style={{ fontSize: '1rem', padding: '14px 32px' }}
               onClick={handleSubmit}
               disabled={isSubmitting}
             >
@@ -1589,31 +1715,14 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 </>
               )}
             </button>
-            <p style={{ color: 'var(--muted)', fontSize: '0.82rem', marginTop: '12px' }}>
-              Your reservation will be saved, and confirmation notifications will trigger via SMS and email.
-            </p>
-          </div>
+          )}
         </div>
       )}
 
-      {/* Navigation Buttons */}
-      {!successMsg && (
-        <div className="wizard-nav-buttons">
-          <button type="button" className="btn-hero-outline" onClick={goBack} disabled={isSubmitting}>
-            <ArrowLeft size={16} /> {currentStep === 0 ? 'Back to Home' : 'Previous Step'}
-          </button>
-
-          {currentStep < STEP_LABELS.length - 1 && (
-            <button
-              type="button"
-              className="btn-hero-primary"
-              onClick={goNext}
-              disabled={!canGoNext() || isSubmitting}
-            >
-              Next Step <ArrowRight size={16} />
-            </button>
-          )}
-        </div>
+      {currentStep === 4 && !successMsg && (
+        <p style={{ color: 'var(--muted)', fontSize: '0.82rem', textAlign: 'center', marginTop: '14px' }}>
+          Your reservation will be saved, and confirmation notifications will trigger via SMS and email.
+        </p>
       )}
 
       {/* EMBEDDED CHECKOUT MODAL (No external PayMongo redirect, 100% Sinag Branded) */}

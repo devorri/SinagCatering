@@ -2561,18 +2561,59 @@ footer {
   display: flex;
   align-items: center;
   gap: 10px;
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: transparent;
+  padding: 6px 12px;
+  border-radius: 9999px;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  text-align: left;
+  user-select: none;
   opacity: 0.45;
-  transition: var(--transition);
+  cursor: not-allowed;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.wizard-step-indicator:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.wizard-step-indicator.clickable,
+.wizard-step-indicator.completed {
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.wizard-step-indicator.clickable:hover,
+.wizard-step-indicator.completed:hover {
+  opacity: 1;
+  background: rgba(244, 144, 12, 0.08);
+  transform: translateY(-1px);
+}
+
+.wizard-step-indicator.clickable:active,
+.wizard-step-indicator.completed:active {
+  transform: translateY(0);
 }
 
 .wizard-step-indicator.active {
   opacity: 1;
   font-weight: 700;
+  cursor: default;
+  background: rgba(244, 144, 12, 0.12);
 }
 
 .wizard-step-indicator.completed {
-  opacity: 1;
   color: var(--terracotta);
+}
+
+.wizard-step-indicator.locked {
+  cursor: not-allowed;
+  opacity: 0.35;
 }
 
 .wizard-step-dot {
@@ -2586,7 +2627,7 @@ footer {
   font-weight: 700;
   color: var(--muted);
   flex-shrink: 0;
-  transition: var(--transition);
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .wizard-step-indicator.active .wizard-step-dot {
@@ -2598,6 +2639,12 @@ footer {
 .wizard-step-indicator.completed .wizard-step-dot {
   background: var(--terracotta);
   color: #FFFFFF;
+}
+
+.wizard-step-indicator.clickable:hover .wizard-step-dot,
+.wizard-step-indicator.completed:hover .wizard-step-dot {
+  transform: scale(1.08);
+  box-shadow: 0 0 10px rgba(244, 144, 12, 0.35);
 }
 
 .wizard-step-label {
@@ -2794,9 +2841,28 @@ footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
   margin-top: 40px;
   padding-top: 24px;
   border-top: 1px solid var(--line);
+}
+
+.wizard-back-btn,
+.wizard-next-btn,
+.wizard-submit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.wizard-back-btn:hover:not(:disabled) {
+  transform: translateX(-3px);
+}
+
+.wizard-next-btn:hover:not(:disabled) {
+  transform: translateX(3px);
 }
 
 /* ==========================================================================
