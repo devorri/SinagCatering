@@ -60,15 +60,19 @@ export const clearNotificationLogs = () => {
   window.dispatchEvent(new CustomEvent('sinag-notification-sent'))
 }
 
-// Clean and normalize Philippine mobile numbers (e.g. "0928 714 4597" -> "09287144597")
+// Clean and normalize Philippine mobile numbers to international format (e.g. "0928 714 4597" -> "639287144597")
 export const normalizePhPhoneNumber = (phone: string): string => {
-  let cleaned = phone.replace(/[^0-9+]/g, '')
-  if (cleaned.startsWith('+63')) {
-    cleaned = '0' + cleaned.slice(3)
-  } else if (cleaned.startsWith('63') && cleaned.length === 12) {
-    cleaned = '0' + cleaned.slice(2)
+  const digits = phone.replace(/[^0-9]/g, '')
+  if (digits.startsWith('09') && digits.length === 11) {
+    return '63' + digits.slice(1) // 639XXXXXXXXX
   }
-  return cleaned
+  if (digits.startsWith('639') && digits.length === 12) {
+    return digits
+  }
+  if (digits.startsWith('9') && digits.length === 10) {
+    return '63' + digits
+  }
+  return digits
 }
 
 /**
@@ -82,7 +86,7 @@ export const sendSemaphoreSMS = async (
   const cleanedPhone = normalizePhPhoneNumber(recipientPhone)
   let lastErrorMessage = 'SMS delivery was not accepted by the configured server endpoint.'
 
-  // 1. Try local Vite API server endpoint
+  // 1. Try local Vite API server endpoint (direct Semaphore dispatch via server)
   try {
     const apiRes = await fetch('/api/sms/send', {
       method: 'POST',
@@ -115,7 +119,7 @@ export const sendSemaphoreSMS = async (
     if (err?.message) lastErrorMessage = err.message
   }
 
-  // 2. Fall back to Supabase Edge Function
+  // 2. Fall back to Supabase Edge Function ('send-sms')
   if (supabase) {
     try {
       const { data, error } = await supabase.functions.invoke('send-sms', {
@@ -124,10 +128,15 @@ export const sendSemaphoreSMS = async (
 
       if (!error && data?.success === true) {
         const simulated = data?.simulated === true
+        const msgId = data?.message_id
+        const enrichedMessage = msgId
+          ? `${message} [Edge Function | Semaphore ID: ${msgId} | Status: ${data?.status || 'Queued'}]`
+          : message
+
         logNotification({
           type: 'sms',
           recipient: cleanedPhone,
-          message,
+          message: enrichedMessage,
           status: simulated ? 'simulated' : 'sent',
           provider: 'Semaphore',
           referenceId,
@@ -136,8 +145,8 @@ export const sendSemaphoreSMS = async (
       } else if (error?.message) {
         lastErrorMessage = error.message
       }
-    } catch {
-      // Ignore
+    } catch (edgeErr: any) {
+      if (edgeErr?.message) lastErrorMessage = edgeErr.message
     }
   }
 
@@ -161,8 +170,11 @@ export const sendTransactionalEmail = async (
   body: string,
   referenceId?: string,
 ): Promise<{ success: boolean; simulated?: boolean; error?: string }> => {
+  // Replace generic boilerplate placeables like [Company Name] with official branding
+  const formattedBody = body.replace(/\[Company Name\]/g, 'Sinag Catering Services')
+
   const serviceId = import.meta.env.VITE_EMAILJS_SERVICE_ID as string | undefined
-  const templateId = import.meta.env.VITE_EMAILJS_TEMPLATE_ID as string | undefined
+  const templateId = (import.meta.env.VITE_EMAILJS_TRANSACTIONAL_TEMPLATE_ID || import.meta.env.VITE_EMAILJS_TEMPLATE_ID) as string | undefined
   const publicKey = import.meta.env.VITE_EMAILJS_PUBLIC_KEY as string | undefined
 
   if (serviceId && templateId && publicKey) {
@@ -184,8 +196,13 @@ export const sendTransactionalEmail = async (
             email: recipientEmail,
             to_name: recipientEmail.split('@')[0],
             subject: subject,
-            message: body,
-            passcode: referenceId || Math.floor(100000 + Math.random() * 900000).toString(),
+            message: formattedBody,
+            // CRITICAL FIX: Replace raw UUID string with the formatted message payload
+            // so even if EmailJS template is rendering {{passcode}}, the recipient gets
+            // the full formatted transactional text rather than a raw UUID like 'bk-f9bec...'
+            passcode: formattedBody,
+            company_name: "Sinag Catering Services",
+            company: "Sinag Catering Services",
             time: formattedTime,
             reference_id: referenceId || '',
           },
@@ -199,7 +216,7 @@ export const sendTransactionalEmail = async (
           type: 'email',
           recipient: recipientEmail,
           subject,
-          message: `${body} [EmailJS Warning: ${errText}]`,
+          message: `${formattedBody} [EmailJS Warning: ${errText}]`,
           status: 'failed',
           provider: 'Email',
           referenceId,
@@ -211,7 +228,7 @@ export const sendTransactionalEmail = async (
         type: 'email',
         recipient: recipientEmail,
         subject,
-        message: body,
+        message: formattedBody,
         status: 'sent',
         provider: 'Email',
         referenceId,
@@ -224,7 +241,7 @@ export const sendTransactionalEmail = async (
         type: 'email',
         recipient: recipientEmail,
         subject,
-        message: `${body} [Network Error: ${errorMessage}]`,
+        message: `${formattedBody} [Network Error: ${errorMessage}]`,
         status: 'failed',
         provider: 'Email',
         referenceId,
@@ -237,7 +254,7 @@ export const sendTransactionalEmail = async (
     type: 'email',
     recipient: recipientEmail,
     subject,
-    message: body,
+    message: formattedBody,
     status: 'simulated',
     provider: 'Email',
     referenceId,
@@ -256,6 +273,18 @@ export const sendEmailOTP = async (
   const expiryDate = new Date(Date.now() + 15 * 60 * 1000)
   const formattedTime = expiryDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
 
+  // Use the exact customized template provided
+  const otpMessage = `To authenticate, please use the following One Time Password (OTP):
+
+${otpCode}
+
+This OTP will be valid for 15 minutes till ${formattedTime}.
+
+Do not share this OTP with anyone. If you didn't make this request, you can safely ignore this email.
+Sinag's Cater will never contact you about this email or ask for any login codes or links. Beware of phishing scams.
+
+Thanks for visiting Sinag's Cater!`
+
   const serviceId = import.meta.env.VITE_EMAILJS_SERVICE_ID as string | undefined
   const templateId = import.meta.env.VITE_EMAILJS_TEMPLATE_ID as string | undefined
   const publicKey = import.meta.env.VITE_EMAILJS_PUBLIC_KEY as string | undefined
@@ -264,8 +293,8 @@ export const sendEmailOTP = async (
     logNotification({
       type: 'email',
       recipient: recipientEmail,
-      subject: 'Sinag Catering OTP Verification',
-      message: `Your OTP is: ${otpCode} (Valid till ${formattedTime})`,
+      subject: "Sinag's Cater OTP Verification",
+      message: otpMessage,
       status: 'simulated',
       provider: 'Email',
       referenceId: 'OTP-VERIFY',
@@ -287,6 +316,9 @@ export const sendEmailOTP = async (
           to_name: recipientEmail.split('@')[0],
           passcode: otpCode,
           time: formattedTime,
+          message: otpMessage,
+          company_name: "Sinag's Cater",
+          company: "Sinag's Cater",
         },
       }),
     })
@@ -296,8 +328,8 @@ export const sendEmailOTP = async (
       logNotification({
         type: 'email',
         recipient: recipientEmail,
-        subject: 'Sinag Catering OTP Verification',
-        message: `OTP: ${otpCode} [Warning: ${errText}]`,
+        subject: "Sinag's Cater OTP Verification",
+        message: `${otpMessage} [Warning: ${errText}]`,
         status: 'failed',
         provider: 'Email',
         referenceId: 'OTP-VERIFY',
@@ -308,8 +340,8 @@ export const sendEmailOTP = async (
     logNotification({
       type: 'email',
       recipient: recipientEmail,
-      subject: 'Sinag Catering OTP Verification',
-      message: `Your OTP is: ${otpCode} (Valid till ${formattedTime})`,
+      subject: "Sinag's Cater OTP Verification",
+      message: otpMessage,
       status: 'sent',
       provider: 'Email',
       referenceId: 'OTP-VERIFY',
@@ -319,8 +351,8 @@ export const sendEmailOTP = async (
     logNotification({
       type: 'email',
       recipient: recipientEmail,
-      subject: 'Sinag Catering OTP Verification',
-      message: `OTP: ${otpCode} [Error: ${err.message}]`,
+      subject: "Sinag's Cater OTP Verification",
+      message: `${otpMessage} [Error: ${err.message}]`,
       status: 'failed',
       provider: 'Email',
       referenceId: 'OTP-VERIFY',

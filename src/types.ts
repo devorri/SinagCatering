@@ -61,6 +61,8 @@ export interface Staff {
   name: string
   role: 'waiter' | 'food_attendant'
   status: 'available' | 'busy'
+  age?: number
+  offDays?: string[]
 }
 
 export interface Inquiry {

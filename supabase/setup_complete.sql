@@ -166,8 +166,14 @@ create table if not exists public.staff (
   name text not null,
   role text not null check (role in ('waiter', 'food_attendant')),
   status text not null default 'available' check (status in ('available', 'busy')),
+  age integer check (age >= 18 and age <= 70),
+  off_days text[] default '{}'::text[],
   created_at timestamptz not null default now()
 );
+
+-- Ensure columns exist if table was already created
+alter table public.staff add column if not exists age integer;
+alter table public.staff add column if not exists off_days text[] default '{}'::text[];
 
 create table if not exists public.reviews (
   id text primary key default ('rev-' || floor(random() * 100000)::text),
@@ -222,19 +228,21 @@ create table if not exists public.paymongo_checkout_sessions (
 );
 
 -- Seed Staff
-insert into public.staff (id, name, role, status)
+insert into public.staff (id, name, role, status, age, off_days)
 values
-  ('st-1', 'Juan Dela Cruz', 'waiter', 'available'),
-  ('st-2', 'Maria Santos', 'waiter', 'available'),
-  ('st-3', 'Pedro Concepcion', 'waiter', 'available'),
-  ('st-4', 'Carlos Perez', 'waiter', 'available'),
-  ('st-5', 'Jose Rizal', 'waiter', 'available'),
-  ('st-6', 'Ana Kalang', 'food_attendant', 'available'),
-  ('st-7', 'Luisa Fernandez', 'food_attendant', 'available'),
-  ('st-8', 'Rosario Mercado', 'food_attendant', 'available'),
-  ('st-9', 'Gabriela Silang', 'food_attendant', 'available'),
-  ('st-10', 'Teresa Magbanua', 'food_attendant', 'available')
-on conflict (id) do nothing;
+  ('st-1', 'Juan Dela Cruz', 'waiter', 'available', 28, array['Monday', 'Wednesday']),
+  ('st-2', 'Maria Santos', 'waiter', 'available', 24, array['Tuesday']),
+  ('st-3', 'Pedro Concepcion', 'waiter', 'available', 30, array['Monday', 'Thursday']),
+  ('st-4', 'Carlos Perez', 'waiter', 'available', 26, array['Sunday']),
+  ('st-5', 'Jose Rizal', 'waiter', 'available', 32, array['Wednesday', 'Friday']),
+  ('st-6', 'Ana Kalang', 'food_attendant', 'available', 25, array['Monday']),
+  ('st-7', 'Luisa Fernandez', 'food_attendant', 'available', 23, array['Thursday']),
+  ('st-8', 'Rosario Mercado', 'food_attendant', 'available', 29, array['Saturday']),
+  ('st-9', 'Gabriela Silang', 'food_attendant', 'available', 27, array['Tuesday', 'Friday']),
+  ('st-10', 'Teresa Magbanua', 'food_attendant', 'available', 31, array['Monday', 'Sunday'])
+on conflict (id) do update set
+  age = excluded.age,
+  off_days = excluded.off_days;
 
 -- ----------------------------------------------------------------------------
 -- 7. GRANT PERMISSIONS TO POSTGREST ROLES (Fixes 42501 permission denied)
@@ -381,3 +389,64 @@ $$;
 
 grant execute on function public.auth_sign_in(text, text) to anon, authenticated, service_role;
 grant execute on function public.auth_sign_up(text, text, text, text) to anon, authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 9. TRANSACTIONAL NOTIFICATION TRIGGER & PAYLOAD MAPPING
+-- Replaces raw UUIDs & default OTP templates with the rendered message string
+-- ----------------------------------------------------------------------------
+create or replace function public.on_booking_downpayment_verified()
+returns trigger
+language plpgsql
+security definer
+as $$
+declare
+  v_sms_body text;
+  v_phone text;
+  v_ref_id text;
+begin
+  -- Trigger when downpayment is marked paid or booking confirmed
+  if (NEW.payment_status = 'downpayment_paid' and (OLD.payment_status is distinct from 'downpayment_paid'))
+     or (NEW.booking_status = 'confirmed' and (OLD.booking_status is distinct from 'confirmed')) then
+
+    v_ref_id := coalesce(NEW.id, 'REF-PENDING');
+    v_phone := coalesce(NEW.phone, '');
+
+    -- RENDERED MESSAGE PAYLOAD (Guarantees formatted string instead of raw UUID or boilerplate OTP)
+    v_sms_body := format(
+      'Sinag Catering: Downpayment Verified & Booking Confirmed! Ref: #%s. Scheduled Date: %s. Your event reservation is locked in our calendar! Salamat po!',
+      v_ref_id,
+      coalesce(NEW.event_date::text, 'Upcoming')
+    );
+
+    insert into public.notification_logs (
+      id,
+      type,
+      recipient,
+      subject,
+      message,
+      status,
+      provider,
+      reference_id,
+      created_at
+    ) values (
+      'notif-' || floor(extract(epoch from clock_timestamp()) * 1000)::text,
+      'sms',
+      v_phone,
+      'Downpayment Verification Alert',
+      v_sms_body,
+      'sent',
+      'Semaphore',
+      v_ref_id,
+      now()
+    );
+  end if;
+  return NEW;
+end;
+$$;
+
+drop trigger if exists on_booking_downpayment_verified_trigger on public.bookings;
+create trigger on_booking_downpayment_verified_trigger
+  after update on public.bookings
+  for each row
+  execute function public.on_booking_downpayment_verified();
+

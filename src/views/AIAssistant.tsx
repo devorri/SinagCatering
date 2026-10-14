@@ -24,11 +24,12 @@ interface AIAssistantProps {
 }
 
 const QUICK_REPLIES = [
+  'Plan an 80-guest banquet with ₱150,000 budget (Maximize)',
   'Recommend a package for 100 guests',
-  'Best package for my child\'s birthday, 35 guests?',
-  'Do you have entertainment?',
+  'Wedding catering with extra courses, 100 guests',
+  '18th Debut grand celebration package, 70 guests',
   'What is the refund policy?',
-  'Do you accept GCash?',
+  'Do you accept QR Ph, GCash, or MariBank?',
 ]
 
 const parseInlineMarkdown = (text: string): string => {
@@ -153,12 +154,39 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ isOpen, onClose, onApp
                   <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--ink)' }}>{msg.formData.guest_count} pax</span>
                 </div>
                 {msg.formData.estimated_total >= 0 && (
-                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--ink)', marginBottom: '6px' }}>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--ink)', marginBottom: '4px' }}>
                     Est. Total: {formatMoney(msg.formData.estimated_total)}
                   </div>
                 )}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '6px' }}>
+                  {msg.formData.event_type && (
+                    <span style={{ fontSize: '0.68rem', background: '#FEF3C7', color: '#92400E', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                      🏷️ {msg.formData.event_type}
+                    </span>
+                  )}
+                  {Boolean(msg.formData.extra_main_count && msg.formData.extra_main_count > 0) && (
+                    <span style={{ fontSize: '0.68rem', background: '#FFEDD5', color: '#9A3412', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                      +{msg.formData.extra_main_count} Extra Mains
+                    </span>
+                  )}
+                  {Boolean(msg.formData.extra_pasta_count && msg.formData.extra_pasta_count > 0) && (
+                    <span style={{ fontSize: '0.68rem', background: '#DBEAFE', color: '#1E40AF', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                      +{msg.formData.extra_pasta_count} Extra Pasta
+                    </span>
+                  )}
+                  {Boolean(msg.formData.extra_dessert_count && msg.formData.extra_dessert_count > 0) && (
+                    <span style={{ fontSize: '0.68rem', background: '#FEF9C3', color: '#854D0E', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                      +{msg.formData.extra_dessert_count} Extra Dessert
+                    </span>
+                  )}
+                  {Boolean(msg.formData.addons && msg.formData.addons.length > 0) && (
+                    <span style={{ fontSize: '0.68rem', background: '#DCFCE7', color: '#166534', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                      +{msg.formData.addons.length} Stations
+                    </span>
+                  )}
+                </div>
                 {msg.formData.selected_menu && msg.formData.selected_menu.length > 0 && (
-                  <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginBottom: '6px' }}>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginBottom: '4px' }}>
                     Includes: {msg.formData.selected_menu.slice(0, 3).join(', ')}{msg.formData.selected_menu.length > 3 ? '...' : ''}
                   </div>
                 )}

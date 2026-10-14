@@ -295,20 +295,24 @@ function apiServerPlugin(env: Record<string, string> = {}): Plugin {
             const body = await readJsonBody()
             const apiKey = env.VITE_SEMAPHORE_API_KEY || process.env.VITE_SEMAPHORE_API_KEY || 'f18fe7eb9f2f4b5477776b98d8b55565'
 
-            const phone = (body.recipientPhone || '').replace(/[^0-9+]/g, '')
+            const rawPhone = (body.recipientPhone || '').toString()
+            const phoneDigits = rawPhone.replace(/[^0-9]/g, '')
             const message = (body.message || '').trim()
 
-            if (!phone || !message) {
+            if (!phoneDigits || !message) {
               res.statusCode = 400
               res.setHeader('Content-Type', 'application/json')
               res.end(JSON.stringify({ error: 'Phone and message are required' }))
               return
             }
 
-            // Semaphore requires standard format (e.g. 09171234567)
-            let formattedPhone = phone
-            if (formattedPhone.startsWith('+63')) formattedPhone = '0' + formattedPhone.slice(3)
-            else if (formattedPhone.startsWith('63') && formattedPhone.length === 12) formattedPhone = '0' + formattedPhone.slice(2)
+            // Normalize Philippine mobile numbers to international format (639XXXXXXXXX)
+            let formattedPhone = phoneDigits
+            if (formattedPhone.startsWith('09') && formattedPhone.length === 11) {
+              formattedPhone = '63' + formattedPhone.slice(1)
+            } else if (formattedPhone.startsWith('9') && formattedPhone.length === 10) {
+              formattedPhone = '63' + formattedPhone
+            }
 
             const sendToSemaphore = async (sender?: string) => {
               const paramsObj: Record<string, string> = {

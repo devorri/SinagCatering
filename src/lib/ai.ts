@@ -41,6 +41,47 @@ export const extractGuestCount = (input: string): number | undefined => {
   return match ? Number(match[1]) : undefined
 }
 
+export const extractBudget = (input: string): number | undefined => {
+  // Check '150k', '150 k', '150.5k'
+  const kMatch = input.match(/(?:(?:php|₱|budget\s*(?:of|is|around|up to|target)?|worth|spend(?:ing)?)\s*)?(\d+(?:\.\d+)?)\s*k\b/i)
+  if (kMatch) {
+    return Math.round(parseFloat(kMatch[1]) * 1000)
+  }
+  // Check '150,000', '150000', '₱150,000'
+  const numMatch = input.match(/(?:php|₱|budget\s*(?:of|is|around|up to|target)?|worth|spend(?:ing)?)\s*(\d{1,3}(?:,\d{3})+|\d{4,7})/i)
+  if (numMatch) {
+    return Number(numMatch[1].replace(/,/g, ''))
+  }
+  // General number followed by currency or budget keyword
+  const generalNum = input.match(/(\d{1,3}(?:,\d{3})+|\d{5,7})\s*(?:pesos|php|budget)/i)
+  if (generalNum) {
+    return Number(generalNum[1].replace(/,/g, ''))
+  }
+  return undefined
+}
+
+export const detectEventType = (input: string): { category: 'Kids Birthday' | 'Debut' | 'Wedding' | 'Others (Please Specify)'; label: string } => {
+  const lower = input.toLowerCase()
+  if (/wedding|nuptial|bride|groom|matrimony/i.test(lower)) {
+    return { category: 'Wedding', label: 'Wedding Reception Banquet' }
+  }
+  if (/debut|18th birthday|eighteenth|cotillion|debutante/i.test(lower)) {
+    return { category: 'Debut', label: '18th Debut Grand Celebration' }
+  }
+  if (/birthday|kids?|child|kiddie|toddler|clown|balloon/i.test(lower)) {
+    return { category: 'Kids Birthday', label: 'Kids Themed Birthday Party' }
+  }
+  if (/corporate|seminar|company|business|conference|anniversary|baptism|christening|reunion|banquet|thanksgiving|gathering/i.test(lower)) {
+    let label = 'Special Catering Banquet'
+    if (/corporate|company|business|seminar/i.test(lower)) label = 'Corporate Banquet'
+    else if (/baptism|christening/i.test(lower)) label = 'Baptism / Christening'
+    else if (/anniversary/i.test(lower)) label = 'Anniversary Celebration'
+    else if (/thanksgiving/i.test(lower)) label = 'Thanksgiving Feast'
+    return { category: 'Others (Please Specify)', label }
+  }
+  return { category: 'Kids Birthday', label: 'Celebration Banquet' }
+}
+
 export const calculateTotalForPackage = (
   pkg: CateringPackage,
   guestCount: number,
@@ -83,14 +124,14 @@ export const generateLocalAIResponse = (input: string, livePackages: CateringPac
     }
   }
 
-  // 2. FAQ: Payment Terms, GCash, Downpayment
-  if (/downpayment|payment|deposit|gcash|paymongo|how to pay|terms of payment/i.test(inputLower) && !/recommend|package|pax|guest/i.test(inputLower)) {
+  // 2. FAQ: Payment Terms, Downpayment
+  if (/downpayment|payment|deposit|gcash|maribank|how to pay|terms of payment/i.test(inputLower) && !/recommend|package|pax|guest|budget/i.test(inputLower)) {
     return {
       text: `Mabuhay! Here are our official **Payment & Reservation Terms**:\n\n` +
         `• **50% Downpayment:** Required upon booking to officially reserve your date and lock in catering preparations.\n` +
         `• **Remaining 50% Balance:** Settleable on or before the day of your event.\n` +
-        `• **Payment Channels:** We accept **GCash** (instant PayMongo verification or direct transfer to **0928 714 4597**), Bank Transfer, and Cash.\n\n` +
-        `You can easily upload GCash receipts or verify payment directly in your Sinag Client Portal!`,
+        `• **Payment Channels:** We accept **QR Ph / GCash** (direct scan or transfer to Sunshine C. **0928 714 4597**), **MariBank / Bank Transfer**, and Cash.\n\n` +
+        `You can easily attach your transaction reference number and receipt screenshot directly during booking or in your Sinag Client Portal!`,
       escalate: false,
       isLiveApi: false,
     }
@@ -110,7 +151,7 @@ export const generateLocalAIResponse = (input: string, livePackages: CateringPac
   if (/where|location|address|contact|phone|call|situated|based/i.test(inputLower) && !/recommend|package/i.test(inputLower)) {
     return {
       text: `Mabuhay! We are based in **Baliwag, Bulacan, Philippines** and cater celebrations across Bulacan and adjacent provinces.\n\n` +
-        `• **Hotline & GCash:** 0928 714 4597\n` +
+        `• **Hotline & GCash / MariBank:** 0928 714 4597\n` +
         `• **Lead Time Rule:** Minimum 14 days advance booking\n` +
         `• **Operating Hours:** Concierge desk open daily 8:00 AM – 6:00 PM\n\n` +
         `Let us know if you'd like a package recommendation or quote for your upcoming event!`,
@@ -119,7 +160,7 @@ export const generateLocalAIResponse = (input: string, livePackages: CateringPac
     }
   }
 
-  // 5. Package Recommendation & Planning
+  // 5. Package Recommendation, Context-Aware Classification & Budget Maximization
   if (livePackages.length === 0) {
     return {
       text: 'Our official package catalog is temporarily unavailable. Please contact Sinag Catering at 0928 714 4597 for a verified quotation.',
@@ -127,28 +168,48 @@ export const generateLocalAIResponse = (input: string, livePackages: CateringPac
       isLiveApi: false,
     }
   }
-  const count = extractGuestCount(input) || 70
-  const needsEntertainment = /clown|magic|entertainment|host|photo|sounds/i.test(inputLower)
-  const isGrand = /grand|blast|premium|full|ceiling/i.test(inputLower)
 
+  const count = extractGuestCount(input) || 80
+  const targetBudget = extractBudget(input)
+  const eventTypeObj = detectEventType(input)
+  const isGrandRequest = /grand|blast|premium|full|ceiling|luxury|vip|maximize/i.test(inputLower) || (targetBudget && targetBudget >= 65000)
+
+  // Package Selection
   let chosenPkg = livePackages[1] || livePackages[0] // default Budgetarian Plus
-  if (isGrand) {
-    chosenPkg = livePackages.find((p) => p.id === 'full-blast') || chosenPkg
-  } else if (!needsEntertainment && /simple|basic|budget|low cost/i.test(inputLower)) {
+  if (isGrandRequest || eventTypeObj.category === 'Wedding' || eventTypeObj.category === 'Debut') {
+    chosenPkg = livePackages.find((p) => p.id === 'full-blast') || livePackages[2] || chosenPkg
+  } else if (/simple|basic|budget|low cost/i.test(inputLower) && !targetBudget) {
     chosenPkg = livePackages.find((p) => p.id === 'budget-basic') || chosenPkg
   } else {
-    const reco = recommendPackage(livePackages, count, 60000, needsEntertainment)
+    const reco = recommendPackage(livePackages, count, targetBudget || 60000)
     if (reco?.pkg) chosenPkg = reco.pkg
   }
 
-  const selectedAddons: string[] = []
-  if (/candy|chocolate|fountain/i.test(inputLower)) selectedAddons.push('ADD-CANDY-01')
-  if (/emcee|games|host/i.test(inputLower) && chosenPkg.id === 'budget-basic') selectedAddons.push('ADD-HOST-02')
-  if (/dessert|station/i.test(inputLower)) selectedAddons.push('ADD-DESSERT-03')
+  // BUDGET MAXIMIZER UPSELL LOGIC:
+  // When a user specifies a target budget that exceeds standard base tier, bundle upgrades to reach budget cleanly
+  const baseCost = calculateTotalForPackage(chosenPkg, count, [], 0, 0, 0)
+  const isBudgetMaximizerActive = Boolean(targetBudget && targetBudget > baseCost)
 
-  const extraDessert = /extra dessert|sweets/i.test(inputLower) ? 1 : 0
-  const extraMain = /extra main|additional dish/i.test(inputLower) ? 1 : 0
-  const extraPasta = /extra pasta/i.test(inputLower) ? 1 : 0
+  let selectedAddons: string[] = []
+  let extraMain = 0
+  let extraPasta = 0
+  let extraDessert = 0
+
+  if (isBudgetMaximizerActive && targetBudget) {
+    // Intelligently bundle maximum upgrades to maximize user's high budget
+    selectedAddons = ['ADD-CANDY-01', 'ADD-HOST-02', 'ADD-DESSERT-03']
+    extraMain = Math.min(3, Math.max(1, Math.floor((targetBudget - baseCost) / (EXTRA_MAIN_RATE * count * 2))))
+    extraPasta = Math.min(2, Math.max(1, Math.floor((targetBudget - baseCost) / (EXTRA_PASTA_RATE * count * 3))))
+    extraDessert = Math.min(2, Math.max(1, Math.floor((targetBudget - baseCost) / (EXTRA_DESSERT_RATE * count * 4))))
+  } else {
+    if (/candy|chocolate|fountain/i.test(inputLower)) selectedAddons.push('ADD-CANDY-01')
+    if (/emcee|games|host/i.test(inputLower) && chosenPkg.id === 'budget-basic') selectedAddons.push('ADD-HOST-02')
+    if (/dessert|station/i.test(inputLower)) selectedAddons.push('ADD-DESSERT-03')
+
+    extraDessert = /extra dessert|sweets/i.test(inputLower) ? 1 : 0
+    extraMain = /extra main|additional dish/i.test(inputLower) ? 1 : 0
+    extraPasta = /extra pasta/i.test(inputLower) ? 1 : 0
+  }
 
   const total = calculateTotalForPackage(chosenPkg, count, selectedAddons, extraMain, extraPasta, extraDessert)
   const downpayment = Math.round(total * 0.5)
@@ -163,17 +224,45 @@ export const generateLocalAIResponse = (input: string, livePackages: CateringPac
     extra_main_count: extraMain,
     extra_pasta_count: extraPasta,
     extra_dessert_count: extraDessert,
-    event_type: 'Kids Birthday',
-    notes: `AI Recommendation based on inquiry: "${input}". 50% Downpayment: ${formatMoney(downpayment)}.`,
+    event_type: eventTypeObj.category,
+    notes: isBudgetMaximizerActive && targetBudget
+      ? `AI Budget Maximizer: Target budget ${formatMoney(targetBudget)} cleanly allocated with ${extraMain} Extra Mains, ${extraPasta} Extra Pastas, ${extraDessert} Extra Desserts, plus full celebration stations for ${eventTypeObj.label}.`
+      : `AI Recommendation for ${eventTypeObj.label} (${count} pax). 50% Downpayment: ${formatMoney(downpayment)}.`,
+  }
+
+  if (isBudgetMaximizerActive && targetBudget) {
+    const stylingSurplus = Math.max(0, targetBudget - total)
+    return {
+      text: `Mabuhay! For your **${eventTypeObj.label}** with **${count} guests** and an exact target budget of **${formatMoney(targetBudget)}**, I've activated our **AI Budget Maximizer** to curate an all-inclusive premier banquet instead of stopping at the basic tier!\n\n` +
+        `👑 **Recommended Flagship Plan:** **${chosenPkg.name}**\n` +
+        `• **Base Package Tier:** ${formatMoney(baseCost)} (${count} Pax + ${FOOD_BUFFER_PAX} Buffer Pax)\n` +
+        `• **Included Inclusions:** ${chosenPkg.inclusions.slice(0, 4).join(', ')}\n\n` +
+        `💎 **Curated Luxury Upgrades Bundled to Maximize Your Budget:**\n` +
+        `• **${extraMain} Extra Main Dishes (+PHP 100/pax):** +${formatMoney(extraMain * EXTRA_MAIN_RATE * count)} (Beef, Cordon Bleu, Fish Fillet)\n` +
+        `• **${extraPasta} Extra Pasta Courses (+PHP 80/pax):** +${formatMoney(extraPasta * EXTRA_PASTA_RATE * count)} (Creamy Carbonara / Baked Penne)\n` +
+        `• **${extraDessert} Extra Dessert Course (+PHP 50/pax):** +${formatMoney(extraDessert * EXTRA_DESSERT_RATE * count)}\n` +
+        `• **Celebration Stations Included:** Chocolate Fountain Buffet, Party Host & Emcee, and Assorted Dessert Bar\n` +
+        (stylingSurplus > 0 ? `• **VIP Production Allocation:** ${formatMoney(stylingSurplus)} tailored for Bespoke Thematic Stage Backdrop, Balloon Ceiling Canopy, and Ambient Event Lighting\n\n` : '\n') +
+        `📊 **Calculated Package Total:** **${formatMoney(total)}**\n` +
+        `🔒 **Required 50% Downpayment:** **${formatMoney(downpayment)}** (Locks in your date)\n` +
+        `🏷️ **Event Category:** **${eventTypeObj.category}**\n\n` +
+        `Click **"Auto-Fill Booking Wizard with AI Plan"** below to instantly pre-fill all ${extraMain} extra mains, ${extraPasta} extra pasta, dessert, and stations directly into your reservation!`,
+      escalate: false,
+      pkgId: chosenPkg.id,
+      guestCount: count,
+      isLiveApi: false,
+      formData,
+    }
   }
 
   return {
-    text: `Mabuhay! Based on your event, I recommend the **${chosenPkg.name}** for **${count} guests**.\n\n` +
+    text: `Mabuhay! For your **${eventTypeObj.label}**, I recommend the **${chosenPkg.name}** for **${count} guests**.\n\n` +
       `• **Estimated Total:** ${formatMoney(total)} (50% Downpayment: ${formatMoney(downpayment)})\n` +
       `• **Menu Inclusions:** ${chosenPkg.inclusions.slice(0, 3).join(', ')} and more\n` +
       (chosenPkg.entertainment.length > 0 ? `• **Entertainment Included:** ${chosenPkg.entertainment.join(', ')}\n` : '') +
-      (selectedAddons.length > 0 ? `• **Add-ons:** ${selectedAddons.join(', ')}\n` : '') +
-      `\nYou can click **"Auto-Fill Booking Wizard with AI Plan"** below to instantly load this setup into the reservation form!`,
+      (selectedAddons.length > 0 ? `• **Selected Add-ons:** ${selectedAddons.join(', ')}\n` : '') +
+      `• **Event Category:** ${eventTypeObj.category}\n\n` +
+      `Click **"Auto-Fill Booking Wizard with AI Plan"** below to load this setup into the reservation form!`,
     escalate: false,
     pkgId: chosenPkg.id,
     guestCount: count,
@@ -221,23 +310,44 @@ OFFICIAL POLICIES & BUSINESS RULES:
 2. Payment & Reservation Terms:
    - 50% downpayment required to lock in the event date.
    - Remaining 50% balance payable on or before the event day.
-   - Payment channels: GCash (direct transfer to 0928 714 4597 or PayMongo), Bank Transfer, Cash.
+   - Payment channels: QR Ph / GCash (official merchant scan code or transfer to Sunshine C. 0928 714 4597), MariBank / Bank Transfer (0928 714 4597), Cash.
 3. Lead Time:
    - Minimum 14 days advance booking required.
 4. Location & Contact:
    - Baliwag, Bulacan, Philippines.
-   - Hotline & GCash: 0928 714 4597.
+   - Hotline & GCash / MariBank: 0928 714 4597.
 
 Official Packages Database:
 ${packageCatalogDescription}
 
-Add-ons Catalog:
-- ADD-CANDY-01: Chocolate Fountain & Candy Buffet (PHP 150)
-- ADD-HOST-02: Party Emcee & Games Host (PHP 200)
-- ADD-DESSERT-03: Assorted Dessert Station (PHP 100)
-- Extra Main Course: PHP 100 per guest
-- Extra Pasta Course: PHP 80 per guest
-- Extra Dessert Course: PHP 50 per guest
+Official Add-ons & Upgrades Catalog:
+- EXTRA MAIN COURSES: +PHP 100 per guest (Cap: up to 3 extra main dishes).
+- EXTRA PASTA COURSES: +PHP 80 per guest (Cap: up to 2 extra pasta dishes).
+- EXTRA DESSERT COURSES: +PHP 50 per guest (Cap: up to 2 extra dessert courses).
+- FLAT-RATE CELEBRATION STATIONS:
+  * ADD-CANDY-01: Chocolate Fountain & Candy Buffet (PHP 150 flat)
+  * ADD-HOST-02: Party Emcee & Games Host (PHP 200 flat)
+  * ADD-DESSERT-03: Assorted Dessert Station (PHP 100 flat)
+- EXCESS GUEST BUFFER FEE: +PHP 700 per excess guest beyond capacity (+10 food buffer pax).
+
+CONTEXT-AWARE EVENT CLASSIFICATION:
+Classify the event into one of the 4 official Sinag categories:
+- 'Kids Birthday': Children's parties, birthdays, clown/magic themes.
+- 'Debut': 18th birthdays, debutante balls, cotillion celebrations.
+- 'Wedding': Weddings, nuptials, and matrimonial receptions.
+- 'Others (Please Specify)': Corporate banquets, baptisms, anniversaries, reunions, and thanksgiving feasts.
+Align your tone, terminology, and recommendations with this event category!
+
+BUDGET MAXIMIZER UPSELL LOGIC:
+When the user specifies a high target budget (e.g., wanting to spend an exact upper limit like PHP 150,000 for 80 guests, or budget of 120k):
+- DO NOT stop short at just the base tier (e.g., returning only a PHP 65,000 base package when the client wants to spend PHP 150,000)!
+- Intelligently bundle the base package with recommended upgrades to cleanly reach their target budget:
+  1. Recommend the flagship 'Full Blast' (or highest tier package for their guest count).
+  2. Bundle maximum extra courses: extra_main_count (up to 3), extra_pasta_count (up to 2), extra_dessert_count (up to 2).
+  3. Bundle all flat celebration enhancements (ADD-CANDY-01, ADD-HOST-02, ADD-DESSERT-03).
+  4. If a remaining budget surplus exists (e.g., target PHP 150,000 vs calculated bundle), explain that the remaining balance covers Bespoke Thematic Stage & Ceiling Styling, Professional Sound & Lighting, and VIP Floral Centerpieces.
+  5. Provide a clear, enthusiastic itemized breakdown showing how each upgrade elevates their event to luxury banquet standards.
+  6. In "form_data", accurately set "extra_main_count", "extra_pasta_count", "extra_dessert_count", "addons", "event_type", and "notes" so the user can click "Auto-Fill Booking Wizard with AI Plan" to immediately load the entire maximized package into the booking wizard!
 
 CRITICAL INSTRUCTIONS ON WHEN TO RECOMMEND A PACKAGE:
 - If the user is asking FAQ or general policy questions (such as refund policy, cancellation terms, payments, downpayment, location, contact info, lead time, or greetings):
@@ -257,7 +367,7 @@ OR if recommending a package:
     "package_name": "Exact package name",
     "guest_count": number,
     "event_type": "Kids Birthday | Debut | Wedding | Others (Please Specify)",
-    "addons": ["ADD-CANDY-01"],
+    "addons": ["ADD-CANDY-01", "ADD-HOST-02", "ADD-DESSERT-03"],
     "extra_main_count": number,
     "extra_pasta_count": number,
     "extra_dessert_count": number,
@@ -317,7 +427,7 @@ OR if recommending a package:
               extra_main_count: extraMain,
               extra_pasta_count: extraPasta,
               extra_dessert_count: extraDessert,
-              event_type: rawForm.event_type || 'Kids Birthday',
+              event_type: rawForm.event_type || detectEventType(userInput).category,
               notes: rawForm.notes || `AI package match: ${chosenPkg.name} (${guestCount} pax).`,
             }
 

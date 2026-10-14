@@ -26,7 +26,7 @@ import {
   ArrowDown,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
-import type { Booking, Inquiry, NotificationLog } from '../types'
+import type { Booking, Inquiry, NotificationLog, Staff } from '../types'
 import {
   getNotificationLogs,
   clearNotificationLogs,
@@ -53,6 +53,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     currentUser,
     updateBookingStatus,
     allocateStaff,
+    addStaff,
     blockDate,
     unblockDate,
     respondInquiry,
@@ -62,6 +63,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     verifyDownpaymentBooking,
     notifyUsers,
   } = useApp()
+
+  const ALL_SUBCONTRACTED_SERVICES = [
+    'Event Host',
+    'Clown / Entertainer',
+    'Photo Booth',
+    'Photographer',
+    'Lights and Sounds',
+  ]
+
+  const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+  const getDayOfWeekFromDateStr = (dateStr?: string): string => {
+    if (!dateStr) return ''
+    const parts = dateStr.split('-').map(Number)
+    if (parts.length < 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) return ''
+    const d = new Date(parts[0], parts[1] - 1, parts[2])
+    return DAYS_OF_WEEK[d.getDay()] || ''
+  }
+
+  const isStaffOffOnEventDate = (staffMember: Staff, eventDateStr?: string): { isOff: boolean; dayName: string } => {
+    if (!eventDateStr) return { isOff: false, dayName: '' }
+    const eventDay = getDayOfWeekFromDateStr(eventDateStr)
+    if (!eventDay || !staffMember.offDays || staffMember.offDays.length === 0) {
+      return { isOff: false, dayName: eventDay }
+    }
+    const isMatch = staffMember.offDays.some((od: string) => {
+      const cleanOd = od.trim().toLowerCase()
+      const cleanDay = eventDay.toLowerCase()
+      return cleanDay.startsWith(cleanOd.slice(0, 3)) || cleanOd.startsWith(cleanDay.slice(0, 3))
+    })
+    return { isOff: isMatch, dayName: eventDay }
+  }
 
   // Admin login states
   const [email, setEmail] = useState('')
@@ -307,6 +340,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [downpaymentBooking, setDownpaymentBooking] = useState<Booking | null>(null)
   const [downpaymentAmount, setDownpaymentAmount] = useState(0)
 
+  // Add Staff Modal State
+  const [showAddStaffModal, setShowAddStaffModal] = useState(false)
+  const [newStaffName, setNewStaffName] = useState('')
+  const [newStaffRole, setNewStaffRole] = useState<'waiter' | 'food_attendant'>('waiter')
+  const [newStaffAge, setNewStaffAge] = useState(25)
+  const [newStaffOffDays, setNewStaffOffDays] = useState<string[]>([])
+  const [isSavingStaff, setIsSavingStaff] = useState(false)
+
+  const toggleOffDay = (day: string) => {
+    setNewStaffOffDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
+    )
+  }
+
+  const handleCreateStaff = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newStaffName.trim()) return
+    setIsSavingStaff(true)
+    await addStaff({
+      name: newStaffName.trim(),
+      role: newStaffRole,
+      age: Number(newStaffAge) || 25,
+      offDays: newStaffOffDays,
+    })
+    setIsSavingStaff(false)
+    setNewStaffName('')
+    setNewStaffRole('waiter')
+    setNewStaffAge(25)
+    setNewStaffOffDays([])
+    setShowAddStaffModal(false)
+  }
+
   // Semaphore SMS and Notification Logs state (Item 9)
   const [notificationLogs, setNotificationLogs] = useState<NotificationLog[]>(() => getNotificationLogs())
   const [testSmsPhone, setTestSmsPhone] = useState('')
@@ -446,14 +511,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const handleOpenBookingDetails = (booking: Booking) => {
     setSelectedBooking(booking)
     setTempStaffIds(booking.staffIds || [])
-    setTempServices(booking.assignedServices || [])
+
+    const isFullEntertainment =
+      booking.packageId === 'full-blast' ||
+      Boolean(booking.packageName && /full blast|entertainment/i.test(booking.packageName))
+
+    let initialServices: string[]
+    if (booking.assignedServices && booking.assignedServices.length > 0) {
+      initialServices = [...booking.assignedServices]
+    } else if (isFullEntertainment && !(booking as any).servicesExplicitlyModified) {
+      initialServices = [...ALL_SUBCONTRACTED_SERVICES]
+    } else {
+      initialServices = booking.assignedServices || []
+    }
+
+    setTempServices(initialServices)
     setShowBookingModal(true)
   }
 
   const handleSaveStaffAllocation = () => {
     if (!selectedBooking) return
     allocateStaff(selectedBooking.id, tempStaffIds, tempServices)
-    setSelectedBooking((prev) => prev ? { ...prev, staffIds: tempStaffIds, assignedServices: tempServices } : null)
+    setSelectedBooking((prev) =>
+      prev ? { ...prev, staffIds: tempStaffIds, assignedServices: tempServices, servicesExplicitlyModified: true } : null
+    )
     alert('Roster and subcontracted service assignments saved successfully.')
     setShowBookingModal(false)
   }
@@ -692,7 +773,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
               type="button"
               onClick={() => {
                 setEmail('admin@sinagcatering.ph')
-                setPassword('admin')
+                setPassword('admin123')
               }}
               className="btn-demo-chip"
               style={{ width: '100%', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
@@ -1506,28 +1587,75 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           {/* Tab 4: Staff Allocation */}
           {activeTab === 'staff' && (
             <div className="data-table-card" style={{ padding: '36px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
                 <div>
                   <h3 style={{ fontFamily: 'var(--font-sans)', fontSize: '1.25rem', fontWeight: 800, margin: '0 0 4px', color: '#18181B' }}>Service Staff Directory</h3>
-                  <p style={{ color: 'var(--muted)', fontSize: '0.9rem', margin: 0 }}>Active personnel list for event deployment.</p>
+                  <p style={{ color: 'var(--muted)', fontSize: '0.9rem', margin: 0 }}>Active personnel list for banquet deployment, age profile & scheduled off-days.</p>
                 </div>
-                <button className="btn-submit-primary" style={{ padding: '8px 16px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAddStaffModal(true)}
+                  className="btn-submit-primary"
+                  style={{ padding: '9px 18px', display: 'flex', alignItems: 'center', gap: '8px' }}
+                >
                   <Plus size={16} /> Add Staff
                 </button>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' }}>
-                {staff.map((s) => (
-                  <div key={s.id} style={{ background: 'var(--paper-warm)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div>
-                      <strong style={{ display: 'block', fontSize: '1rem' }}>{s.name}</strong>
-                      <span style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>{s.role.replace('_', ' ')}</span>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: '20px' }}>
+                {staff.map((s) => {
+                  const offDaysFormatted = s.offDays && s.offDays.length > 0
+                    ? s.offDays.map((d) => d.slice(0, 3)).join(', ')
+                    : 'None'
+                  return (
+                    <div
+                      key={s.id}
+                      style={{
+                        background: '#FFFFFF',
+                        border: '1px solid var(--line)',
+                        borderRadius: 'var(--radius-md)',
+                        padding: '20px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '12px',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+                        <div>
+                          <strong style={{ display: 'block', fontSize: '1.05rem', color: '#18181B' }}>{s.name}</strong>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--terracotta)', fontWeight: 600, textTransform: 'capitalize' }}>
+                              {s.role.replace('_', ' ')}
+                            </span>
+                            <span style={{ color: '#CBD5E1' }}>•</span>
+                            <span style={{ fontSize: '0.8rem', color: '#64748B', fontWeight: 500 }}>
+                              Age: {s.age ?? 25}
+                            </span>
+                          </div>
+                        </div>
+                        <span className={`status-pill ${s.status === 'available' ? 'confirmed' : 'pending'}`}>
+                          {s.status}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '10px', borderTop: '1px dashed var(--line)', fontSize: '0.82rem' }}>
+                        <span style={{ color: 'var(--muted)', fontWeight: 600 }}>Scheduled Off-Days:</span>
+                        <span
+                          style={{
+                            background: s.offDays && s.offDays.length > 0 ? '#FEF3C7' : '#F1F5F9',
+                            color: s.offDays && s.offDays.length > 0 ? '#92400E' : '#64748B',
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            fontWeight: 700,
+                          }}
+                        >
+                          Off: {offDaysFormatted}
+                        </span>
+                      </div>
                     </div>
-                    <span className={`status-pill ${s.status === 'available' ? 'confirmed' : 'pending'}`}>
-                      {s.status}
-                    </span>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}
@@ -1836,25 +1964,89 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
                     {(() => {
                       const rec = getStaffRecommendation(selectedBooking.guestCount)
+                      const eventDay = getDayOfWeekFromDateStr(selectedBooking.eventDate)
                       return (
                         <div style={{ background: 'var(--paper-warm)', padding: '12px', borderRadius: 'var(--radius-sm)', fontSize: '0.82rem', marginBottom: '14px', border: '1px solid var(--line)' }}>
-                          <strong>Staffing Guideline Ratio:</strong>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                            <strong>Staffing Guideline Ratio:</strong>
+                            <span style={{ fontSize: '0.74rem', color: '#1E40AF', background: '#DBEAFE', padding: '1px 7px', borderRadius: '4px', fontWeight: 700 }}>
+                              {eventDay ? `Day: ${eventDay}` : 'Scheduled Date'}
+                            </span>
+                          </div>
                           <div>Recommended: {rec.waiters} Waiters & {rec.attendants} Attendants</div>
                         </div>
                       )
                     })()}
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto', marginBottom: '20px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '190px', overflowY: 'auto', marginBottom: '20px', paddingRight: '4px' }}>
                       {staff.map((s) => {
+                        const { isOff, dayName } = isStaffOffOnEventDate(s, selectedBooking.eventDate)
                         const isChecked = tempStaffIds.includes(s.id)
                         return (
-                          <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.88rem', cursor: 'pointer' }}>
+                          <label
+                            key={s.id}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '10px',
+                              fontSize: '0.85rem',
+                              cursor: isOff ? 'not-allowed' : 'pointer',
+                              padding: '8px 12px',
+                              borderRadius: '6px',
+                              background: isOff ? '#F1F5F9' : isChecked ? '#FFF' : 'transparent',
+                              border: isOff ? '1px dashed #CBD5E1' : isChecked ? '1.5px solid var(--gold)' : '1px solid var(--line)',
+                              opacity: isOff ? 0.55 : 1,
+                              transition: 'all 0.15s ease-in-out',
+                            }}
+                          >
                             <input
                               type="checkbox"
-                              checked={isChecked}
-                              onChange={() => toggleStaffSelection(s.id)}
+                              checked={!isOff && isChecked}
+                              disabled={isOff}
+                              onChange={() => {
+                                if (!isOff) toggleStaffSelection(s.id)
+                              }}
+                              style={{ width: '16px', height: '16px', accentColor: 'var(--terracotta)', cursor: isOff ? 'not-allowed' : 'pointer' }}
                             />
-                            <span>{s.name} ({s.role.replace('_', ' ')})</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, minWidth: 0 }}>
+                              <span style={{ fontWeight: isChecked && !isOff ? 600 : 400, color: isOff ? '#64748B' : 'var(--obsidian)' }}>
+                                {s.name}
+                              </span>
+                              <span style={{ fontSize: '0.75rem', color: '#6B7280' }}>
+                                ({s.role.replace('_', ' ')}{s.age ? ` · Age: ${s.age}` : ''})
+                              </span>
+                            </div>
+
+                            {isOff ? (
+                              <span
+                                style={{
+                                  fontSize: '0.7rem',
+                                  background: '#FEE2E2',
+                                  color: '#DC2626',
+                                  padding: '2px 8px',
+                                  borderRadius: '4px',
+                                  fontWeight: 700,
+                                  letterSpacing: '0.04em',
+                                  flexShrink: 0,
+                                }}
+                              >
+                                OFF TODAY - {dayName}
+                              </span>
+                            ) : isChecked ? (
+                              <span
+                                style={{
+                                  fontSize: '0.7rem',
+                                  background: '#DCFCE7',
+                                  color: '#166534',
+                                  padding: '2px 7px',
+                                  borderRadius: '4px',
+                                  fontWeight: 600,
+                                  flexShrink: 0,
+                                }}
+                              >
+                                Assigned
+                              </span>
+                            ) : null}
                           </label>
                         )
                       })}
@@ -1866,12 +2058,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         <h4 style={{ fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', margin: 0 }}>
                           Subcontracted Event Services ({tempServices.length} Active)
                         </h4>
-                        <span style={{ fontSize: '0.72rem', background: '#DBEAFE', color: '#1E40AF', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
-                          Checklist
+                        <span style={{
+                          fontSize: '0.72rem',
+                          background: tempServices.length > 0 ? '#DCFCE7' : '#F1F5F9',
+                          color: tempServices.length > 0 ? '#166534' : '#64748B',
+                          padding: '3px 9px',
+                          borderRadius: '12px',
+                          fontWeight: 700,
+                          letterSpacing: '0.04em',
+                        }}>
+                          {tempServices.length} Active
                         </span>
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {['Event Host', 'Clown / Entertainer', 'Photo Booth', 'Photographer', 'Lights and Sounds'].map((service) => {
+                        {ALL_SUBCONTRACTED_SERVICES.map((service) => {
                           const isChecked = tempServices.includes(service)
                           return (
                             <label
@@ -1882,19 +2082,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                 gap: '10px',
                                 fontSize: '0.85rem',
                                 cursor: 'pointer',
-                                padding: '6px 10px',
+                                padding: '8px 12px',
                                 borderRadius: '6px',
                                 background: isChecked ? '#FFF' : 'transparent',
-                                border: isChecked ? '1px solid var(--gold)' : '1px solid transparent',
+                                border: isChecked ? '1.5px solid var(--gold)' : '1px solid var(--line)',
                                 fontWeight: isChecked ? 600 : 400,
+                                transition: 'all 0.15s ease-in-out',
                               }}
                             >
                               <input
                                 type="checkbox"
                                 checked={isChecked}
                                 onChange={() => toggleServiceSelection(service)}
+                                style={{ width: '16px', height: '16px', accentColor: 'var(--terracotta)', cursor: 'pointer' }}
                               />
-                              <span>{service}</span>
+                              <span style={{ flex: 1, color: isChecked ? 'var(--obsidian)' : 'var(--muted)' }}>{service}</span>
+                              {isChecked && (
+                                <span style={{ fontSize: '0.7rem', color: '#166534', background: '#DCFCE7', padding: '1px 7px', borderRadius: '4px', fontWeight: 600 }}>
+                                  Active
+                                </span>
+                              )}
                             </label>
                           )
                         })}
@@ -2299,6 +2506,136 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     <Printer size={16} /> Print / Save as PDF
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+          {/* Add Staff Modal */}
+          {showAddStaffModal && (
+            <div className="modal-overlay">
+              <div className="modal-card" style={{ maxWidth: '540px', width: '90%' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: '#FEF3C7', color: '#92400E', display: 'grid', placeItems: 'center' }}>
+                      <Users size={18} />
+                    </div>
+                    <div>
+                      <h3 style={{ fontFamily: 'var(--font-sans)', fontSize: '1.2rem', fontWeight: 800, margin: 0, color: '#18181B' }}>
+                        Register Personnel
+                      </h3>
+                      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--muted)' }}>
+                        Add catering crew with age profile and scheduled off-days
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddStaffModal(false)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6B7280' }}
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <form onSubmit={handleCreateStaff}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div className="form-group">
+                      <label style={{ fontSize: '0.82rem', fontWeight: 700, color: '#374151' }}>Full Name</label>
+                      <input
+                        type="text"
+                        className="input-field"
+                        placeholder="e.g., Juan Dela Cruz"
+                        required
+                        value={newStaffName}
+                        onChange={(e) => setNewStaffName(e.target.value)}
+                      />
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                      <div className="form-group">
+                        <label style={{ fontSize: '0.82rem', fontWeight: 700, color: '#374151' }}>Role Assignment</label>
+                        <select
+                          className="input-field"
+                          value={newStaffRole}
+                          onChange={(e) => setNewStaffRole(e.target.value as any)}
+                        >
+                          <option value="waiter">Waiter</option>
+                          <option value="food_attendant">Food Attendant</option>
+                        </select>
+                      </div>
+
+                      <div className="form-group">
+                        <label style={{ fontSize: '0.82rem', fontWeight: 700, color: '#374151' }}>Age (Years)</label>
+                        <input
+                          type="number"
+                          className="input-field"
+                          min={18}
+                          max={65}
+                          required
+                          value={newStaffAge}
+                          onChange={(e) => setNewStaffAge(Math.max(18, Math.min(65, Number(e.target.value))))}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-group">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <label style={{ fontSize: '0.82rem', fontWeight: 700, color: '#374151', margin: 0 }}>
+                          Scheduled Off-Days
+                        </label>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--muted)', fontWeight: 600 }}>
+                          {newStaffOffDays.length} Selected
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((day) => {
+                          const isSelected = newStaffOffDays.includes(day)
+                          return (
+                            <button
+                              key={day}
+                              type="button"
+                              onClick={() => toggleOffDay(day)}
+                              style={{
+                                padding: '6px 12px',
+                                borderRadius: '8px',
+                                fontSize: '0.8rem',
+                                fontWeight: isSelected ? 700 : 500,
+                                border: isSelected ? '1.5px solid var(--gold)' : '1px solid #D1D5DB',
+                                background: isSelected ? '#FEF3C7' : '#FFFFFF',
+                                color: isSelected ? '#92400E' : '#374151',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease-in-out',
+                              }}
+                            >
+                              {day.slice(0, 3)}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <p style={{ margin: '6px 0 0', fontSize: '0.75rem', color: '#6B7280' }}>
+                        Staff will automatically be disabled from event deployment on their designated off-days.
+                      </p>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddStaffModal(false)}
+                        className="btn-ghost"
+                        style={{ padding: '8px 16px', borderRadius: '8px' }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSavingStaff || !newStaffName.trim()}
+                        className="btn-submit-primary"
+                        style={{ padding: '8px 20px', borderRadius: '8px' }}
+                      >
+                        {isSavingStaff ? 'Saving...' : 'Save & Deploy Staff'}
+                      </button>
+                    </div>
+                  </div>
+                </form>
               </div>
             </div>
           )}

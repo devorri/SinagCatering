@@ -1057,36 +1057,46 @@
   align-items: center;
   padding: 10px 0;
   font-size: 0.92rem;
-  color: var(--muted-light);
+  color: #E4E4E7;
+}
+
+.quote-line-item span:first-child {
+  color: #E4E4E7;
+  font-weight: 500;
+}
+
+.quote-line-item span.font-number {
+  color: #FFFFFF;
+  font-weight: 600;
 }
 
 .quote-line-item.total-row {
-  border-top: 1px dashed rgba(255, 255, 255, 0.2);
+  border-top: 1px dashed rgba(255, 255, 255, 0.25);
   margin-top: 16px;
   padding-top: 18px;
   font-size: 1.1rem;
   color: #FFFFFF;
+  font-weight: 700;
 }
 
 .quote-total-price {
   font-family: var(--font-number);
   font-size: 2.2rem;
-  font-weight: 700;
-  color: var(--gold-light);
+  font-weight: 800;
+  color: #FCD34D;
   line-height: 1;
 }
 
 .quote-deposit-info {
-  background: rgba(212, 175, 55, 0.08);
-  border: 1px solid rgba(212, 175, 55, 0.2);
+  background: #FFFFFF;
+  border: 1px solid rgba(212, 175, 55, 0.35);
   border-radius: var(--radius-md);
-  padding: 14px;
+  padding: 16px;
   margin: 20px 0;
-  font-size: 0.85rem;
-  color: var(--gold-light);
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: flex-start;
+  gap: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
 }
 
 .btn-book-now {
@@ -2805,6 +2815,7 @@ footer {
   display: grid;
   grid-template-columns: 1.8fr 1fr;
   gap: 32px;
+  align-items: start;
 }
 
 .wizard-customize-panel {
@@ -3490,7 +3501,7 @@ body { background: var(--paper); }
 .input-field:focus { border-color: var(--gold-dark); outline: 3px solid rgba(184,137,66,.12); box-shadow: none; }
 .form-group label { color: var(--ink-light); font-size: .75rem; letter-spacing: .07em; text-transform: uppercase; }
 .portal-container { background: var(--paper-warm); }
-.portal-auth-card, .data-table-card, .wizard-package-card, .wizard-review-card, .quote-summary-card, .admin-chart-card { border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-sm); background: #fff; }
+.portal-auth-card, .data-table-card, .wizard-package-card, .wizard-review-card, .admin-chart-card { border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-sm); background: #fff; }
 .portal-auth-card { padding: clamp(28px, 4vw, 48px); }
 .portal-auth-title { font-size: clamp(2rem, 3vw, 2.6rem); }
 .wizard-container { max-width: 1280px; }
@@ -3504,7 +3515,6 @@ body { background: var(--paper); }
 .addon-card { border: 1px solid var(--line); border-radius: 6px; background: #fff; box-shadow: none; }
 .addon-card:hover { border-color: var(--line-dark); }
 .quote-summary-card { top: 96px; }
-.quote-deposit-info { background: var(--cream); border: 1px solid var(--line); }
 
 /* Admin: quieter, denser operational workspace */
 .admin-sidebar { background: var(--obsidian); }
@@ -4831,6 +4841,11 @@ section[id], div[id] {
   border-style: solid;
   border-color: #A7F3D0;
   background: #F0FDF4;
+}
+
+.portal-dropzone.drag-over {
+  border-color: var(--terracotta);
+  background: var(--paper-warm);
 }
 
 .portal-dropzone.dropzone-error {

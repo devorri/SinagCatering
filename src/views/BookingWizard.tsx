@@ -4,16 +4,22 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
+  CheckCircle,
+  Copy,
   Minus,
   Plus,
+  Receipt,
   ShieldCheck,
   Sparkles,
   Star,
+  UploadCloud,
   WandSparkles,
   CreditCard,
   QrCode,
   Image as ImageIcon,
   Building,
+  User,
+  Utensils,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import {
@@ -24,13 +30,13 @@ import {
   FOOD_BUFFER_PAX,
   MAIN_DISHES,
   PASTA_DISHES,
+  DISH_DETAILS,
   findTierForGuestCount,
   recommendPackage,
 } from '../data/packages'
 import { CATEGORY_SHOWCASE_GALLERY } from '../data/eventGalleries'
 import { AI_CATALOG_ADDONS, formatMoney } from '../data/packages'
 import type { AIFormData } from '../lib/ai'
-import { EmbeddedCheckoutModal } from '../components/EmbeddedCheckoutModal'
 
 interface BookingWizardProps {
   onComplete: () => void
@@ -64,7 +70,6 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   // Dedicated AI Recommendation Inputs (Step 1 AI Tab)
   const [aiBudget, setAiBudget] = useState(60000)
   const [aiGuestCount, setAiGuestCount] = useState(initialAIFormData?.guest_count || 70)
-  const [aiNeedsEntertainment, setAiNeedsEntertainment] = useState(true)
   const [aiAppliedBanner, setAiAppliedBanner] = useState(Boolean(initialAIFormData))
 
   // Step 2 — Customization (Pure Manual Customization)
@@ -99,7 +104,14 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   // Step 4 — Client Details & Category Selection
   const [clientName, setClientName] = useState(currentUser?.name || '')
   const [clientEmail, setClientEmail] = useState(currentUser?.email || '')
-  const [clientPhone, setClientPhone] = useState(currentUser?.phone || '')
+  const [clientPhone, setClientPhone] = useState(() => {
+    if (currentUser?.phone) {
+      return currentUser.phone.replace(/\D/g, '').slice(0, 11)
+    }
+    return ''
+  })
+  const [phoneTouched, setPhoneTouched] = useState(false)
+  const isPhoneValid = useMemo(() => /^09\d{9}$/.test(clientPhone), [clientPhone])
   const [eventType, setEventType] = useState<'Kids Birthday' | 'Debut' | 'Wedding' | 'Others (Please Specify)'>('Kids Birthday')
   const [customEventType, setCustomEventType] = useState('')
   const [selectedGalleryPhotoIndex, setSelectedGalleryPhotoIndex] = useState(0)
@@ -133,20 +145,26 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     }
   }, [initialAIFormData, packages])
 
-  // Step 4 — Dedicated Payment Method Section
-  const [paymentMethod, setPaymentMethod] = useState<'qrph' | 'gcash' | 'maya' | 'bank_transfer' | 'paymongo'>('qrph')
+  // Step 4 — Dedicated Payment Method Section & Proof Upload
+  const [paymentMethod, setPaymentMethod] = useState<'qrph' | 'bank_transfer'>('qrph')
   const [gcashRefNumber, setGcashRefNumber] = useState('')
-  const [pendingOnlineCheckout, setPendingOnlineCheckout] = useState<{
-    bookingId: string
-    packageName: string
-    guestCount: number
-    eventDate: string
-    amount: number
-    totalPrice: number
-    customerName: string
-    customerEmail: string
-    customerPhone: string
-  } | null>(null)
+  const [proofOfPaymentUrl, setProofOfPaymentUrl] = useState<string | null>(null)
+  const [proofFileName, setProofFileName] = useState('')
+  const [proofError, setProofError] = useState('')
+  const [copiedAccount, setCopiedAccount] = useState(false)
+  const [isDraggingProof, setIsDraggingProof] = useState(false)
+
+  // Step 5 — Temporary Booking Reference ID & Timestamp for Digital Receipt
+  const tempBookingRef = useMemo(() => {
+    const cleanDate = (eventDate || '2026-10-27').replace(/-/g, '')
+    const suffix = String(Math.abs(guestCount * 7 + 101) % 900 + 100).padStart(3, '0')
+    return `#BK-${cleanDate}-${suffix}`
+  }, [eventDate, guestCount])
+
+  const bookingTimestamp = useMemo(() => {
+    const d = new Date()
+    return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} · ${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
+  }, [])
 
   // Messages & Form Status
   const [errorMsg, setErrorMsg] = useState('')
@@ -196,17 +214,30 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
   // Dedicated AI Recommendation Calculation (For Step 1 AI Tab)
   const aiRecommendation = useMemo(() => {
-    return recommendPackage(packages, aiGuestCount, aiBudget, aiNeedsEntertainment)
-  }, [packages, aiGuestCount, aiBudget, aiNeedsEntertainment])
+    return recommendPackage(packages, aiGuestCount, aiBudget)
+  }, [packages, aiGuestCount, aiBudget])
 
 
 
   const selectedDishCount = selectedMainDishes.length + selectedPastaDishes.length
   const toggleDish = (dish: string, kind: 'main' | 'pasta') => {
-    const setter = kind === 'main' ? setSelectedMainDishes : setSelectedPastaDishes
-    setter((current) => current.includes(dish)
-      ? current.filter((value) => value !== dish)
-      : selectedDishCount < 4 ? [...current, dish] : current)
+    if (kind === 'main') {
+      setSelectedMainDishes((current) =>
+        current.includes(dish)
+          ? current.filter((value) => value !== dish)
+          : current.length < 3
+          ? [...current, dish]
+          : current
+      )
+    } else {
+      setSelectedPastaDishes((current) =>
+        current.includes(dish)
+          ? current.filter((value) => value !== dish)
+          : current.length < 1
+          ? [...current, dish]
+          : current
+      )
+    }
   }
 
   // Calendar logic
@@ -243,6 +274,31 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     if (m < 0) { m = 11; y-- }
     setCurrentMonth(m)
     setCurrentYear(y)
+  }
+
+  const handleCopyAccount = (text: string) => {
+    navigator.clipboard.writeText(text)
+    setCopiedAccount(true)
+    setTimeout(() => setCopiedAccount(false), 2200)
+  }
+
+  const handleProofFileChange = (file: File | undefined) => {
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setProofError('Please upload an image receipt (PNG, JPG, or WEBP).')
+      return
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setProofError('Receipt file exceeds 10MB limit. Please upload a smaller image.')
+      return
+    }
+    setProofError('')
+    setProofFileName(file.name)
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      setProofOfPaymentUrl(reader.result as string)
+    }
+    reader.readAsDataURL(file)
   }
 
   const handleDateSelect = (dateStr: string) => {
@@ -318,11 +374,17 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       if (!currentUser && (!clientName.trim() || !clientEmail.trim())) {
         return { valid: false, error: 'Please enter your full name and email address.' }
       }
-      if (!clientPhone.trim()) {
-        return { valid: false, error: 'Please provide a mobile phone number for SMS booking updates.' }
+      if (!isPhoneValid) {
+        return { valid: false, error: 'Please enter a valid 11-digit Philippine mobile number starting with 09 (e.g., 09123456789).' }
       }
       if (eventType === 'Others (Please Specify)' && !customEventType.trim()) {
         return { valid: false, error: 'Please specify your custom event type.' }
+      }
+      if (!gcashRefNumber.trim()) {
+        return { valid: false, error: 'Please enter your payment transaction reference number.' }
+      }
+      if (!proofOfPaymentUrl) {
+        return { valid: false, error: 'Please attach a screenshot proof of your 50% downpayment receipt.' }
       }
       return { valid: true }
     }
@@ -396,6 +458,9 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
   const goNext = () => {
     setErrorMsg('')
+    if (currentStep === 3) {
+      setPhoneTouched(true)
+    }
     const check = validateStep(currentStep)
     if (!check.valid) {
       setErrorMsg(check.error || 'Please complete the required fields to continue.')
@@ -423,8 +488,15 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     setErrorMsg('')
     setIsSubmitting(true)
 
-    if (!currentUser && (!clientName.trim() || !clientEmail.trim() || !clientPhone.trim())) {
+    if (!currentUser && (!clientName.trim() || !clientEmail.trim())) {
       setErrorMsg('Missing contact details.')
+      setIsSubmitting(false)
+      return
+    }
+
+    if (!isPhoneValid) {
+      setPhoneTouched(true)
+      setErrorMsg('Please enter a valid 11-digit Philippine mobile number starting with 09 (e.g., 09123456789).')
       setIsSubmitting(false)
       return
     }
@@ -477,35 +549,9 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       totalPrice: calculations.totalPrice,
       downpaymentAmount: calculations.downpayment,
       paymentMethod,
-      gcashRefNumber: gcashRefNumber.trim() || undefined,
-      notes: `${currentPkg.pricePerHead !== undefined ? 'Per-head pricing; ' : `Tier: ${calculations.tier.pax} pax + ${FOOD_BUFFER_PAX} pax buffer. `}Selected mains: ${selectedMainDishes.join(', ') || 'none'}. Selected pasta: ${selectedPastaDishes.join(', ') || 'none'}. Extra mains: ${extraMainDishes.slice(0, extraMain).join(', ') || 'none'}. Extra pasta: ${extraPastaDishes.slice(0, extraPasta).join(', ') || 'none'}. Extra Dessert: ${extraDessert}. Flat add-ons: ${selectedAIAddonIds.join(', ') || 'none'}.\nPayment: ${paymentMethod.toUpperCase()}${gcashRefNumber ? ` (Ref: ${gcashRefNumber})` : ' (Pending submission)'}.\n${notes}`,
-    }
-
-    if (paymentMethod === 'paymongo') {
-      const bookingId = `bk-${crypto.randomUUID()}`
-      createBooking(
-        {
-          ...bookingData,
-          totalPrice: calculations.totalPrice,
-          downpaymentAmount: calculations.downpayment,
-        },
-        bookingId
-      )
-
-      // Open in-app embedded checkout gateway (100% Sinag Branded, no personal name or external redirect)
-      setPendingOnlineCheckout({
-        bookingId,
-        packageName: currentPkg.name,
-        guestCount,
-        eventDate,
-        amount: calculations.downpayment,
-        totalPrice: calculations.totalPrice,
-        customerName: currentUser?.name || clientName.trim(),
-        customerEmail: currentUser?.email || clientEmail.trim(),
-        customerPhone: currentUser?.phone || clientPhone.trim(),
-      })
-      setIsSubmitting(false)
-      return
+      gcashRefNumber: gcashRefNumber.trim(),
+      proofOfPaymentUrl: proofOfPaymentUrl || null,
+      notes: `${currentPkg.pricePerHead !== undefined ? 'Per-head pricing; ' : `Tier: ${calculations.tier.pax} pax + ${FOOD_BUFFER_PAX} pax buffer. `}Selected mains: ${selectedMainDishes.join(', ') || 'none'}. Selected pasta: ${selectedPastaDishes.join(', ') || 'none'}. Extra mains: ${extraMainDishes.slice(0, extraMain).join(', ') || 'none'}. Extra pasta: ${extraPastaDishes.slice(0, extraPasta).join(', ') || 'none'}. Extra Dessert: ${extraDessert}. Flat add-ons: ${selectedAIAddonIds.join(', ') || 'none'}.\nPayment: ${paymentMethod === 'bank_transfer' ? 'MARIBANK / BANK TRANSFER' : 'QR PH / GCASH'} (Ref: ${gcashRefNumber.trim()}). Receipt proof attached.\n${notes}`,
     }
 
     createBooking(bookingData)
@@ -685,7 +731,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '28px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '22px' }}>
                 <div className="form-group">
                   <label>Budget (PHP)</label>
                   <div style={{ position: 'relative' }}>
@@ -728,23 +774,6 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     <span style={{ fontSize: '0.8rem', color: 'var(--muted)', marginLeft: '8px' }}>attendees</span>
                   </div>
                 </div>
-              </div>
-
-              <div style={{ background: 'var(--paper-warm)', padding: '16px 20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--line)', marginBottom: '32px' }}>
-                <label className="toggle-row" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <input
-                    type="checkbox"
-                    checked={aiNeedsEntertainment}
-                    onChange={(e) => setAiNeedsEntertainment(e.target.checked)}
-                    style={{ width: '18px', height: '18px', accentColor: 'var(--terracotta)' }}
-                  />
-                  <div>
-                    <strong style={{ display: 'block', fontSize: '0.92rem' }}>Include Full Entertainment & Host</strong>
-                    <span style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>
-                      Includes Clown/Host, Magician, Photo booth, Event Photographer, and Lights & Sounds.
-                    </span>
-                  </div>
-                </label>
               </div>
 
               {/* Recommended Match Outcome */}
@@ -865,99 +894,315 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
               </div>
 
               {/* Checklist Item 4: Interactive Menu Selection Grid (Main Dishes & Pasta) */}
-              <div className="dish-swap-box" style={{ background: '#FFFDF9', border: '1.5px solid var(--gold)', borderRadius: 'var(--radius-md)', padding: '22px', marginBottom: '24px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+              <div className="dish-swap-box" style={{ background: '#FFFDF9', border: '1.5px solid var(--gold)', borderRadius: 'var(--radius-md)', padding: '24px', marginBottom: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
                   <div>
-                    <h4 className="dish-swap-title" style={{ margin: 0, fontSize: '1.15rem' }}>Select Your 4 Included Dishes</h4>
-                    <p style={{ fontSize: '0.82rem', color: 'var(--muted)', margin: '4px 0 0' }}>
-                      Choose up to 4 items across our signature main courses and pasta dishes.
+                    <h4 className="dish-swap-title" style={{ margin: 0, fontSize: '1.2rem', color: 'var(--ink)' }}>
+                      Select Your 4 Included Dishes: 3 Main Courses + 1 Pasta Dish
+                    </h4>
+                    <p style={{ fontSize: '0.84rem', color: 'var(--muted)', margin: '5px 0 0' }}>
+                      Tailor your banquet buffet spread. Choose exactly 3 signature main courses and 1 pasta dish included with your package.
                     </p>
                   </div>
                   <div style={{
-                    padding: '4px 12px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '6px 14px',
                     borderRadius: '20px',
                     fontSize: '0.82rem',
                     fontWeight: 700,
-                    background: selectedDishCount === 4 ? '#ECFDF5' : '#FEF3C7',
-                    color: selectedDishCount === 4 ? '#059669' : '#D97706',
-                    border: `1px solid ${selectedDishCount === 4 ? '#A7F3D0' : '#FDE68A'}`,
+                    background: (selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? '#ECFDF5' : '#FEF3C7',
+                    color: (selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? '#059669' : '#D97706',
+                    border: `1.5px solid ${(selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? '#A7F3D0' : '#FDE68A'}`,
                   }}>
-                    {selectedDishCount} / 4 Selected
+                    {(selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? (
+                      <>
+                        <Check size={14} /> 4 / 4 Dishes Complete
+                      </>
+                    ) : (
+                      <>
+                        {selectedDishCount} / 4 Included Dishes Selected
+                      </>
+                    )}
                   </div>
                 </div>
 
-                {/* Main Dishes Selection */}
-                <div style={{ marginBottom: '18px' }}>
-                  <h5 style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--terracotta)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 10px' }}>
-                    Main Dishes (Select from menu)
-                  </h5>
-                  <div className="addon-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
+                {/* Main Dishes (Red Box Area) */}
+                <div
+                  style={{
+                    marginBottom: '22px',
+                    border: '1.5px solid #FCA5A5',
+                    background: '#FFF8F8',
+                    borderRadius: '12px',
+                    padding: '18px 20px',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                    <div>
+                      <h5 style={{ fontSize: '0.88rem', fontWeight: 700, color: '#991B1B', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>
+                        Main Dishes (Choose 3)
+                      </h5>
+                      <span style={{ fontSize: '0.78rem', color: '#7F1D1D' }}>
+                        Select 3 savory viands for your guest buffet table
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        padding: '4px 12px',
+                        borderRadius: '16px',
+                        fontSize: '0.8rem',
+                        fontWeight: 700,
+                        background: selectedMainDishes.length === 3 ? '#ECFDF5' : '#FEE2E2',
+                        color: selectedMainDishes.length === 3 ? '#065F46' : '#991B1B',
+                        border: `1px solid ${selectedMainDishes.length === 3 ? '#A7F3D0' : '#FCA5A5'}`,
+                      }}
+                    >
+                      [ {selectedMainDishes.length} / 3 Selected ]
+                    </div>
+                  </div>
+
+                  <div className="dish-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
                     {MAIN_DISHES.map((dish) => {
                       const isSelected = selectedMainDishes.includes(dish)
-                      const isDisabled = !isSelected && selectedDishCount >= 4
+                      const isDisabled = !isSelected && selectedMainDishes.length >= 3
+                      const details = DISH_DETAILS[dish]
                       return (
                         <label
                           key={dish}
-                          className={`addon-card ${isSelected ? 'active-dish' : ''}`}
                           style={{
                             cursor: isDisabled ? 'not-allowed' : 'pointer',
                             opacity: isDisabled ? 0.45 : 1,
-                            padding: '10px 14px',
-                            background: isSelected ? '#FFF8E6' : '#FFFFFF',
-                            borderColor: isSelected ? 'var(--gold)' : 'var(--line)',
+                            background: isSelected ? '#FFFBEB' : '#FFFFFF',
+                            borderColor: isSelected ? 'var(--gold)' : '#E5E7EB',
+                            borderWidth: isSelected ? '2px' : '1px',
+                            borderStyle: 'solid',
+                            borderRadius: '10px',
+                            overflow: 'hidden',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            boxShadow: isSelected ? '0 4px 12px rgba(217, 119, 6, 0.15)' : '0 1px 3px rgba(0,0,0,0.05)',
+                            transition: 'all 0.2s ease',
+                            position: 'relative',
+                            userSelect: 'none',
                           }}
                         >
-                          <span style={{ fontWeight: 600 }}>{dish}</span>
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            disabled={isDisabled}
-                            onChange={() => toggleDish(dish, 'main')}
-                          />
+                          {/* Visual Dish Media / Thumbnail */}
+                          <div style={{ width: '100%', height: '115px', position: 'relative', overflow: 'hidden', background: '#F3F4F6' }}>
+                            <img
+                              src={details?.image || ''}
+                              alt={dish}
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'cover',
+                                transition: 'transform 0.3s ease',
+                              }}
+                            />
+                            {isSelected && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  top: '8px',
+                                  right: '8px',
+                                  background: '#059669',
+                                  color: '#FFFFFF',
+                                  borderRadius: '12px',
+                                  padding: '2px 8px',
+                                  fontSize: '0.72rem',
+                                  fontWeight: 700,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                                }}
+                              >
+                                <Check size={12} /> Selected
+                              </div>
+                            )}
+                          </div>
+
+                          <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', flex: 1, justifyContent: 'space-between', gap: '8px' }}>
+                            <div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px' }}>
+                                <span style={{ fontWeight: 700, fontSize: '0.92rem', color: 'var(--ink)', lineHeight: 1.25 }}>
+                                  {dish}
+                                </span>
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  disabled={isDisabled}
+                                  onChange={() => toggleDish(dish, 'main')}
+                                  style={{
+                                    marginTop: '2px',
+                                    accentColor: 'var(--gold)',
+                                    width: '16px',
+                                    height: '16px',
+                                    cursor: isDisabled ? 'not-allowed' : 'pointer',
+                                  }}
+                                />
+                              </div>
+                              {details?.tag && (
+                                <span style={{ fontSize: '0.74rem', color: '#991B1B', fontWeight: 600, display: 'block', marginTop: '2px' }}>
+                                  {details.tag}
+                                </span>
+                              )}
+                              {details?.description && (
+                                <p style={{ fontSize: '0.76rem', color: 'var(--muted)', margin: '4px 0 0', lineHeight: 1.3 }}>
+                                  {details.description}
+                                </p>
+                              )}
+                            </div>
+
+                            <div style={{ paddingTop: '6px', borderTop: '1px dashed #F3F4F6', fontSize: '0.75rem', fontWeight: 600, color: isSelected ? '#059669' : isDisabled ? 'var(--muted)' : 'var(--terracotta)' }}>
+                              {isSelected ? '✓ In Buffet Spread' : isDisabled ? 'Max 3 mains reached' : '+ Select main dish'}
+                            </div>
+                          </div>
                         </label>
                       )
                     })}
                   </div>
                 </div>
 
-                {/* Pasta Dishes Selection */}
-                <div>
-                  <h5 style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--terracotta)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 10px' }}>
-                    Pasta Dishes (Select from menu)
-                  </h5>
-                  <div className="addon-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
+                {/* Pasta Dishes (Blue Box Area) */}
+                <div
+                  style={{
+                    border: '1.5px solid #93C5FD',
+                    background: '#F0F7FF',
+                    borderRadius: '12px',
+                    padding: '18px 20px',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                    <div>
+                      <h5 style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E40AF', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>
+                        Pasta Dishes (Choose 1)
+                      </h5>
+                      <span style={{ fontSize: '0.78rem', color: '#1E3A8A' }}>
+                        Select 1 savory pasta specialty to complement your buffet
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        padding: '4px 12px',
+                        borderRadius: '16px',
+                        fontSize: '0.8rem',
+                        fontWeight: 700,
+                        background: selectedPastaDishes.length === 1 ? '#ECFDF5' : '#DBEAFE',
+                        color: selectedPastaDishes.length === 1 ? '#065F46' : '#1E40AF',
+                        border: `1px solid ${selectedPastaDishes.length === 1 ? '#A7F3D0' : '#93C5FD'}`,
+                      }}
+                    >
+                      [ {selectedPastaDishes.length} / 1 Selected ]
+                    </div>
+                  </div>
+
+                  <div className="dish-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
                     {PASTA_DISHES.map((dish) => {
                       const isSelected = selectedPastaDishes.includes(dish)
-                      const isDisabled = !isSelected && selectedDishCount >= 4
+                      const isDisabled = !isSelected && selectedPastaDishes.length >= 1
+                      const details = DISH_DETAILS[dish]
                       return (
                         <label
                           key={dish}
-                          className={`addon-card ${isSelected ? 'active-dish' : ''}`}
                           style={{
                             cursor: isDisabled ? 'not-allowed' : 'pointer',
                             opacity: isDisabled ? 0.45 : 1,
-                            padding: '10px 14px',
-                            background: isSelected ? '#FFF8E6' : '#FFFFFF',
-                            borderColor: isSelected ? 'var(--gold)' : 'var(--line)',
+                            background: isSelected ? '#F0FDF4' : '#FFFFFF',
+                            borderColor: isSelected ? '#10B981' : '#E5E7EB',
+                            borderWidth: isSelected ? '2px' : '1px',
+                            borderStyle: 'solid',
+                            borderRadius: '10px',
+                            overflow: 'hidden',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            boxShadow: isSelected ? '0 4px 12px rgba(16, 185, 129, 0.15)' : '0 1px 3px rgba(0,0,0,0.05)',
+                            transition: 'all 0.2s ease',
+                            position: 'relative',
+                            userSelect: 'none',
                           }}
                         >
-                          <span style={{ fontWeight: 600 }}>{dish}</span>
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            disabled={isDisabled}
-                            onChange={() => toggleDish(dish, 'pasta')}
-                          />
+                          {/* Visual Dish Media / Thumbnail */}
+                          <div style={{ width: '100%', height: '115px', position: 'relative', overflow: 'hidden', background: '#F3F4F6' }}>
+                            <img
+                              src={details?.image || ''}
+                              alt={dish}
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'cover',
+                                transition: 'transform 0.3s ease',
+                              }}
+                            />
+                            {isSelected && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  top: '8px',
+                                  right: '8px',
+                                  background: '#059669',
+                                  color: '#FFFFFF',
+                                  borderRadius: '12px',
+                                  padding: '2px 8px',
+                                  fontSize: '0.72rem',
+                                  fontWeight: 700,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                                }}
+                              >
+                                <Check size={12} /> Selected
+                              </div>
+                            )}
+                          </div>
+
+                          <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', flex: 1, justifyContent: 'space-between', gap: '8px' }}>
+                            <div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px' }}>
+                                <span style={{ fontWeight: 700, fontSize: '0.92rem', color: 'var(--ink)', lineHeight: 1.25 }}>
+                                  {dish}
+                                </span>
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  disabled={isDisabled}
+                                  onChange={() => toggleDish(dish, 'pasta')}
+                                  style={{
+                                    marginTop: '2px',
+                                    accentColor: '#10B981',
+                                    width: '16px',
+                                    height: '16px',
+                                    cursor: isDisabled ? 'not-allowed' : 'pointer',
+                                  }}
+                                />
+                              </div>
+                              {details?.tag && (
+                                <span style={{ fontSize: '0.74rem', color: '#1E40AF', fontWeight: 600, display: 'block', marginTop: '2px' }}>
+                                  {details.tag}
+                                </span>
+                              )}
+                              {details?.description && (
+                                <p style={{ fontSize: '0.76rem', color: 'var(--muted)', margin: '4px 0 0', lineHeight: 1.3 }}>
+                                  {details.description}
+                                </p>
+                              )}
+                            </div>
+
+                            <div style={{ paddingTop: '6px', borderTop: '1px dashed #F3F4F6', fontSize: '0.75rem', fontWeight: 600, color: isSelected ? '#059669' : isDisabled ? 'var(--muted)' : '#1E40AF' }}>
+                              {isSelected ? '✓ In Buffet Spread' : isDisabled ? 'Max 1 pasta reached' : '+ Select pasta dish'}
+                            </div>
+                          </div>
                         </label>
                       )
                     })}
                   </div>
                 </div>
 
-                {selectedDishCount >= 4 && (
-                  <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', padding: '10px 14px', borderRadius: '8px', fontSize: '0.84rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', marginTop: '14px' }}>
+                {selectedMainDishes.length === 3 && selectedPastaDishes.length === 1 && (
+                  <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', padding: '12px 16px', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '10px', marginTop: '18px' }}>
                     <Check size={18} style={{ color: '#059669', flexShrink: 0 }} />
-                    <span>Maximum of 4 dishes selected. You can add extra viands or pasta courses in the add-ons below.</span>
+                    <span>All 4 included dishes chosen (3 Main Courses + 1 Pasta Dish). You can add extra courses or flat add-ons below if needed!</span>
                   </div>
                 )}
               </div>
@@ -978,55 +1223,54 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 </div>
               </div>
 
-              {/* Checklist Item 5: Optional Extra Food Add-ons with Dynamic Dish Selector Dropdowns */}
-              {currentPkg.pricePerHead !== undefined ? (
-                <div style={{ marginTop: '32px', paddingTop: '24px', borderTop: '1px solid var(--line)' }}>
-                  <h4 className="dish-swap-title">Optional Add-ons</h4>
-                  <div className="addon-grid">
-                    {AI_CATALOG_ADDONS.map((addon) => (
-                      <label key={addon.id} className="addon-card" style={{ cursor: 'pointer' }}>
-                        <span>{addon.name}</span>
-                        <small>{formatMoney(addon.price, addon.currency)} flat</small>
-                        <input
-                          type="checkbox"
-                          checked={selectedAIAddonIds.includes(addon.id)}
-                          onChange={(event) => setSelectedAIAddonIds((current) =>
-                            event.target.checked
-                              ? [...new Set([...current, addon.id])]
-                              : current.filter((id) => id !== addon.id),
-                          )}
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div style={{ marginTop: '32px', paddingTop: '24px', borderTop: '1px solid var(--line)' }}>
-                  <h4 className="dish-swap-title">Optional Extra Food Add-ons (Calculated per guest)</h4>
-                  <p style={{ fontSize: '0.82rem', color: 'var(--muted)', margin: '0 0 16px' }}>
-                    Select additional viands or pasta courses for your catering buffet. Incrementing spawning dropdown selectors to pick distinct dishes.
+              {/* Hybrid Add-ons Section (Per-Pax Extra Dishes + Flat-Rate Enhancements) */}
+              <div style={{ marginTop: '36px', paddingTop: '28px', borderTop: '1px solid var(--line)' }}>
+                <div style={{ marginBottom: '22px' }}>
+                  <h4 className="dish-swap-title" style={{ margin: 0, fontSize: '1.25rem', color: 'var(--ink)' }}>
+                    Optional Add-ons & Extra Courses
+                  </h4>
+                  <p style={{ fontSize: '0.84rem', color: 'var(--muted)', margin: '4px 0 0' }}>
+                    Select additional viands or pasta courses for your catering buffet, or add flat-rate celebration enhancements.
                   </p>
-                  <div className="addon-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', alignItems: 'start' }}>
+                </div>
+
+                {/* Sub-section 1: Per-Guest Extra Food Add-ons */}
+                <div style={{ marginBottom: '30px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <h5 style={{ fontSize: '0.86rem', fontWeight: 700, color: 'var(--terracotta)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>
+                        Per-Guest Extra Food Add-ons
+                      </h5>
+                      <span style={{ fontSize: '0.74rem', background: '#FEF3C7', color: '#92400E', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
+                        Calculated × {guestCount} guests
+                      </span>
+                    </div>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+                      Spawns dish selector dropdowns as counter increases
+                    </span>
+                  </div>
+
+                  <div className="addon-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', alignItems: 'start', gap: '16px' }}>
                     {/* Extra Main Dish Card with Dynamic Selector Dropdowns */}
-                    <div className="addon-card" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '18px' }}>
+                    <div className="addon-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '18px', background: extraMain > 0 ? '#FFFBF6' : '#FFFFFF', borderColor: extraMain > 0 ? 'var(--gold)' : 'var(--line)', borderRadius: '10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
                         <div>
-                          <strong style={{ display: 'block', fontSize: '1rem' }}>Extra Main Dish</strong>
-                          <small style={{ color: 'var(--muted)' }}>+PHP {EXTRA_MAIN_RATE} / pax</small>
+                          <strong style={{ display: 'block', fontSize: '1rem', color: 'var(--ink)' }}>Extra Main Dish</strong>
+                          <small style={{ color: 'var(--terracotta)', fontWeight: 600 }}>+PHP {EXTRA_MAIN_RATE} / pax</small>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <button type="button" className="stepper-btn" onClick={() => setExtraMain((prev) => Math.max(0, prev - 1))}>
-                            <Minus size={12} />
+                            <Minus size={14} />
                           </button>
-                          <strong style={{ minWidth: '20px', textAlign: 'center' }}>{extraMain}</strong>
+                          <strong style={{ minWidth: '22px', textAlign: 'center', fontSize: '1rem' }}>{extraMain}</strong>
                           <button type="button" className="stepper-btn" onClick={() => setExtraMain((prev) => prev + 1)}>
-                            <Plus size={12} />
+                            <Plus size={14} />
                           </button>
                         </div>
                       </div>
                       {extraMain > 0 && (
-                        <div style={{ fontSize: '0.82rem', color: 'var(--terracotta)', fontWeight: 700 }}>
-                          +PHP {calculations.extraMainCost.toLocaleString()} ({extraMain} dish{extraMain > 1 ? 'es' : ''} × ₱{EXTRA_MAIN_RATE} × {guestCount} guests)
+                        <div style={{ fontSize: '0.82rem', color: 'var(--terracotta)', fontWeight: 700, background: '#FFF5EB', padding: '6px 10px', borderRadius: '6px' }}>
+                          +PHP {calculations.extraMainCost.toLocaleString()} ({extraMain} extra main{extraMain > 1 ? 's' : ''} × ₱{EXTRA_MAIN_RATE} × {guestCount} guests)
                         </div>
                       )}
 
@@ -1063,25 +1307,25 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     </div>
 
                     {/* Extra Pasta Dish Card with Dynamic Selector Dropdowns */}
-                    <div className="addon-card" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '18px' }}>
+                    <div className="addon-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '18px', background: extraPasta > 0 ? '#F8FAFF' : '#FFFFFF', borderColor: extraPasta > 0 ? '#60A5FA' : 'var(--line)', borderRadius: '10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
                         <div>
-                          <strong style={{ display: 'block', fontSize: '1rem' }}>Extra Pasta Dish</strong>
-                          <small style={{ color: 'var(--muted)' }}>+PHP {EXTRA_PASTA_RATE} / pax</small>
+                          <strong style={{ display: 'block', fontSize: '1rem', color: 'var(--ink)' }}>Extra Pasta Dish</strong>
+                          <small style={{ color: '#2563EB', fontWeight: 600 }}>+PHP {EXTRA_PASTA_RATE} / pax</small>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <button type="button" className="stepper-btn" onClick={() => setExtraPasta((prev) => Math.max(0, prev - 1))}>
-                            <Minus size={12} />
+                            <Minus size={14} />
                           </button>
-                          <strong style={{ minWidth: '20px', textAlign: 'center' }}>{extraPasta}</strong>
+                          <strong style={{ minWidth: '22px', textAlign: 'center', fontSize: '1rem' }}>{extraPasta}</strong>
                           <button type="button" className="stepper-btn" onClick={() => setExtraPasta((prev) => prev + 1)}>
-                            <Plus size={12} />
+                            <Plus size={14} />
                           </button>
                         </div>
                       </div>
                       {extraPasta > 0 && (
-                        <div style={{ fontSize: '0.82rem', color: 'var(--terracotta)', fontWeight: 700 }}>
-                          +PHP {calculations.extraPastaCost.toLocaleString()} ({extraPasta} pasta × ₱{EXTRA_PASTA_RATE} × {guestCount} guests)
+                        <div style={{ fontSize: '0.82rem', color: '#1E40AF', fontWeight: 700, background: '#EFF6FF', padding: '6px 10px', borderRadius: '6px' }}>
+                          +PHP {calculations.extraPastaCost.toLocaleString()} ({extraPasta} extra pasta × ₱{EXTRA_PASTA_RATE} × {guestCount} guests)
                         </div>
                       )}
 
@@ -1118,31 +1362,89 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     </div>
 
                     {/* Extra Dessert Card */}
-                    <div className="addon-card" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '18px' }}>
+                    <div className="addon-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '18px', background: extraDessert > 0 ? '#FFFDF5' : '#FFFFFF', borderColor: extraDessert > 0 ? 'var(--gold)' : 'var(--line)', borderRadius: '10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
                         <div>
-                          <strong style={{ display: 'block', fontSize: '1rem' }}>Extra Dessert</strong>
-                          <small style={{ color: 'var(--muted)' }}>+PHP {EXTRA_DESSERT_RATE} / pax</small>
+                          <strong style={{ display: 'block', fontSize: '1rem', color: 'var(--ink)' }}>Extra Dessert</strong>
+                          <small style={{ color: 'var(--terracotta)', fontWeight: 600 }}>+PHP {EXTRA_DESSERT_RATE} / pax</small>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <button type="button" className="stepper-btn" onClick={() => setExtraDessert((prev) => Math.max(0, prev - 1))}>
-                            <Minus size={12} />
+                            <Minus size={14} />
                           </button>
-                          <strong style={{ minWidth: '20px', textAlign: 'center' }}>{extraDessert}</strong>
+                          <strong style={{ minWidth: '22px', textAlign: 'center', fontSize: '1rem' }}>{extraDessert}</strong>
                           <button type="button" className="stepper-btn" onClick={() => setExtraDessert((prev) => prev + 1)}>
-                            <Plus size={12} />
+                            <Plus size={14} />
                           </button>
                         </div>
                       </div>
                       {extraDessert > 0 && (
-                        <div style={{ fontSize: '0.82rem', color: 'var(--terracotta)', fontWeight: 700 }}>
+                        <div style={{ fontSize: '0.82rem', color: 'var(--terracotta)', fontWeight: 700, background: '#FFFBEB', padding: '6px 10px', borderRadius: '6px' }}>
                           +PHP {calculations.extraDessertCost.toLocaleString()} (+₱{EXTRA_DESSERT_RATE} × {guestCount} guests)
                         </div>
                       )}
                     </div>
                   </div>
                 </div>
-              )}
+
+                {/* Sub-section 2: Flat-Rate Enhancements */}
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                    <h5 style={{ fontSize: '0.86rem', fontWeight: 700, color: 'var(--gold-dark)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>
+                      Celebration Enhancements (Flat Rate)
+                    </h5>
+                    <span style={{ fontSize: '0.74rem', background: '#F3F4F6', color: '#4B5563', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
+                      Optional flat event additions
+                    </span>
+                  </div>
+
+                  <div className="addon-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
+                    {AI_CATALOG_ADDONS.map((addon) => {
+                      const isChecked = selectedAIAddonIds.includes(addon.id)
+                      return (
+                        <label
+                          key={addon.id}
+                          className="addon-card"
+                          style={{
+                            cursor: 'pointer',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'space-between',
+                            padding: '16px',
+                            background: isChecked ? '#FFFBEB' : '#FFFFFF',
+                            borderColor: isChecked ? 'var(--gold)' : 'var(--line)',
+                            borderWidth: isChecked ? '2px' : '1px',
+                            borderRadius: '10px',
+                            transition: 'all 0.2s ease',
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                            <strong style={{ fontSize: '0.92rem', color: 'var(--ink)', lineHeight: 1.3 }}>{addon.name}</strong>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(event) => setSelectedAIAddonIds((current) =>
+                                event.target.checked
+                                  ? [...new Set([...current, addon.id])]
+                                  : current.filter((id) => id !== addon.id),
+                              )}
+                              style={{ accentColor: 'var(--gold)', width: '16px', height: '16px', marginTop: '2px', cursor: 'pointer' }}
+                            />
+                          </div>
+                          <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--terracotta)' }}>
+                              +{formatMoney(addon.price, addon.currency)}
+                            </span>
+                            <span style={{ fontSize: '0.74rem', color: isChecked ? '#059669' : 'var(--muted)', fontWeight: 600 }}>
+                              {isChecked ? '✓ Added' : '+ Add flat'}
+                            </span>
+                          </div>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Task 3: Estimate Summary Sidebar with Audited Math Logic */}
@@ -1203,14 +1505,16 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
               </div>
 
               <div className="quote-deposit-info">
-                <CreditCard size={20} style={{ color: 'var(--gold)' }} />
+                <CreditCard size={22} style={{ color: '#B45309', marginTop: '2px', flexShrink: 0 }} />
                 <div>
-                    <strong>Required 50% Downpayment:</strong>
-                    <div className="font-number" style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--gold-light)' }}>
-                      {formatMoney(calculations.downpayment, currentPkg.currency)}
-                    </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '4px' }}>
-                      Payable via QR Ph / GCash to lock your event date
+                  <strong style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Required 50% Downpayment:
+                  </strong>
+                  <div className="font-number" style={{ fontSize: '1.45rem', fontWeight: 800, color: '#18181B', marginTop: '2px', lineHeight: 1.2 }}>
+                    {formatMoney(calculations.downpayment, currentPkg.currency)}
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: '#4B5563', marginTop: '4px', fontWeight: 500 }}>
+                    Payable via QR Ph / GCash to lock your event date
                   </div>
                 </div>
               </div>
@@ -1344,15 +1648,43 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   />
                 </div>
                 <div className="form-group">
-                  <label>Mobile Number (For Semaphore SMS)</label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <label style={{ margin: 0 }}>Mobile Number (For Semaphore SMS)</label>
+                    <span style={{ fontSize: '0.75rem', color: clientPhone.length === 11 ? (isPhoneValid ? '#059669' : '#DC2626') : 'var(--muted)', fontWeight: 600 }}>
+                      {clientPhone.length}/11 Digits
+                    </span>
+                  </div>
                   <input
                     type="tel"
                     className="input-field"
-                    placeholder="0928 714 4597"
+                    placeholder="09123456789"
+                    maxLength={11}
                     value={clientPhone}
-                    onChange={(e) => setClientPhone(e.target.value)}
+                    onChange={(e) => {
+                      const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 11)
+                      setClientPhone(digitsOnly)
+                      setPhoneTouched(true)
+                    }}
+                    onBlur={() => setPhoneTouched(true)}
                     required
+                    style={{
+                      borderColor: (phoneTouched || clientPhone.length > 0) && !isPhoneValid ? '#DC2626' : undefined,
+                      backgroundColor: (phoneTouched || clientPhone.length > 0) && !isPhoneValid ? '#FEF2F2' : undefined,
+                      transition: 'border-color 0.2s, background-color 0.2s',
+                    }}
                   />
+                  {(phoneTouched || clientPhone.length > 0) && !isPhoneValid && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px', color: '#DC2626', fontSize: '0.8rem', fontWeight: 500 }}>
+                      <AlertCircle size={14} style={{ flexShrink: 0 }} />
+                      <span>Please enter a valid 11-digit Philippine mobile number starting with 09 (e.g., 09123456789).</span>
+                    </div>
+                  )}
+                  {isPhoneValid && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px', color: '#059669', fontSize: '0.8rem', fontWeight: 500 }}>
+                      <CheckCircle size={14} style={{ flexShrink: 0 }} />
+                      <span>Valid 11-digit Philippine mobile format</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Checklist Item 5 Task 1: Category Standardization strictly to 4 options */}
@@ -1410,29 +1742,30 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 </div>
 
                 <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0 0 16px' }}>
-                  To reserve and lock your celebration date, a required <strong>50% downpayment</strong> ({formatMoney(calculations.downpayment, currentPkg.currency)}) is requested. You can pay via QR Ph / GCash now or upon admin review.
+                  To reserve and lock your celebration date, a required <strong>50% downpayment</strong> ({formatMoney(calculations.downpayment, currentPkg.currency)}) is required. Please transfer via QR Ph / GCash or MariBank and attach your proof below.
                 </p>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', marginBottom: '20px' }}>
+                {/* Streamlined Payment Method Tabs (Action Item 1) */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
                   <button
                     type="button"
                     onClick={() => setPaymentMethod('qrph')}
-                    className={`payment-option-card ${paymentMethod === 'qrph' || paymentMethod === 'gcash' ? 'active' : ''}`}
+                    className={`payment-option-card ${paymentMethod === 'qrph' ? 'active' : ''}`}
                     style={{
                       padding: '14px',
                       borderRadius: 'var(--radius-sm)',
-                      border: paymentMethod === 'qrph' || paymentMethod === 'gcash' ? '2px solid var(--terracotta)' : '1px solid var(--line)',
-                      background: paymentMethod === 'qrph' || paymentMethod === 'gcash' ? 'var(--paper-warm)' : '#FFF',
+                      border: paymentMethod === 'qrph' ? '2px solid var(--terracotta)' : '1px solid var(--line)',
+                      background: paymentMethod === 'qrph' ? 'var(--paper-warm)' : '#FFF',
                       cursor: 'pointer',
                       textAlign: 'left',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '10px',
+                      gap: '12px',
                     }}
                   >
                     <QrCode size={22} style={{ color: 'var(--terracotta)' }} />
                     <div>
-                      <strong style={{ display: 'block', fontSize: '0.9rem' }}>QR Ph / GCash</strong>
+                      <strong style={{ display: 'block', fontSize: '0.9rem', color: 'var(--ink)' }}>QR Ph / GCash</strong>
                       <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Instant QR code scan</span>
                     </div>
                   </button>
@@ -1450,104 +1783,267 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       textAlign: 'left',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '10px',
+                      gap: '12px',
                     }}
                   >
                     <Building size={22} style={{ color: 'var(--gold-dark)' }} />
                     <div>
-                      <strong style={{ display: 'block', fontSize: '0.9rem' }}>Bank Transfer / Maya</strong>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Direct deposit</span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMethod('paymongo')}
-                    className={`payment-option-card ${paymentMethod === 'paymongo' ? 'active' : ''}`}
-                    style={{
-                      padding: '14px',
-                      borderRadius: 'var(--radius-sm)',
-                      border: paymentMethod === 'paymongo' ? '2px solid var(--terracotta)' : '1px solid var(--line)',
-                      background: paymentMethod === 'paymongo' ? 'var(--paper-warm)' : '#FFF',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '10px',
-                    }}
-                  >
-                    <CreditCard size={22} style={{ color: 'var(--terracotta)' }} />
-                    <div>
-                      <strong style={{ display: 'block', fontSize: '0.9rem' }}>Instant Online Checkout</strong>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>GCash, QR Ph, Maya, Cards</span>
+                      <strong style={{ display: 'block', fontSize: '0.9rem', color: 'var(--ink)' }}>MariBank / Bank Transfer</strong>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Direct bank transfer</span>
                     </div>
                   </button>
                 </div>
 
-                {/* Checklist Item 7: Official GCash / QR Ph Owner Asset Integration */}
-                {paymentMethod !== 'paymongo' && (
-                <div style={{ background: '#FFFFFF', padding: '18px', borderRadius: 'var(--radius-md)', border: '1.5px solid #005CE6', marginBottom: '18px', boxShadow: '0 4px 14px rgba(0, 92, 230, 0.08)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
-                    <div style={{ background: '#F0F7FF', padding: '10px', borderRadius: '10px', border: '1px solid #BFDBFE', textAlign: 'center', flexShrink: 0 }}>
-                      <img
-                        src="/sinag_gcash_qr.png"
-                        alt="Official Sinag Catering GCash / QR Ph Code"
-                        style={{ width: '130px', height: '130px', display: 'block', borderRadius: '6px', objectFit: 'contain' }}
+                {/* Tab 1: QR Ph / GCash Showcase */}
+                {paymentMethod === 'qrph' && (
+                  <div style={{ background: '#FFFFFF', padding: '18px', borderRadius: 'var(--radius-md)', border: '1.5px solid #005CE6', marginBottom: '18px', boxShadow: '0 4px 14px rgba(0, 92, 230, 0.08)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+                      <div style={{ background: '#F0F7FF', padding: '10px', borderRadius: '10px', border: '1px solid #BFDBFE', textAlign: 'center', flexShrink: 0 }}>
+                        <img
+                          src="/sinag_gcash_qr.png"
+                          alt="Official Sinag Catering GCash / QR Ph Code"
+                          style={{ width: '130px', height: '130px', display: 'block', borderRadius: '6px', objectFit: 'contain' }}
+                        />
+                        <span style={{ fontSize: '0.66rem', fontWeight: 800, color: '#005CE6', letterSpacing: '0.04em', marginTop: '6px', display: 'block' }}>
+                          SCAN TO PAY (QR PH / GCASH)
+                        </span>
+                      </div>
+
+                      <div style={{ flex: 1, minWidth: '220px' }}>
+                        <span style={{ display: 'inline-block', fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#1E40AF', background: '#DBEAFE', padding: '2px 8px', borderRadius: '4px', marginBottom: '6px' }}>
+                          Official Merchant QR Code
+                        </span>
+                        <strong style={{ display: 'block', fontSize: '1.1rem', color: 'var(--ink)' }}>
+                          Sinag's Catering Services (Sunshine C.)
+                        </strong>
+                        <div style={{ fontSize: '0.88rem', color: 'var(--muted)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span>Mobile Hotline: <strong style={{ color: 'var(--ink)' }}>0928 714 4597</strong></span>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyAccount('0928 714 4597')}
+                            style={{
+                              background: '#F1F5F9',
+                              border: '1px solid #CBD5E1',
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontSize: '0.72rem',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              color: 'var(--ink)',
+                            }}
+                          >
+                            <Copy size={12} /> {copiedAccount ? 'Copied!' : 'Copy'}
+                          </button>
+                        </div>
+                        <div style={{ fontSize: '0.85rem', color: 'var(--ink-light)', marginTop: '6px' }}>
+                          Required 50% Downpayment: <strong style={{ color: 'var(--terracotta)', fontSize: '1.05rem' }}>{formatMoney(calculations.downpayment, currentPkg.currency)}</strong>
+                        </div>
+                        <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: 'var(--muted)', lineHeight: 1.4 }}>
+                          Open your GCash or any QR Ph banking app (BDO, BPI, Maya, UnionBank, etc.), scan this code, and confirm transfer to <strong>Sunshine C. (0928 714 4597)</strong>.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Tab 2: MariBank / Bank Transfer Showcase */}
+                {paymentMethod === 'bank_transfer' && (
+                  <div style={{ background: '#FFFFFF', padding: '18px', borderRadius: 'var(--radius-md)', border: '1.5px solid var(--gold-dark)', marginBottom: '18px', boxShadow: '0 4px 14px rgba(184, 134, 11, 0.1)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                      <div style={{ background: '#FFFBEB', padding: '16px', borderRadius: '10px', border: '1px solid #FDE68A', textAlign: 'center', flexShrink: 0, minWidth: '120px' }}>
+                        <Building size={36} style={{ color: 'var(--gold-dark)', margin: '0 auto 8px', display: 'block' }} />
+                        <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--gold-dark)', letterSpacing: '0.04em', display: 'block' }}>
+                          MARIBANK
+                        </span>
+                        <span style={{ fontSize: '0.68rem', color: 'var(--muted)' }}>Direct Transfer</span>
+                      </div>
+
+                      <div style={{ flex: 1, minWidth: '220px' }}>
+                        <span style={{ display: 'inline-block', fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#92400E', background: '#FEF3C7', padding: '2px 8px', borderRadius: '4px', marginBottom: '6px' }}>
+                          Direct Bank Account
+                        </span>
+                        <strong style={{ display: 'block', fontSize: '1.1rem', color: 'var(--ink)' }}>
+                          MariBank Philippines
+                        </strong>
+                        <div style={{ fontSize: '0.88rem', color: 'var(--muted)', marginTop: '4px' }}>
+                          Account Name: <strong style={{ color: 'var(--ink)' }}>Sinag Catering Services / Sunshine C.</strong>
+                        </div>
+                        <div style={{ fontSize: '0.88rem', color: 'var(--muted)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span>Account / Mobile No: <strong style={{ color: 'var(--ink)' }}>0928 714 4597</strong></span>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyAccount('0928 714 4597')}
+                            style={{
+                              background: '#F1F5F9',
+                              border: '1px solid #CBD5E1',
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontSize: '0.72rem',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              color: 'var(--ink)',
+                            }}
+                          >
+                            <Copy size={12} /> {copiedAccount ? 'Copied!' : 'Copy'}
+                          </button>
+                        </div>
+                        <div style={{ fontSize: '0.85rem', color: 'var(--ink-light)', marginTop: '6px' }}>
+                          Required 50% Downpayment: <strong style={{ color: 'var(--terracotta)', fontSize: '1.05rem' }}>{formatMoney(calculations.downpayment, currentPkg.currency)}</strong>
+                        </div>
+                        <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: 'var(--muted)', lineHeight: 1.4 }}>
+                          Transfer via MariBank app or InstaPay / PESONet from any bank. Enter account number <strong>0928 714 4597</strong> under <strong>Sunshine C.</strong>
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Action Item 2: Integrated Mandatory Proof Upload Panel (PHOTO 4B) */}
+                <div style={{ background: '#FAF8F5', border: '1.5px solid var(--line)', borderRadius: 'var(--radius-md)', padding: '20px', marginTop: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Receipt size={18} style={{ color: 'var(--terracotta)' }} />
+                      <h4 style={{ margin: 0, fontFamily: 'var(--font-serif)', fontSize: '1.15rem', color: 'var(--ink)' }}>
+                        Submit Transaction Proof
+                      </h4>
+                    </div>
+                    <span style={{ fontSize: '0.72rem', background: '#FEF2F2', color: '#991B1B', border: '1px solid #FECACA', padding: '3px 10px', borderRadius: '999px', fontWeight: 700, letterSpacing: '0.04em' }}>
+                      Required to Confirm
+                    </span>
+                  </div>
+
+                  <p style={{ margin: '0 0 16px', fontSize: '0.82rem', color: 'var(--muted)', lineHeight: 1.45 }}>
+                    Enter your GCash / MariBank reference number and attach your payment receipt screenshot below so our admin team can verify and lock in your reservation date.
+                  </p>
+
+                  <div className="form-group" style={{ marginBottom: '14px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', fontWeight: 600, color: 'var(--ink)', marginBottom: '6px' }}>
+                      <Receipt size={13} style={{ color: 'var(--terracotta)' }} />
+                      <span>Reference Number <strong style={{ color: '#DC2626' }}>*</strong></span>
+                    </label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="e.g. 902148923019 or MariBank transaction ID"
+                      value={gcashRefNumber}
+                      onChange={(e) => setGcashRefNumber(e.target.value)}
+                      required
+                    />
+                    <span style={{ fontSize: '0.74rem', color: 'var(--muted)', marginTop: '4px', display: 'block' }}>
+                      Found on your GCash SMS / receipt or banking app transfer confirmation screen.
+                    </span>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: '8px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', fontWeight: 600, color: 'var(--ink)', marginBottom: '6px' }}>
+                      <UploadCloud size={13} style={{ color: 'var(--terracotta)' }} />
+                      <span>Screenshot Proof <strong style={{ color: '#DC2626' }}>*</strong></span>
+                    </label>
+
+                    <label
+                      htmlFor="booking-proof-upload"
+                      className={`portal-dropzone ${proofOfPaymentUrl ? 'has-file' : ''} ${isDraggingProof ? 'drag-over' : ''} ${errorMsg && !proofOfPaymentUrl ? 'dropzone-error' : ''}`}
+                      onDragOver={(e) => {
+                        e.preventDefault()
+                        setIsDraggingProof(true)
+                      }}
+                      onDragLeave={() => setIsDraggingProof(false)}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        setIsDraggingProof(false)
+                        handleProofFileChange(e.dataTransfer.files?.[0])
+                      }}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <input
+                        id="booking-proof-upload"
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        style={{ display: 'none' }}
+                        onChange={(e) => handleProofFileChange(e.target.files?.[0])}
                       />
-                      <span style={{ fontSize: '0.66rem', fontWeight: 800, color: '#005CE6', letterSpacing: '0.04em', marginTop: '6px', display: 'block' }}>
-                        SCAN TO PAY (QR PH / GCASH)
-                      </span>
-                    </div>
+                      {proofOfPaymentUrl ? (
+                        <div className="portal-dropzone-selected">
+                          <img src={proofOfPaymentUrl} alt="Receipt thumbnail" className="portal-receipt-thumbnail" />
+                          <div className="portal-dropzone-fileinfo" style={{ flex: 1 }}>
+                            <span className="portal-dropzone-filename">{proofFileName || 'receipt_screenshot.png'}</span>
+                            <span className="portal-dropzone-change"><CheckCircle size={13} /> Ready for verification · Click or drag to change receipt</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              setProofOfPaymentUrl(null)
+                              setProofFileName('')
+                            }}
+                            style={{
+                              background: '#FEE2E2',
+                              border: '1px solid #FCA5A5',
+                              color: '#991B1B',
+                              padding: '4px 10px',
+                              borderRadius: '6px',
+                              fontSize: '0.74rem',
+                              cursor: 'pointer',
+                              fontWeight: 600,
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="portal-dropzone-empty">
+                          <div className="portal-upload-icon-circle">
+                            <UploadCloud size={20} style={{ color: 'var(--terracotta)' }} />
+                          </div>
+                          <div className="portal-dropzone-text">
+                            <strong>Click or drag & drop payment receipt screenshot</strong>
+                            <span>
+                              PNG, JPG, or WEBP up to 10MB (or{' '}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  setProofOfPaymentUrl('/sinag_gcash_qr.png')
+                                  setProofFileName('gcash_downpayment_receipt.png')
+                                  setProofError('')
+                                }}
+                                style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  color: 'var(--terracotta)',
+                                  textDecoration: 'underline',
+                                  cursor: 'pointer',
+                                  padding: 0,
+                                  fontSize: '0.74rem',
+                                  fontWeight: 600,
+                                }}
+                              >
+                                use sample receipt
+                              </button>
+                              )
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </label>
 
-                    <div style={{ flex: 1, minWidth: '220px' }}>
-                      <span style={{ display: 'inline-block', fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#1E40AF', background: '#DBEAFE', padding: '2px 8px', borderRadius: '4px', marginBottom: '6px' }}>
-                        Official Merchant QR Code
+                    {proofError && (
+                      <span style={{ color: '#DC2626', fontSize: '0.75rem', marginTop: '6px', display: 'block' }}>
+                        {proofError}
                       </span>
-                      <strong style={{ display: 'block', fontSize: '1.1rem', color: 'var(--ink)' }}>
-                        Sinag's Catering Services (Sunshine C.)
-                      </strong>
-                      <div style={{ fontSize: '0.88rem', color: 'var(--muted)', marginTop: '4px' }}>
-                        Mobile Hotline: <strong style={{ color: 'var(--ink)' }}>0928 714 4597</strong>
-                      </div>
-                      <div style={{ fontSize: '0.85rem', color: 'var(--ink-light)', marginTop: '6px' }}>
-                        Required 50% Downpayment: <strong style={{ color: 'var(--terracotta)', fontSize: '1.05rem' }}>{formatMoney(calculations.downpayment, currentPkg.currency)}</strong>
-                      </div>
-                      <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: 'var(--muted)', lineHeight: 1.4 }}>
-                        Open your GCash or any QR Ph banking app, scan this code, and confirm transfer to <strong>Sunshine C. (0928 714 4597)</strong>. Enter your transaction reference number below.
-                      </p>
-                    </div>
+                    )}
+
+                    <span style={{ fontSize: '0.74rem', color: 'var(--muted)', marginTop: '6px', display: 'block' }}>
+                      Both Reference Number and Receipt Screenshot are required before proceeding to confirmation.
+                    </span>
                   </div>
                 </div>
-                )}
-
-                {paymentMethod === 'paymongo' && (
-                  <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', padding: '14px 18px', borderRadius: 'var(--radius-md)', margin: '0 0 16px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0F172A', fontWeight: 600, fontSize: '0.88rem', marginBottom: '4px' }}>
-                      <ShieldCheck size={16} style={{ color: 'var(--terracotta)' }} />
-                      Sinag Secure In-App Gateway
-                    </div>
-                    <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--muted)', lineHeight: 1.5 }}>
-                      Upon submitting, our embedded Sinag gateway will open instantly on this screen. Pay via GCash (QR Ph or OTP), Maya, or Credit/Debit Card without leaving the Sinag website.
-                    </p>
-                  </div>
-                )}
-
-                {/* Reference Number Field */}
-                {paymentMethod !== 'paymongo' && (
-                <div className="form-group" style={{ marginBottom: '8px' }}>
-                  <label>GCash / QR Ph Reference Number (If Paid)</label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="e.g. 902148923019 (Optional upon initial request)"
-                    value={gcashRefNumber}
-                    onChange={(e) => setGcashRefNumber(e.target.value)}
-                  />
-                  <span style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '4px' }}>
-                    Tip: You can submit your reference number now for faster verification, or provide it later in your Client Portal.
-                  </span>
-                </div>
-                )}
               </div>
             </div>
 
@@ -1622,58 +2118,411 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
             <p>Confirm the details of your party package and payment verification before submitting.</p>
           </div>
 
-          <div className="wizard-review-grid">
-            <div className="wizard-review-card">
-              <h4>Package Selection</h4>
-              <p><strong>{currentPkg.name}</strong></p>
-              <p style={{ fontSize: '0.88rem', color: 'var(--muted)' }}>{currentPkg.description}</p>
-            </div>
-
-            <div className="wizard-review-card">
-              <h4>Event Schedule & Category</h4>
-              <p>
-                <strong>
-                  {eventType === 'Others (Please Specify)' && customEventType ? customEventType : eventType}
-                </strong>
-                {' '}— {eventDate}
-              </p>
-              <p style={{ fontSize: '0.88rem', color: 'var(--muted)' }}>{guestCount} registered guests</p>
-              {getBookingCountForDate(eventDate) > 0 && (
-                <p style={{ fontSize: '0.8rem', color: '#D97706', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                  <AlertCircle size={14} />
-                  <span>{getBookingCountForDate(eventDate)} booking already scheduled on this date</span>
-                </p>
-              )}
-            </div>
-
-            <div className="wizard-review-card">
-              <h4>Client Contact</h4>
-              <p><strong>{currentUser?.name || clientName}</strong></p>
-              <p style={{ fontSize: '0.88rem', color: 'var(--muted)' }}>
-                {currentUser?.email || clientEmail} · {clientPhone}
-              </p>
-            </div>
-
-            <div className="wizard-review-card">
-              <h4>Payment & Downpayment</h4>
-              <p className="font-number" style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--terracotta)' }}>
-                {formatMoney(calculations.totalPrice, currentPkg.currency)}
-              </p>
-              <p style={{ fontSize: '0.85rem', color: 'var(--ink-light)' }}>
-                50% Downpayment: <strong>{formatMoney(calculations.downpayment, currentPkg.currency)}</strong>
-              </p>
-              <p style={{ fontSize: '0.78rem', color: 'var(--muted)', marginTop: '4px' }}>
-                Method: <strong>{paymentMethod.toUpperCase()}</strong>
-                {gcashRefNumber ? ` (Ref: ${gcashRefNumber})` : ' (Pending verification)'}
-              </p>
-            </div>
-
-            {notes && (
-              <div className="wizard-review-card" style={{ gridColumn: '1 / -1' }}>
-                <h4>Venue & Special Notes</h4>
-                <p style={{ fontSize: '0.88rem' }}>{notes}</p>
+          {/* Single Centered Digital Receipt Card */}
+          <div
+            className="digital-receipt-container"
+            style={{
+              maxWidth: '680px',
+              margin: '0 auto',
+              background: '#FFFFFF',
+              border: '1px solid var(--line)',
+              borderRadius: '16px',
+              boxShadow: '0 12px 36px rgba(44, 26, 0, 0.08)',
+              overflow: 'hidden',
+            }}
+          >
+            {/* Clean Top Header Band */}
+            <div
+              style={{
+                background: 'linear-gradient(135deg, #1C1917 0%, #292524 100%)',
+                padding: '12px 24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderBottom: '2px solid var(--terracotta)',
+                flexWrap: 'wrap',
+                gap: '8px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#FAF5EE', fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                <Sparkles size={14} style={{ color: 'var(--gold)' }} />
+                Sinag Catering Services – Provisional Booking Summary
               </div>
-            )}
+              <span
+                style={{
+                  fontSize: '0.68rem',
+                  fontWeight: 800,
+                  background: 'rgba(217, 119, 6, 0.25)',
+                  color: '#FBBF24',
+                  border: '1px solid #D97706',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  letterSpacing: '0.05em',
+                }}
+              >
+                ITEMIZED DIGITAL RECEIPT
+              </span>
+            </div>
+
+            {/* Receipt Card Body */}
+            <div style={{ padding: '28px 32px' }}>
+              {/* Header Block: Brand Logo & Title */}
+              <div style={{ textAlign: 'center', paddingBottom: '20px', borderBottom: '1.5px dashed var(--line)' }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+                  <img
+                    src="/sinag_logo.png"
+                    alt="Sinag Catering"
+                    style={{ width: '40px', height: '40px', objectFit: 'contain' }}
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none'
+                    }}
+                  />
+                  <h3 style={{ margin: 0, fontFamily: 'var(--font-serif)', fontSize: '1.85rem', color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+                    Sinag's Catering Services
+                  </h3>
+                </div>
+                <p style={{ margin: '0 0 2px', fontSize: '0.82rem', color: 'var(--muted)', letterSpacing: '0.02em' }}>
+                  Authentic Filipino Celebrations & Catering Banquet · Baliwag, Bulacan
+                </p>
+                <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--ink-light)' }}>
+                  Mobile Hotline: <strong>0928 714 4597</strong> · contact@sinagcateringservices.com
+                </p>
+              </div>
+
+              {/* Reference & Date Strip */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+                  gap: '12px',
+                  padding: '16px 0',
+                  borderBottom: '1.5px dashed var(--line)',
+                  background: '#FCFBF9',
+                  margin: '0 -32px',
+                  paddingLeft: '32px',
+                  paddingRight: '32px',
+                }}
+              >
+                <div>
+                  <span style={{ display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--muted)', fontWeight: 700, letterSpacing: '0.05em' }}>
+                    Reference ID
+                  </span>
+                  <strong style={{ fontSize: '0.98rem', color: 'var(--terracotta)', fontFamily: 'monospace' }}>
+                    {tempBookingRef}
+                  </strong>
+                </div>
+                <div>
+                  <span style={{ display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--muted)', fontWeight: 700, letterSpacing: '0.05em' }}>
+                    Booking Timestamp
+                  </span>
+                  <strong style={{ fontSize: '0.86rem', color: 'var(--ink)' }}>
+                    {bookingTimestamp}
+                  </strong>
+                </div>
+                <div>
+                  <span style={{ display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--muted)', fontWeight: 700, letterSpacing: '0.05em' }}>
+                    Selected Event Date
+                  </span>
+                  <strong style={{ fontSize: '0.86rem', color: 'var(--ink)' }}>
+                    {new Date(eventDate + 'T00:00:00').toLocaleDateString('en-US', {
+                      weekday: 'short',
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })}
+                  </strong>
+                </div>
+              </div>
+
+              {/* Client Details Section */}
+              <div style={{ padding: '18px 0', borderBottom: '1.5px dashed var(--line)' }}>
+                <h4 style={{ margin: '0 0 12px', fontSize: '0.82rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <User size={13} style={{ color: 'var(--terracotta)' }} /> Client & Event Details
+                </h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '8px 16px', fontSize: '0.85rem' }}>
+                  <div>
+                    <span style={{ color: 'var(--muted)', display: 'inline-block', width: '92px' }}>Client Name:</span>
+                    <strong style={{ color: 'var(--ink)' }}>{currentUser?.name || clientName || 'Guest User'}</strong>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--muted)', display: 'inline-block', width: '92px' }}>Contact No:</span>
+                    <strong style={{ color: 'var(--ink)' }}>{clientPhone || '0928 714 4597'}</strong>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--muted)', display: 'inline-block', width: '92px' }}>Email:</span>
+                    <span style={{ color: 'var(--ink)' }}>{currentUser?.email || clientEmail}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--muted)', display: 'inline-block', width: '92px' }}>Category:</span>
+                    <strong style={{ color: 'var(--ink)' }}>
+                      {eventType === 'Others (Please Specify)' && customEventType ? customEventType : eventType}
+                    </strong>
+                  </div>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <span style={{ color: 'var(--muted)', display: 'inline-block', width: '92px' }}>Venue / Notes:</span>
+                    <span style={{ color: 'var(--ink)', fontStyle: notes ? 'normal' : 'italic' }}>
+                      {notes ? notes : 'To be confirmed / On-site catering banquet'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Itemized Order Breakdown Table */}
+              <div style={{ padding: '20px 0', borderBottom: '1.5px dashed var(--line)' }}>
+                <h4 style={{ margin: '0 0 12px', fontSize: '0.82rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Utensils size={13} style={{ color: 'var(--terracotta)' }} /> Itemized Order Breakdown
+                </h4>
+
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1.5px solid var(--line)', textAlign: 'left', color: 'var(--muted)', fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      <th style={{ padding: '8px 4px', fontWeight: 700 }}>Item & Specification</th>
+                      <th style={{ padding: '8px 8px', fontWeight: 700, textAlign: 'center' }}>Pax / Qty</th>
+                      <th style={{ padding: '8px 4px', fontWeight: 700, textAlign: 'right' }}>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* Base Package Tier */}
+                    <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
+                      <td style={{ padding: '12px 4px', verticalAlign: 'top' }}>
+                        <strong style={{ display: 'block', color: 'var(--ink)', fontSize: '0.92rem' }}>
+                          {currentPkg.name}
+                        </strong>
+                        <span style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+                          {currentPkg.description}
+                        </span>
+
+                        {/* Selected 4 Included Dishes */}
+                        <div style={{ marginTop: '8px', padding: '8px 10px', background: '#FFFDF9', border: '1px solid #FED7AA', borderRadius: '6px' }}>
+                          <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#9A3412', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>
+                            Included 4 Courses (3 Mains + 1 Pasta):
+                          </div>
+                          <div style={{ fontSize: '0.79rem', color: 'var(--ink-light)', lineHeight: 1.45 }}>
+                            <span style={{ color: '#991B1B', fontWeight: 600 }}>• 3 Mains:</span> {selectedMainDishes.join(', ') || '3 main dishes selected'}<br />
+                            <span style={{ color: '#1E40AF', fontWeight: 600 }}>• 1 Pasta:</span> {selectedPastaDishes.join(', ') || '1 pasta dish selected'}
+                          </div>
+                        </div>
+                      </td>
+                      <td style={{ padding: '12px 8px', verticalAlign: 'top', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                        <span style={{ fontWeight: 600, color: 'var(--ink)' }}>{guestCount} Pax</span>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>
+                          {currentPkg.pricePerHead !== undefined ? `₱${currentPkg.pricePerHead}/head` : `+${FOOD_BUFFER_PAX} buffer pax`}
+                        </div>
+                      </td>
+                      <td style={{ padding: '12px 4px', verticalAlign: 'top', textAlign: 'right', fontWeight: 700, color: 'var(--ink)', whiteSpace: 'nowrap' }}>
+                        {formatMoney(calculations.baseCost, currentPkg.currency)}
+                      </td>
+                    </tr>
+
+                    {/* Excess Guests if any */}
+                    {calculations.excessGuests > 0 && (
+                      <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
+                        <td style={{ padding: '10px 4px' }}>
+                          <div style={{ fontWeight: 600, color: 'var(--ink)' }}>Excess Pax Buffer Charge</div>
+                          <span style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>
+                            {calculations.excessGuests} extra guest{calculations.excessGuests > 1 ? 's' : ''} over {calculations.servicePax} pax tier buffer (₱{EXCESS_PAX_RATE}/pax)
+                          </span>
+                        </td>
+                        <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                          +{calculations.excessGuests} pax
+                        </td>
+                        <td style={{ padding: '10px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--ink)' }}>
+                          {formatMoney(calculations.excessPaxFee, currentPkg.currency)}
+                        </td>
+                      </tr>
+                    )}
+
+                    {/* Extra Main Dish Add-on */}
+                    {extraMain > 0 && (
+                      <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
+                        <td style={{ padding: '10px 4px' }}>
+                          <div style={{ fontWeight: 600, color: '#9A3412' }}>
+                            Extra Main Course ({extraMain} dish{extraMain > 1 ? 'es' : ''} × ₱{EXTRA_MAIN_RATE}/pax)
+                          </div>
+                          <span style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>
+                            Selected: {extraMainDishes.slice(0, extraMain).filter(Boolean).join(' · ') || 'Dishes to confirm'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                          {guestCount} pax
+                        </td>
+                        <td style={{ padding: '10px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--ink)' }}>
+                          {formatMoney(calculations.extraMainCost, currentPkg.currency)}
+                        </td>
+                      </tr>
+                    )}
+
+                    {/* Extra Pasta Dish Add-on */}
+                    {extraPasta > 0 && (
+                      <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
+                        <td style={{ padding: '10px 4px' }}>
+                          <div style={{ fontWeight: 600, color: '#1E40AF' }}>
+                            Extra Pasta Course ({extraPasta} dish{extraPasta > 1 ? 'es' : ''} × ₱{EXTRA_PASTA_RATE}/pax)
+                          </div>
+                          <span style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>
+                            Selected: {extraPastaDishes.slice(0, extraPasta).filter(Boolean).join(' · ') || 'Dishes to confirm'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                          {guestCount} pax
+                        </td>
+                        <td style={{ padding: '10px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--ink)' }}>
+                          {formatMoney(calculations.extraPastaCost, currentPkg.currency)}
+                        </td>
+                      </tr>
+                    )}
+
+                    {/* Extra Dessert Course Add-on */}
+                    {extraDessert > 0 && (
+                      <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
+                        <td style={{ padding: '10px 4px' }}>
+                          <div style={{ fontWeight: 600, color: '#92400E' }}>
+                            Extra Dessert Course ({extraDessert} serving{extraDessert > 1 ? 's' : ''} × ₱{EXTRA_DESSERT_RATE}/pax)
+                          </div>
+                        </td>
+                        <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                          {guestCount} pax
+                        </td>
+                        <td style={{ padding: '10px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--ink)' }}>
+                          {formatMoney(calculations.extraDessertCost, currentPkg.currency)}
+                        </td>
+                      </tr>
+                    )}
+
+                    {/* Flat-rate Celebrations Add-ons */}
+                    {selectedAIAddonIds.map((id) => {
+                      const addon = AI_CATALOG_ADDONS.find((a) => a.id === id)
+                      if (!addon) return null
+                      return (
+                        <tr key={id} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                          <td style={{ padding: '10px 4px' }}>
+                            <div style={{ fontWeight: 600, color: 'var(--ink)' }}>{addon.name}</div>
+                            <span style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>Celebration event enhancement</span>
+                          </td>
+                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                            1 Flat
+                          </td>
+                          <td style={{ padding: '10px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--ink)' }}>
+                            {formatMoney(addon.price, currentPkg.currency)}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Financial Calculations Summary */}
+              <div style={{ padding: '20px 0', borderBottom: '1.5px dashed var(--line)' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '340px', marginLeft: 'auto', fontSize: '0.88rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--muted)' }}>
+                    <span>Base Package Amount:</span>
+                    <strong style={{ color: 'var(--ink)' }}>{formatMoney(calculations.baseCost, currentPkg.currency)}</strong>
+                  </div>
+                  {calculations.excessPaxFee + calculations.addOnCost > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--muted)' }}>
+                      <span>Add-ons Total:</span>
+                      <strong style={{ color: 'var(--ink)' }}>{formatMoney(calculations.excessPaxFee + calculations.addOnCost, currentPkg.currency)}</strong>
+                    </div>
+                  )}
+                  <div style={{ borderTop: '1.5px solid var(--line)', paddingTop: '10px', marginTop: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <span style={{ fontSize: '1.02rem', fontWeight: 700, color: 'var(--ink)' }}>Grand Total Amount:</span>
+                    <span style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--terracotta)' }}>
+                      {formatMoney(calculations.totalPrice, currentPkg.currency)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Highlighted 50% Downpayment Banner */}
+                <div
+                  style={{
+                    marginTop: '18px',
+                    background: '#FFF7ED',
+                    border: '1.5px solid #FDBA74',
+                    borderRadius: '10px',
+                    padding: '14px 18px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                  }}
+                >
+                  <div>
+                    <span style={{ display: 'block', fontSize: '0.7rem', fontWeight: 800, color: '#9A3412', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Lock-In Requirement
+                    </span>
+                    <strong style={{ fontSize: '1.1rem', color: '#9A3412', display: 'block' }}>
+                      Required 50% Downpayment: {formatMoney(calculations.downpayment, currentPkg.currency)}
+                    </strong>
+                    <span style={{ fontSize: '0.76rem', color: '#B45309' }}>
+                      Remaining 50% balance ({formatMoney(calculations.totalPrice - calculations.downpayment, currentPkg.currency)}) payable on event day.
+                    </span>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '1.45rem', fontWeight: 800, color: 'var(--terracotta)' }}>
+                      {formatMoney(calculations.downpayment, currentPkg.currency)}
+                    </div>
+                    <span style={{ fontSize: '0.68rem', fontWeight: 700, background: '#EA580C', color: '#FFF', padding: '2px 8px', borderRadius: '4px' }}>
+                      DUE UPON RESERVATION
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Submitted Payment Details */}
+              <div style={{ padding: '20px 0 6px' }}>
+                <h4 style={{ margin: '0 0 12px', fontSize: '0.82rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <CreditCard size={13} style={{ color: 'var(--terracotta)' }} /> Submitted Payment Details
+                </h4>
+
+                <div style={{ background: '#F0FDF4', border: '1.5px solid #86EFAC', borderRadius: '10px', padding: '16px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: proofOfPaymentUrl ? '12px' : '0' }}>
+                    <div>
+                      <span style={{ display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', color: '#166534', fontWeight: 700, letterSpacing: '0.05em' }}>
+                        Selected Payment Method
+                      </span>
+                      <strong style={{ fontSize: '0.92rem', color: '#14532D' }}>
+                        {paymentMethod === 'bank_transfer' ? 'MariBank / Bank Transfer' : 'QR Ph / GCash'}
+                      </strong>
+                    </div>
+                    <div>
+                      <span style={{ display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', color: '#166534', fontWeight: 700, letterSpacing: '0.05em' }}>
+                        Entered Reference Number
+                      </span>
+                      <strong style={{ fontSize: '0.95rem', color: '#14532D', fontFamily: 'monospace' }}>
+                        {gcashRefNumber || 'N/A'}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {proofOfPaymentUrl && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#FFFFFF', border: '1px solid #BBF7D0', padding: '10px 14px', borderRadius: '8px' }}>
+                      <img
+                        src={proofOfPaymentUrl}
+                        alt="Payment receipt proof"
+                        style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #86EFAC', flexShrink: 0 }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <CheckCircle size={15} style={{ color: '#16A34A', flexShrink: 0 }} />
+                          <strong style={{ fontSize: '0.85rem', color: '#14532D', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {proofFileName || 'receipt_screenshot.png'}
+                          </strong>
+                        </div>
+                        <span style={{ fontSize: '0.74rem', color: '#15803D', display: 'block', marginTop: '2px' }}>
+                          Screenshot File Attached · Ready for Admin Downpayment Verification
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <p style={{ margin: '14px 0 0', fontSize: '0.74rem', color: 'var(--muted)', textAlign: 'center', lineHeight: 1.4 }}>
+                  * This digital provisional summary confirms your booking submission. A binding catering contract and official invoice will be generated upon downpayment clearance by our banquet team.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -1723,29 +2572,6 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
         <p style={{ color: 'var(--muted)', fontSize: '0.82rem', textAlign: 'center', marginTop: '14px' }}>
           Your reservation will be saved, and confirmation notifications will trigger via SMS and email.
         </p>
-      )}
-
-      {/* EMBEDDED CHECKOUT MODAL (No external PayMongo redirect, 100% Sinag Branded) */}
-      {pendingOnlineCheckout && (
-        <EmbeddedCheckoutModal
-          isOpen={!!pendingOnlineCheckout}
-          onClose={() => {
-            setPendingOnlineCheckout(null)
-            onComplete()
-          }}
-          bookingId={pendingOnlineCheckout.bookingId}
-          packageName={pendingOnlineCheckout.packageName}
-          guestCount={pendingOnlineCheckout.guestCount}
-          eventDate={pendingOnlineCheckout.eventDate}
-          amount={pendingOnlineCheckout.amount}
-          totalPrice={pendingOnlineCheckout.totalPrice}
-          customerName={pendingOnlineCheckout.customerName}
-          customerEmail={pendingOnlineCheckout.customerEmail}
-          customerPhone={pendingOnlineCheckout.customerPhone}
-          onPaymentSuccess={(_ref) => {
-            // Already synced to db & context
-          }}
-        />
       )}
     </div>
   )

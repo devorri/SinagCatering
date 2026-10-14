@@ -1,3 +1,5 @@
+import { getGalleryAssetUrl } from './galleryData'
+
 export interface PackageTier {
   pax: number
   price: number
@@ -177,6 +179,87 @@ export const EXTRA_DESSERT_RATE = 50
 export const MAIN_DISHES = ['Beef Broccoli', 'Cordon Bleu', 'Menudo', 'Caldereta', 'Mixed Veggies', 'Chicken Curry', 'Fish Fillet']
 export const PASTA_DISHES = ['Pancit', 'Spaghetti', 'Carbonara']
 
+export interface DishMetadata {
+  name: string
+  category: 'main' | 'pasta'
+  tag: string
+  description: string
+  image: string
+}
+
+export const DISH_DETAILS: Record<string, DishMetadata> = {
+  'Beef Broccoli': {
+    name: 'Beef Broccoli',
+    category: 'main',
+    tag: 'Signature Beef',
+    description: 'Tender beef strips simmered in savory garlic soy sauce with crisp broccoli.',
+    image: getGalleryAssetUrl('food/food_beef_broccoli.jpg'),
+  },
+  'Cordon Bleu': {
+    name: 'Cordon Bleu',
+    category: 'main',
+    tag: 'Poultry Favorite',
+    description: 'Crispy breaded chicken breast stuffed with savory ham and molten cheese.',
+    image: getGalleryAssetUrl('food/food_cordon_bleu.jpg'),
+  },
+  'Menudo': {
+    name: 'Menudo',
+    category: 'main',
+    tag: 'Fiesta Classic',
+    description: 'Tender pork cubes and liver simmered in spiced tomato stew with vegetables.',
+    image: getGalleryAssetUrl('food/food_menudo.jpg'),
+  },
+  'Caldereta': {
+    name: 'Caldereta',
+    category: 'main',
+    tag: 'Hearty Braised Beef',
+    description: 'Slow-braised beef in a rich liver-infused tomato gravy with bell peppers.',
+    image: getGalleryAssetUrl('food/food_caldereta.jpg'),
+  },
+  'Mixed Veggies': {
+    name: 'Mixed Veggies',
+    category: 'main',
+    tag: 'Buttered Medley',
+    description: 'Fresh seasonal vegetables sautéed in butter and garlic, paired with quail eggs.',
+    image: getGalleryAssetUrl('food/food_mixed_veggies_quail_egg.jpg'),
+  },
+  'Chicken Curry': {
+    name: 'Chicken Curry',
+    category: 'main',
+    tag: 'Aromatic Curry',
+    description: 'Tender chicken braised in fragrant yellow coconut curry with tender potatoes.',
+    image: getGalleryAssetUrl('food/food_chicken_curry.jpg'),
+  },
+  'Fish Fillet': {
+    name: 'Fish Fillet',
+    category: 'main',
+    tag: 'Crispy Seafood',
+    description: 'Golden-crusted dory fish fillets served with homemade tartar dipping sauce.',
+    image: getGalleryAssetUrl('food/food_fish_fillet.jpg'),
+  },
+  'Pancit': {
+    name: 'Pancit',
+    category: 'pasta',
+    tag: 'Traditional Feast',
+    description: 'Sautéed bihon and canton noodles tossed with shredded vegetables and meat.',
+    image: getGalleryAssetUrl('food/food_pancit.jpg'),
+  },
+  'Spaghetti': {
+    name: 'Spaghetti',
+    category: 'pasta',
+    tag: 'Sweet-Style Pinoy',
+    description: 'Party-favorite sweet-savory ground meat sauce topped with shredded cheddar.',
+    image: getGalleryAssetUrl('food/food_spag.jpg'),
+  },
+  'Carbonara': {
+    name: 'Carbonara',
+    category: 'pasta',
+    tag: 'Creamy Bacon',
+    description: 'Al dente pasta coated in luscious garlic cream with crispy smoked bacon.',
+    image: getGalleryAssetUrl('food/food_carbonara.jpg'),
+  },
+}
+
 export const findTierForGuestCount = (pkg: CateringPackage, guestCount: number) => {
   if (pkg.pricePerHead !== undefined) {
     return { pax: guestCount, price: guestCount * pkg.pricePerHead }
@@ -202,52 +285,60 @@ export interface RecommendedPackageResult {
 export function recommendPackage(
   guestCount: number,
   budget: number,
-  needsEntertainment: boolean,
+  needsEntertainment?: boolean,
   packagesList?: CateringPackage[]
 ): RecommendedPackageResult
 export function recommendPackage(
   packagesList: CateringPackage[],
   guestCount: number,
   budget: number,
-  needsEntertainment: boolean
+  needsEntertainment?: boolean
 ): RecommendedPackageResult
 export function recommendPackage(
   arg1: number | CateringPackage[],
   arg2: number,
-  arg3: number | boolean,
+  arg3?: number | boolean,
   arg4?: boolean | CateringPackage[]
 ): RecommendedPackageResult {
   let pkgList = SINAG_PACKAGES
   let guestCount = 50
   let budget = 50000
-  let needsEntertainment = false
+  let needsEntertainment: boolean | undefined = undefined
 
   if (Array.isArray(arg1)) {
     pkgList = arg1.length > 0 ? arg1 : SINAG_PACKAGES
     guestCount = arg2
-    budget = Number(arg3)
-    needsEntertainment = Boolean(arg4)
+    budget = Number(arg3 || 50000)
+    if (typeof arg4 === 'boolean') {
+      needsEntertainment = arg4
+    }
   } else {
     guestCount = arg1
     budget = arg2
-    needsEntertainment = Boolean(arg3)
+    if (typeof arg3 === 'boolean') {
+      needsEntertainment = arg3
+    }
     if (Array.isArray(arg4) && arg4.length > 0) {
       pkgList = arg4
     }
   }
 
-  // 1. Evaluate each package base configuration
+  // 1. Evaluate each package base configuration solely based on Guest Count and Budget
   const evaluatedPackages = pkgList.map((pkg) => {
     const tier = findTierForGuestCount(pkg, guestCount)
     const overage = Math.max(0, guestCount - (tier.pax + FOOD_BUFFER_PAX))
     const baseTotal = tier.price + overage * EXCESS_PAX_RATE
 
-    let fitScore = 0
-    if (needsEntertainment && pkg.entertainment.length > 0) fitScore += 50
-    if (!needsEntertainment && pkg.id === 'budget-basic') fitScore += 40
-    if (pkg.id === 'full-blast') fitScore += 30
+    // Package richness score: packages with complete entertainment & freebies offer higher all-inclusive value
+    const featureScore = (pkg.entertainment?.length || 0) * 15 + (pkg.freebies?.length || 0) * 5
 
-    return { pkg, tier, baseTotal, fitScore }
+    let fitScore = featureScore
+    if (needsEntertainment !== undefined) {
+      if (needsEntertainment && pkg.entertainment.length > 0) fitScore += 50
+      if (!needsEntertainment && pkg.id === 'budget-basic') fitScore += 40
+    }
+
+    return { pkg, tier, baseTotal, fitScore, featureScore }
   })
 
   // Filter packages that can fit within budget at base level
@@ -268,14 +359,16 @@ export function recommendPackage(
     }
   }
 
-  // Sort affordable packages by preference: highest tier fitting entertainment preferences
+  // Sort affordable packages:
+  // Automatically evaluate based on highest tier base package that cleanly fits budget,
+  // followed by package all-inclusive richness (entertainment & freebies)
   affordablePackages.sort((a, b) => {
-    if (needsEntertainment) {
+    if (needsEntertainment !== undefined) {
       const aEnt = a.pkg.entertainment.length > 0 ? 1 : 0
       const bEnt = b.pkg.entertainment.length > 0 ? 1 : 0
-      if (bEnt !== aEnt) return bEnt - aEnt
+      if (bEnt !== aEnt) return (bEnt - aEnt) * (needsEntertainment ? 1 : -1)
     }
-    return b.baseTotal - a.baseTotal || b.fitScore - a.fitScore
+    return b.baseTotal - a.baseTotal || b.featureScore - a.featureScore || b.fitScore - a.fitScore
   })
 
   const chosen = affordablePackages[0]
@@ -286,9 +379,9 @@ export function recommendPackage(
   // 2. Optimal Value Matching: utilize remaining headroom up to the user budget
   let remainingBudget = budget - currentTotal
 
-  // If we have headroom for extra main dishes (up to 2 dishes)
+  // If we have headroom for extra main dishes (up to 3 dishes, +₱100/pax)
   const extraMainCostPerDish = guestCount * EXTRA_MAIN_RATE
-  while (suggestedAddons.extraMain < 2 && remainingBudget >= extraMainCostPerDish) {
+  while (suggestedAddons.extraMain < 3 && remainingBudget >= extraMainCostPerDish) {
     suggestedAddons.extraMain += 1
     remainingBudget -= extraMainCostPerDish
     currentTotal += extraMainCostPerDish
@@ -297,32 +390,35 @@ export function recommendPackage(
     customizationNotes.push(`+${suggestedAddons.extraMain} Extra Main Dish${suggestedAddons.extraMain > 1 ? 'es' : ''} (+₱${(suggestedAddons.extraMain * extraMainCostPerDish).toLocaleString()})`)
   }
 
-  // If we have headroom for extra pasta (up to 1 dish)
+  // If we have headroom for extra pasta (up to 2 dishes, +₱80/pax)
   const extraPastaCost = guestCount * EXTRA_PASTA_RATE
-  if (suggestedAddons.extraPasta < 1 && remainingBudget >= extraPastaCost) {
+  while (suggestedAddons.extraPasta < 2 && remainingBudget >= extraPastaCost) {
     suggestedAddons.extraPasta += 1
     remainingBudget -= extraPastaCost
     currentTotal += extraPastaCost
-    customizationNotes.push(`+1 Extra Gourmet Pasta Dish (+₱${extraPastaCost.toLocaleString()})`)
+  }
+  if (suggestedAddons.extraPasta > 0) {
+    customizationNotes.push(`+${suggestedAddons.extraPasta} Extra Pasta Dish${suggestedAddons.extraPasta > 1 ? 'es' : ''} (+₱${(suggestedAddons.extraPasta * extraPastaCost).toLocaleString()})`)
   }
 
-  // If we have headroom for extra dessert (up to 1 dish)
+  // If we have headroom for extra dessert (up to 2 dishes, +₱50/pax)
   const extraDessertCost = guestCount * EXTRA_DESSERT_RATE
-  if (suggestedAddons.extraDessert < 1 && remainingBudget >= extraDessertCost) {
+  while (suggestedAddons.extraDessert < 2 && remainingBudget >= extraDessertCost) {
     suggestedAddons.extraDessert += 1
     remainingBudget -= extraDessertCost
     currentTotal += extraDessertCost
-    customizationNotes.push(`+1 Extra Specialty Dessert Station (+₱${extraDessertCost.toLocaleString()})`)
+  }
+  if (suggestedAddons.extraDessert > 0) {
+    customizationNotes.push(`+${suggestedAddons.extraDessert} Extra Dessert Course${suggestedAddons.extraDessert > 1 ? 's' : ''} (+₱${(suggestedAddons.extraDessert * extraDessertCost).toLocaleString()})`)
   }
 
-  // Include catalog add-on if applicable
+  // Include flat catalog add-ons if headroom allows (Candy Station, Emcee, Dessert Station)
   for (const addon of AI_CATALOG_ADDONS) {
-    const addonPrice = addon.price * guestCount
-    if (remainingBudget >= addonPrice) {
+    if (remainingBudget >= addon.price) {
       suggestedAddons.addonIds.push(addon.id)
-      currentTotal += addonPrice
-      customizationNotes.push(`+${addon.name} (+₱${addonPrice.toLocaleString()})`)
-      break
+      remainingBudget -= addon.price
+      currentTotal += addon.price
+      customizationNotes.push(`+${addon.name} (+₱${addon.price.toLocaleString()})`)
     }
   }
 
