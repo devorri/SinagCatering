@@ -20,6 +20,8 @@ import {
   Building,
   User,
   Utensils,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import {
@@ -82,6 +84,9 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const [selectedPastaDishes, setSelectedPastaDishes] = useState<string[]>([])
   const [extraMainDishes, setExtraMainDishes] = useState<string[]>([])
   const [extraPastaDishes, setExtraPastaDishes] = useState<string[]>([])
+  const [isIncludedDishesCollapsed, setIsIncludedDishesCollapsed] = useState(false)
+  const [isMainDishesCollapsed, setIsMainDishesCollapsed] = useState(false)
+  const [isPastaDishesCollapsed, setIsPastaDishesCollapsed] = useState(false)
 
   // Step 3 — Calendar (14-Day Advance Booking Rule: initial focus starts on valid date)
   const getMinBookingDate = () => {
@@ -893,317 +898,499 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 </div>
               </div>
 
-              {/* Checklist Item 4: Interactive Menu Selection Grid (Main Dishes & Pasta) */}
-              <div className="dish-swap-box" style={{ background: '#FFFDF9', border: '1.5px solid var(--gold)', borderRadius: 'var(--radius-md)', padding: '24px', marginBottom: '24px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
-                  <div>
-                    <h4 className="dish-swap-title" style={{ margin: 0, fontSize: '1.2rem', color: 'var(--ink)' }}>
-                      Select Your 4 Included Dishes: 3 Main Courses + 1 Pasta Dish
-                    </h4>
-                    <p style={{ fontSize: '0.84rem', color: 'var(--muted)', margin: '5px 0 0' }}>
+              {/* Checklist Item 4: Interactive Menu Selection Grid (Main Dishes & Pasta) — Collapsible / Foldable */}
+              <div
+                className="dish-swap-box"
+                style={{
+                  background: '#FFFDF9',
+                  border: '1.5px solid var(--gold)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: isIncludedDishesCollapsed ? '18px 24px' : '24px',
+                  marginBottom: '24px',
+                  transition: 'all 0.25s ease',
+                  boxShadow: isIncludedDishesCollapsed ? '0 1px 4px rgba(0,0,0,0.04)' : '0 4px 16px rgba(184,137,66,0.08)',
+                }}
+              >
+                {/* Collapsible Header */}
+                <div
+                  onClick={() => setIsIncludedDishesCollapsed(!isIncludedDishesCollapsed)}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: isIncludedDishesCollapsed ? 0 : '20px',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                  }}
+                  title={isIncludedDishesCollapsed ? 'Click to expand dishes selection' : 'Click to fold dishes selection'}
+                >
+                  <div style={{ flex: 1, minWidth: '260px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Utensils size={20} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />
+                      <h4 className="dish-swap-title" style={{ margin: 0, fontSize: '1.2rem', color: 'var(--ink)' }}>
+                        Select Your 4 Included Dishes: 3 Main Courses + 1 Pasta Dish
+                      </h4>
+                    </div>
+                    <p style={{ fontSize: '0.84rem', color: 'var(--muted)', margin: '5px 0 0', paddingLeft: '28px' }}>
                       Tailor your banquet buffet spread. Choose exactly 3 signature main courses and 1 pasta dish included with your package.
                     </p>
                   </div>
-                  <div style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '6px 14px',
-                    borderRadius: '20px',
-                    fontSize: '0.82rem',
-                    fontWeight: 700,
-                    background: (selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? '#ECFDF5' : '#FEF3C7',
-                    color: (selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? '#059669' : '#D97706',
-                    border: `1.5px solid ${(selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? '#A7F3D0' : '#FDE68A'}`,
-                  }}>
-                    {(selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? (
-                      <>
-                        <Check size={14} /> 4 / 4 Dishes Complete
-                      </>
-                    ) : (
-                      <>
-                        {selectedDishCount} / 4 Included Dishes Selected
-                      </>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    {/* Counter Badge */}
+                    <div style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '6px 14px',
+                      borderRadius: '20px',
+                      fontSize: '0.82rem',
+                      fontWeight: 700,
+                      background: (selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? '#ECFDF5' : '#FEF3C7',
+                      color: (selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? '#059669' : '#D97706',
+                      border: `1.5px solid ${(selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? '#A7F3D0' : '#FDE68A'}`,
+                    }}>
+                      {(selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? (
+                        <>
+                          <Check size={14} /> 4 / 4 Dishes Complete
+                        </>
+                      ) : (
+                        <>
+                          {selectedDishCount} / 4 Included Dishes Selected
+                        </>
+                      )}
+                    </div>
+
+                    {/* Fold / Unfold Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setIsIncludedDishesCollapsed(!isIncludedDishesCollapsed)
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 14px',
+                        borderRadius: '8px',
+                        fontSize: '0.82rem',
+                        fontWeight: 700,
+                        background: isIncludedDishesCollapsed ? 'var(--obsidian)' : '#FFFFFF',
+                        color: isIncludedDishesCollapsed ? '#FFFFFF' : 'var(--ink)',
+                        border: '1.5px solid var(--line-dark)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                      }}
+                    >
+                      {isIncludedDishesCollapsed ? (
+                        <>
+                          <ChevronDown size={16} /> Unfold Dishes Menu
+                        </>
+                      ) : (
+                        <>
+                          <ChevronUp size={16} /> Fold / Hide Menu
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Collapsed State Summary Card */}
+                {isIncludedDishesCollapsed && (
+                  <div
+                    onClick={() => setIsIncludedDishesCollapsed(false)}
+                    style={{
+                      marginTop: '14px',
+                      padding: '14px 18px',
+                      background: '#FFFFFF',
+                      borderRadius: '10px',
+                      border: '1px dashed var(--gold)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      flexWrap: 'wrap',
+                      gap: '12px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                        Selected Buffet Inclusions Preview:
+                      </span>
+                      <div style={{ fontSize: '0.88rem', color: 'var(--ink)' }}>
+                        {selectedMainDishes.length > 0 || selectedPastaDishes.length > 0 ? (
+                          <>
+                            <strong style={{ color: '#991B1B' }}>3 Mains:</strong>{' '}
+                            {selectedMainDishes.length > 0 ? selectedMainDishes.join(', ') : <span style={{ color: '#991B1B', fontStyle: 'italic' }}>Pending selection ({3 - selectedMainDishes.length} remaining)</span>}
+                            &nbsp;&nbsp;•&nbsp;&nbsp;
+                            <strong style={{ color: '#1E40AF' }}>1 Pasta:</strong>{' '}
+                            {selectedPastaDishes.length > 0 ? selectedPastaDishes.join(', ') : <span style={{ color: '#1E40AF', fontStyle: 'italic' }}>Pending selection</span>}
+                          </>
+                        ) : (
+                          <span style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
+                            No dishes selected yet. Click to unfold and pick your 3 main courses and 1 pasta dish.
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--gold-dark)', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      Click to expand & edit <ChevronDown size={14} />
+                    </span>
+                  </div>
+                )}
+
+                {/* Expanded Full Menu Cards */}
+                {!isIncludedDishesCollapsed && (
+                  <>
+                    {/* Main Dishes (Red Box Area) */}
+                    <div
+                      style={{
+                        marginBottom: '22px',
+                        border: '1.5px solid #FCA5A5',
+                        background: '#FFF8F8',
+                        borderRadius: '12px',
+                        padding: '18px 20px',
+                      }}
+                    >
+                      <div
+                        onClick={() => setIsMainDishesCollapsed(!isMainDishesCollapsed)}
+                        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isMainDishesCollapsed ? 0 : '14px', flexWrap: 'wrap', gap: '8px', cursor: 'pointer' }}
+                      >
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <h5 style={{ fontSize: '0.88rem', fontWeight: 700, color: '#991B1B', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>
+                              Main Dishes (Choose 3)
+                            </h5>
+                            <span style={{ fontSize: '0.72rem', color: '#991B1B', background: '#FEE2E2', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer' }}>
+                              {isMainDishesCollapsed ? '▸ Expand Mains' : '▾ Fold'}
+                            </span>
+                          </div>
+                          <span style={{ fontSize: '0.78rem', color: '#7F1D1D' }}>
+                            Select 3 savory viands for your guest buffet table
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            padding: '4px 12px',
+                            borderRadius: '16px',
+                            fontSize: '0.8rem',
+                            fontWeight: 700,
+                            background: selectedMainDishes.length === 3 ? '#ECFDF5' : '#FEE2E2',
+                            color: selectedMainDishes.length === 3 ? '#065F46' : '#991B1B',
+                            border: `1px solid ${selectedMainDishes.length === 3 ? '#A7F3D0' : '#FCA5A5'}`,
+                          }}
+                        >
+                          [ {selectedMainDishes.length} / 3 Selected ]
+                        </div>
+                      </div>
+
+                      {!isMainDishesCollapsed && (
+                        <div className="dish-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
+                          {MAIN_DISHES.map((dish) => {
+                            const isSelected = selectedMainDishes.includes(dish)
+                            const isDisabled = !isSelected && selectedMainDishes.length >= 3
+                            const details = DISH_DETAILS[dish]
+                            return (
+                              <label
+                                key={dish}
+                                style={{
+                                  cursor: isDisabled ? 'not-allowed' : 'pointer',
+                                  opacity: isDisabled ? 0.45 : 1,
+                                  background: isSelected ? '#FFFBEB' : '#FFFFFF',
+                                  borderColor: isSelected ? 'var(--gold)' : '#E5E7EB',
+                                  borderWidth: isSelected ? '2px' : '1px',
+                                  borderStyle: 'solid',
+                                  borderRadius: '10px',
+                                  overflow: 'hidden',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  boxShadow: isSelected ? '0 4px 12px rgba(217, 119, 6, 0.15)' : '0 1px 3px rgba(0,0,0,0.05)',
+                                  transition: 'all 0.2s ease',
+                                  position: 'relative',
+                                  userSelect: 'none',
+                                }}
+                              >
+                                {/* Visual Dish Media / Thumbnail */}
+                                <div style={{ width: '100%', height: '115px', position: 'relative', overflow: 'hidden', background: '#F3F4F6' }}>
+                                  <img
+                                    src={details?.image || ''}
+                                    alt={dish}
+                                    style={{
+                                      width: '100%',
+                                      height: '100%',
+                                      objectFit: 'cover',
+                                      transition: 'transform 0.3s ease',
+                                    }}
+                                  />
+                                  {isSelected && (
+                                    <div
+                                      style={{
+                                        position: 'absolute',
+                                        top: '8px',
+                                        right: '8px',
+                                        background: '#059669',
+                                        color: '#FFFFFF',
+                                        borderRadius: '12px',
+                                        padding: '2px 8px',
+                                        fontSize: '0.72rem',
+                                        fontWeight: 700,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                                      }}
+                                    >
+                                      <Check size={12} /> Selected
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', flex: 1, justifyContent: 'space-between', gap: '8px' }}>
+                                  <div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px' }}>
+                                      <span style={{ fontWeight: 700, fontSize: '0.92rem', color: 'var(--ink)', lineHeight: 1.25 }}>
+                                        {dish}
+                                      </span>
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        disabled={isDisabled}
+                                        onChange={() => toggleDish(dish, 'main')}
+                                        style={{
+                                          marginTop: '2px',
+                                          accentColor: 'var(--gold)',
+                                          width: '16px',
+                                          height: '16px',
+                                          cursor: isDisabled ? 'not-allowed' : 'pointer',
+                                        }}
+                                      />
+                                    </div>
+                                    {details?.tag && (
+                                      <span style={{ fontSize: '0.74rem', color: '#991B1B', fontWeight: 600, display: 'block', marginTop: '2px' }}>
+                                        {details.tag}
+                                      </span>
+                                    )}
+                                    {details?.description && (
+                                      <p style={{ fontSize: '0.76rem', color: 'var(--muted)', margin: '4px 0 0', lineHeight: 1.3 }}>
+                                        {details.description}
+                                      </p>
+                                    )}
+                                  </div>
+
+                                  <div style={{ paddingTop: '6px', borderTop: '1px dashed #F3F4F6', fontSize: '0.75rem', fontWeight: 600, color: isSelected ? '#059669' : isDisabled ? 'var(--muted)' : 'var(--terracotta)' }}>
+                                    {isSelected ? '✓ In Buffet Spread' : isDisabled ? 'Max 3 mains reached' : '+ Select main dish'}
+                                  </div>
+                                </div>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Pasta Dishes (Blue Box Area) */}
+                    <div
+                      style={{
+                        border: '1.5px solid #93C5FD',
+                        background: '#F0F7FF',
+                        borderRadius: '12px',
+                        padding: '18px 20px',
+                      }}
+                    >
+                      <div
+                        onClick={() => setIsPastaDishesCollapsed(!isPastaDishesCollapsed)}
+                        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isPastaDishesCollapsed ? 0 : '14px', flexWrap: 'wrap', gap: '8px', cursor: 'pointer' }}
+                      >
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <h5 style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E40AF', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>
+                              Pasta Dishes (Choose 1)
+                            </h5>
+                            <span style={{ fontSize: '0.72rem', color: '#1E40AF', background: '#DBEAFE', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer' }}>
+                              {isPastaDishesCollapsed ? '▸ Expand Pasta' : '▾ Fold'}
+                            </span>
+                          </div>
+                          <span style={{ fontSize: '0.78rem', color: '#1E3A8A' }}>
+                            Select 1 savory pasta specialty to complement your buffet
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            padding: '4px 12px',
+                            borderRadius: '16px',
+                            fontSize: '0.8rem',
+                            fontWeight: 700,
+                            background: selectedPastaDishes.length === 1 ? '#ECFDF5' : '#DBEAFE',
+                            color: selectedPastaDishes.length === 1 ? '#065F46' : '#1E40AF',
+                            border: `1px solid ${selectedPastaDishes.length === 1 ? '#A7F3D0' : '#93C5FD'}`,
+                          }}
+                        >
+                          [ {selectedPastaDishes.length} / 1 Selected ]
+                        </div>
+                      </div>
+
+                      {!isPastaDishesCollapsed && (
+                        <div className="dish-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
+                          {PASTA_DISHES.map((dish) => {
+                            const isSelected = selectedPastaDishes.includes(dish)
+                            const isDisabled = !isSelected && selectedPastaDishes.length >= 1
+                            const details = DISH_DETAILS[dish]
+                            return (
+                              <label
+                                key={dish}
+                                style={{
+                                  cursor: isDisabled ? 'not-allowed' : 'pointer',
+                                  opacity: isDisabled ? 0.45 : 1,
+                                  background: isSelected ? '#F0FDF4' : '#FFFFFF',
+                                  borderColor: isSelected ? '#10B981' : '#E5E7EB',
+                                  borderWidth: isSelected ? '2px' : '1px',
+                                  borderStyle: 'solid',
+                                  borderRadius: '10px',
+                                  overflow: 'hidden',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  boxShadow: isSelected ? '0 4px 12px rgba(16, 185, 129, 0.15)' : '0 1px 3px rgba(0,0,0,0.05)',
+                                  transition: 'all 0.2s ease',
+                                  position: 'relative',
+                                  userSelect: 'none',
+                                }}
+                              >
+                                {/* Visual Dish Media / Thumbnail */}
+                                <div style={{ width: '100%', height: '115px', position: 'relative', overflow: 'hidden', background: '#F3F4F6' }}>
+                                  <img
+                                    src={details?.image || ''}
+                                    alt={dish}
+                                    style={{
+                                      width: '100%',
+                                      height: '100%',
+                                      objectFit: 'cover',
+                                      transition: 'transform 0.3s ease',
+                                    }}
+                                  />
+                                  {isSelected && (
+                                    <div
+                                      style={{
+                                        position: 'absolute',
+                                        top: '8px',
+                                        right: '8px',
+                                        background: '#059669',
+                                        color: '#FFFFFF',
+                                        borderRadius: '12px',
+                                        padding: '2px 8px',
+                                        fontSize: '0.72rem',
+                                        fontWeight: 700,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                                      }}
+                                    >
+                                      <Check size={12} /> Selected
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', flex: 1, justifyContent: 'space-between', gap: '8px' }}>
+                                  <div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px' }}>
+                                      <span style={{ fontWeight: 700, fontSize: '0.92rem', color: 'var(--ink)', lineHeight: 1.25 }}>
+                                        {dish}
+                                      </span>
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        disabled={isDisabled}
+                                        onChange={() => toggleDish(dish, 'pasta')}
+                                        style={{
+                                          marginTop: '2px',
+                                          accentColor: '#10B981',
+                                          width: '16px',
+                                          height: '16px',
+                                          cursor: isDisabled ? 'not-allowed' : 'pointer',
+                                        }}
+                                      />
+                                    </div>
+                                    {details?.tag && (
+                                      <span style={{ fontSize: '0.74rem', color: '#1E40AF', fontWeight: 600, display: 'block', marginTop: '2px' }}>
+                                        {details.tag}
+                                      </span>
+                                    )}
+                                    {details?.description && (
+                                      <p style={{ fontSize: '0.76rem', color: 'var(--muted)', margin: '4px 0 0', lineHeight: 1.3 }}>
+                                        {details.description}
+                                      </p>
+                                    )}
+                                  </div>
+
+                                  <div style={{ paddingTop: '6px', borderTop: '1px dashed #F3F4F6', fontSize: '0.75rem', fontWeight: 600, color: isSelected ? '#059669' : isDisabled ? 'var(--muted)' : '#1E40AF' }}>
+                                    {isSelected ? '✓ In Buffet Spread' : isDisabled ? 'Max 1 pasta reached' : '+ Select pasta dish'}
+                                  </div>
+                                </div>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Completion Alert + Fold Action */}
+                    {selectedMainDishes.length === 3 && selectedPastaDishes.length === 1 && (
+                      <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', padding: '14px 18px', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginTop: '18px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <Check size={18} style={{ color: '#059669', flexShrink: 0 }} />
+                          <span>All 4 included dishes chosen (3 Main Courses + 1 Pasta Dish). You can add extra courses or flat add-ons below if needed!</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsIncludedDishesCollapsed(true)}
+                          style={{
+                            background: '#065F46',
+                            color: '#FFFFFF',
+                            border: 'none',
+                            padding: '6px 14px',
+                            borderRadius: '6px',
+                            fontSize: '0.78rem',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                          }}
+                        >
+                          <ChevronUp size={14} /> Fold Dishes Menu
+                        </button>
+                      </div>
                     )}
-                  </div>
-                </div>
 
-                {/* Main Dishes (Red Box Area) */}
-                <div
-                  style={{
-                    marginBottom: '22px',
-                    border: '1.5px solid #FCA5A5',
-                    background: '#FFF8F8',
-                    borderRadius: '12px',
-                    padding: '18px 20px',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
-                    <div>
-                      <h5 style={{ fontSize: '0.88rem', fontWeight: 700, color: '#991B1B', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>
-                        Main Dishes (Choose 3)
-                      </h5>
-                      <span style={{ fontSize: '0.78rem', color: '#7F1D1D' }}>
-                        Select 3 savory viands for your guest buffet table
-                      </span>
+                    {/* Bottom Fold Action */}
+                    <div style={{ display: 'flex', justifyContent: 'center', marginTop: '16px' }}>
+                      <button
+                        type="button"
+                        onClick={() => setIsIncludedDishesCollapsed(true)}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '7px 18px',
+                          borderRadius: '20px',
+                          background: '#FFFFFF',
+                          border: '1px solid var(--line-dark)',
+                          color: 'var(--ink)',
+                          fontSize: '0.8rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                          transition: 'all 0.2s ease',
+                        }}
+                      >
+                        <ChevronUp size={15} /> Fold Dishes Menu (Save Screen Space)
+                      </button>
                     </div>
-                    <div
-                      style={{
-                        padding: '4px 12px',
-                        borderRadius: '16px',
-                        fontSize: '0.8rem',
-                        fontWeight: 700,
-                        background: selectedMainDishes.length === 3 ? '#ECFDF5' : '#FEE2E2',
-                        color: selectedMainDishes.length === 3 ? '#065F46' : '#991B1B',
-                        border: `1px solid ${selectedMainDishes.length === 3 ? '#A7F3D0' : '#FCA5A5'}`,
-                      }}
-                    >
-                      [ {selectedMainDishes.length} / 3 Selected ]
-                    </div>
-                  </div>
-
-                  <div className="dish-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
-                    {MAIN_DISHES.map((dish) => {
-                      const isSelected = selectedMainDishes.includes(dish)
-                      const isDisabled = !isSelected && selectedMainDishes.length >= 3
-                      const details = DISH_DETAILS[dish]
-                      return (
-                        <label
-                          key={dish}
-                          style={{
-                            cursor: isDisabled ? 'not-allowed' : 'pointer',
-                            opacity: isDisabled ? 0.45 : 1,
-                            background: isSelected ? '#FFFBEB' : '#FFFFFF',
-                            borderColor: isSelected ? 'var(--gold)' : '#E5E7EB',
-                            borderWidth: isSelected ? '2px' : '1px',
-                            borderStyle: 'solid',
-                            borderRadius: '10px',
-                            overflow: 'hidden',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            boxShadow: isSelected ? '0 4px 12px rgba(217, 119, 6, 0.15)' : '0 1px 3px rgba(0,0,0,0.05)',
-                            transition: 'all 0.2s ease',
-                            position: 'relative',
-                            userSelect: 'none',
-                          }}
-                        >
-                          {/* Visual Dish Media / Thumbnail */}
-                          <div style={{ width: '100%', height: '115px', position: 'relative', overflow: 'hidden', background: '#F3F4F6' }}>
-                            <img
-                              src={details?.image || ''}
-                              alt={dish}
-                              style={{
-                                width: '100%',
-                                height: '100%',
-                                objectFit: 'cover',
-                                transition: 'transform 0.3s ease',
-                              }}
-                            />
-                            {isSelected && (
-                              <div
-                                style={{
-                                  position: 'absolute',
-                                  top: '8px',
-                                  right: '8px',
-                                  background: '#059669',
-                                  color: '#FFFFFF',
-                                  borderRadius: '12px',
-                                  padding: '2px 8px',
-                                  fontSize: '0.72rem',
-                                  fontWeight: 700,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '4px',
-                                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                                }}
-                              >
-                                <Check size={12} /> Selected
-                              </div>
-                            )}
-                          </div>
-
-                          <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', flex: 1, justifyContent: 'space-between', gap: '8px' }}>
-                            <div>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px' }}>
-                                <span style={{ fontWeight: 700, fontSize: '0.92rem', color: 'var(--ink)', lineHeight: 1.25 }}>
-                                  {dish}
-                                </span>
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  disabled={isDisabled}
-                                  onChange={() => toggleDish(dish, 'main')}
-                                  style={{
-                                    marginTop: '2px',
-                                    accentColor: 'var(--gold)',
-                                    width: '16px',
-                                    height: '16px',
-                                    cursor: isDisabled ? 'not-allowed' : 'pointer',
-                                  }}
-                                />
-                              </div>
-                              {details?.tag && (
-                                <span style={{ fontSize: '0.74rem', color: '#991B1B', fontWeight: 600, display: 'block', marginTop: '2px' }}>
-                                  {details.tag}
-                                </span>
-                              )}
-                              {details?.description && (
-                                <p style={{ fontSize: '0.76rem', color: 'var(--muted)', margin: '4px 0 0', lineHeight: 1.3 }}>
-                                  {details.description}
-                                </p>
-                              )}
-                            </div>
-
-                            <div style={{ paddingTop: '6px', borderTop: '1px dashed #F3F4F6', fontSize: '0.75rem', fontWeight: 600, color: isSelected ? '#059669' : isDisabled ? 'var(--muted)' : 'var(--terracotta)' }}>
-                              {isSelected ? '✓ In Buffet Spread' : isDisabled ? 'Max 3 mains reached' : '+ Select main dish'}
-                            </div>
-                          </div>
-                        </label>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                {/* Pasta Dishes (Blue Box Area) */}
-                <div
-                  style={{
-                    border: '1.5px solid #93C5FD',
-                    background: '#F0F7FF',
-                    borderRadius: '12px',
-                    padding: '18px 20px',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
-                    <div>
-                      <h5 style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E40AF', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>
-                        Pasta Dishes (Choose 1)
-                      </h5>
-                      <span style={{ fontSize: '0.78rem', color: '#1E3A8A' }}>
-                        Select 1 savory pasta specialty to complement your buffet
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        padding: '4px 12px',
-                        borderRadius: '16px',
-                        fontSize: '0.8rem',
-                        fontWeight: 700,
-                        background: selectedPastaDishes.length === 1 ? '#ECFDF5' : '#DBEAFE',
-                        color: selectedPastaDishes.length === 1 ? '#065F46' : '#1E40AF',
-                        border: `1px solid ${selectedPastaDishes.length === 1 ? '#A7F3D0' : '#93C5FD'}`,
-                      }}
-                    >
-                      [ {selectedPastaDishes.length} / 1 Selected ]
-                    </div>
-                  </div>
-
-                  <div className="dish-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
-                    {PASTA_DISHES.map((dish) => {
-                      const isSelected = selectedPastaDishes.includes(dish)
-                      const isDisabled = !isSelected && selectedPastaDishes.length >= 1
-                      const details = DISH_DETAILS[dish]
-                      return (
-                        <label
-                          key={dish}
-                          style={{
-                            cursor: isDisabled ? 'not-allowed' : 'pointer',
-                            opacity: isDisabled ? 0.45 : 1,
-                            background: isSelected ? '#F0FDF4' : '#FFFFFF',
-                            borderColor: isSelected ? '#10B981' : '#E5E7EB',
-                            borderWidth: isSelected ? '2px' : '1px',
-                            borderStyle: 'solid',
-                            borderRadius: '10px',
-                            overflow: 'hidden',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            boxShadow: isSelected ? '0 4px 12px rgba(16, 185, 129, 0.15)' : '0 1px 3px rgba(0,0,0,0.05)',
-                            transition: 'all 0.2s ease',
-                            position: 'relative',
-                            userSelect: 'none',
-                          }}
-                        >
-                          {/* Visual Dish Media / Thumbnail */}
-                          <div style={{ width: '100%', height: '115px', position: 'relative', overflow: 'hidden', background: '#F3F4F6' }}>
-                            <img
-                              src={details?.image || ''}
-                              alt={dish}
-                              style={{
-                                width: '100%',
-                                height: '100%',
-                                objectFit: 'cover',
-                                transition: 'transform 0.3s ease',
-                              }}
-                            />
-                            {isSelected && (
-                              <div
-                                style={{
-                                  position: 'absolute',
-                                  top: '8px',
-                                  right: '8px',
-                                  background: '#059669',
-                                  color: '#FFFFFF',
-                                  borderRadius: '12px',
-                                  padding: '2px 8px',
-                                  fontSize: '0.72rem',
-                                  fontWeight: 700,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '4px',
-                                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                                }}
-                              >
-                                <Check size={12} /> Selected
-                              </div>
-                            )}
-                          </div>
-
-                          <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', flex: 1, justifyContent: 'space-between', gap: '8px' }}>
-                            <div>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px' }}>
-                                <span style={{ fontWeight: 700, fontSize: '0.92rem', color: 'var(--ink)', lineHeight: 1.25 }}>
-                                  {dish}
-                                </span>
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  disabled={isDisabled}
-                                  onChange={() => toggleDish(dish, 'pasta')}
-                                  style={{
-                                    marginTop: '2px',
-                                    accentColor: '#10B981',
-                                    width: '16px',
-                                    height: '16px',
-                                    cursor: isDisabled ? 'not-allowed' : 'pointer',
-                                  }}
-                                />
-                              </div>
-                              {details?.tag && (
-                                <span style={{ fontSize: '0.74rem', color: '#1E40AF', fontWeight: 600, display: 'block', marginTop: '2px' }}>
-                                  {details.tag}
-                                </span>
-                              )}
-                              {details?.description && (
-                                <p style={{ fontSize: '0.76rem', color: 'var(--muted)', margin: '4px 0 0', lineHeight: 1.3 }}>
-                                  {details.description}
-                                </p>
-                              )}
-                            </div>
-
-                            <div style={{ paddingTop: '6px', borderTop: '1px dashed #F3F4F6', fontSize: '0.75rem', fontWeight: 600, color: isSelected ? '#059669' : isDisabled ? 'var(--muted)' : '#1E40AF' }}>
-                              {isSelected ? '✓ In Buffet Spread' : isDisabled ? 'Max 1 pasta reached' : '+ Select pasta dish'}
-                            </div>
-                          </div>
-                        </label>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                {selectedMainDishes.length === 3 && selectedPastaDishes.length === 1 && (
-                  <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', padding: '12px 16px', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '10px', marginTop: '18px' }}>
-                    <Check size={18} style={{ color: '#059669', flexShrink: 0 }} />
-                    <span>All 4 included dishes chosen (3 Main Courses + 1 Pasta Dish). You can add extra courses or flat add-ons below if needed!</span>
-                  </div>
+                  </>
                 )}
               </div>
 
