@@ -367,11 +367,34 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       if (guestCount < 1) {
         return { valid: false, error: 'Please specify a valid guest count.' }
       }
+      if (selectedMainDishes.length !== 3) {
+        return {
+          valid: false,
+          error: `Please select 3 main dishes (${selectedMainDishes.length}/3 selected).`,
+        }
+      }
+      if (selectedPastaDishes.length !== 1) {
+        return {
+          valid: false,
+          error: `Please select 1 pasta dish (${selectedPastaDishes.length}/1 selected).`,
+        }
+      }
       return { valid: true }
     }
     if (stepIndex === 2) {
       if (!eventDate) {
         return { valid: false, error: 'Please select an available event date on the calendar.' }
+      }
+      if (blockedDates.includes(eventDate)) {
+        return { valid: false, error: 'Selected date is currently blocked. Please choose another date.' }
+      }
+      const minValidDate = getMinBookingDate()
+      if (new Date(`${eventDate}T00:00:00`) < minValidDate) {
+        return { valid: false, error: 'Selected date requires at least 14 days advance booking.' }
+      }
+      const isBooked = bookings.some((b) => b.eventDate === eventDate && b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit')
+      if (isBooked) {
+        return { valid: false, error: 'Selected date is already reserved. Please choose another date.' }
       }
       return { valid: true }
     }
@@ -402,20 +425,20 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   // Check if a step indicator in the header bar is clickable
   const isStepClickable = (idx: number) => {
     if (idx === currentStep) return false
-    // Backward steps are always clickable
+    // 1. Backward steps are always freely accessible
     if (idx < currentStep) return true
-    // Immediate next step is clickable if current step inputs are valid
-    if (idx === currentStep + 1) {
-      return validateStep(currentStep).valid
+
+    // 2. Forward steps: ALL preceding steps up to idx - 1 must be strictly valid
+    for (let s = 0; s < idx; s++) {
+      if (!validateStep(s).valid) return false
     }
-    // Future visited steps: only reachable if all prior steps currently validate
-    if (idx <= maxVisitedStep) {
-      for (let s = 0; s < idx; s++) {
-        if (!validateStep(s).valid) return false
-      }
-      return true
+
+    // 3. Block skipping ahead past unvisited steps
+    if (idx > currentStep + 1 && idx > maxVisitedStep) {
+      return false
     }
-    return false
+
+    return true
   }
 
   // Click handler for interactive step indicator buttons with validation guardrails
@@ -431,26 +454,18 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     }
 
     // Forward navigation guardrails:
-    // 1. Prevent jumping forward if the current step's required form inputs are invalid
-    const currentValidation = validateStep(currentStep)
-    if (!currentValidation.valid) {
-      setErrorMsg(currentValidation.error || 'Please complete the required fields on this step before proceeding.')
-      return
-    }
-
-    // 2. Validate all intermediate steps between current step and target step
-    for (let s = currentStep; s < targetIndex; s++) {
-      const stepVal = validateStep(s)
-      if (!stepVal.valid) {
-        setErrorMsg(stepVal.error || `Please complete Step ${s + 1} (${STEP_LABELS[s]}) first.`)
-        setCurrentStep(s)
-        window.scrollTo({ top: 0, behavior: 'smooth' })
-        return
+    if (!isStepClickable(targetIndex)) {
+      for (let s = 0; s < targetIndex; s++) {
+        const val = validateStep(s)
+        if (!val.valid) {
+          setErrorMsg(val.error || `Please complete Step ${s + 1} (${STEP_LABELS[s]}) first.`)
+          if (s !== currentStep) {
+            setCurrentStep(s)
+            window.scrollTo({ top: 0, behavior: 'smooth' })
+          }
+          return
+        }
       }
-    }
-
-    // 3. Prevent jumping past uncompleted steps far ahead
-    if (targetIndex > maxVisitedStep && targetIndex > currentStep + 1) {
       setErrorMsg(`Please complete each step in order before jumping to Step ${targetIndex + 1}.`)
       return
     }
@@ -586,6 +601,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
               type="button"
               className={`wizard-step-indicator ${isCompleted ? 'completed' : ''} ${isActive ? 'active' : ''} ${isReachable ? 'clickable' : ''} ${isLocked ? 'locked' : ''}`}
               onClick={() => handleStepClick(idx)}
+              disabled={isLocked}
               aria-current={isActive ? 'step' : undefined}
               aria-disabled={isLocked}
               title={
@@ -860,8 +876,16 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   <h3 className="pkg-title">{currentPkg.name}</h3>
                   <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{currentPkg.description}</span>
                 </div>
-                <div className="pkg-rate">
-                  {formatMoney(calculations.baseCost, currentPkg.currency)} <span>/{calculations.tier.pax} pax</span>
+                <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
+                  <div className="pkg-rate">
+                    {formatMoney(calculations.totalPrice, currentPkg.currency)}{' '}
+                    <span>/{currentPkg.pricePerHead !== undefined ? `${guestCount} pax` : `${calculations.tier.pax} pax`}</span>
+                  </div>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '2px', fontWeight: 500 }}>
+                    {calculations.totalPrice > calculations.baseCost
+                      ? '(Includes Base + Selected Add-ons)'
+                      : '(Base Package Rate)'}
+                  </span>
                 </div>
               </div>
 
@@ -2727,14 +2751,22 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
           </button>
 
           {currentStep < STEP_LABELS.length - 1 ? (
-            <button
-              type="button"
-              className="btn-hero-primary wizard-next-btn"
-              onClick={goNext}
-              disabled={!canGoNext() || isSubmitting}
-            >
-              Next Step <ArrowRight size={16} />
-            </button>
+            <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+              <button
+                type="button"
+                className="btn-hero-primary wizard-next-btn"
+                onClick={goNext}
+                disabled={!canGoNext() || isSubmitting}
+                title={!canGoNext() ? validateStep(currentStep).error : 'Proceed to next step'}
+              >
+                Next Step <ArrowRight size={16} />
+              </button>
+              {!canGoNext() && validateStep(currentStep).error && (
+                <span style={{ fontSize: '0.74rem', color: '#B45309', fontWeight: 600 }}>
+                  ⚠️ {validateStep(currentStep).error}
+                </span>
+              )}
+            </div>
           ) : (
             <button
               type="button"

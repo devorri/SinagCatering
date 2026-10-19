@@ -816,6 +816,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
   return (
     <div className="admin-workspace">
+      {/* Off-canvas mobile drawer backdrop */}
+      {isDrawerOpen && (
+        <div
+          className="admin-sidebar-backdrop"
+          onClick={() => setIsDrawerOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
       {/* Dark Sidebar - Dedicated Executive Navigation */}
       <aside className={`admin-sidebar ${isDrawerOpen ? 'open' : ''}`}>
         <div>
@@ -823,10 +832,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             <div className="admin-sidebar-logo-box">
               <img src="/sinag_logo.png" alt="Sinag Logo" className="admin-sidebar-logo" />
             </div>
-            <div>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <h2 className="admin-sidebar-title">Sinag Catering</h2>
               <span className="admin-sidebar-tag">Operations Suite</span>
             </div>
+            <button
+              type="button"
+              className="admin-sidebar-close-btn"
+              onClick={() => setIsDrawerOpen(false)}
+              aria-label="Close sidebar menu"
+            >
+              <X size={18} />
+            </button>
           </div>
 
           <div className="admin-sidebar-menu">
@@ -1820,7 +1837,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   </button>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+                <div className="modal-two-col-grid" style={{ display: 'grid', gap: '24px' }}>
                   <div>
                     <h4 style={{ fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '8px' }}>
                       Client Contact
@@ -2135,7 +2152,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
               </div>
 
               {/* Server-side Semaphore dispatch and explicit test send */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 0.9fr', gap: '24px', marginBottom: '32px' }}>
+              <div className="admin-two-col-grid" style={{ display: 'grid', gap: '24px', marginBottom: '32px' }}>
                 {/* Server-side Semaphore configuration */}
                 <div style={{ background: 'var(--paper-warm)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--line)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
@@ -2290,7 +2307,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
                 {/* Event & Client Details */}
                 <div style={{ background: 'var(--paper-warm)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--line)', marginBottom: '18px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '0.88rem', marginBottom: '10px' }}>
+                  <div className="modal-two-col-grid" style={{ display: 'grid', gap: '10px', fontSize: '0.88rem', marginBottom: '10px' }}>
                     <div>
                       <span style={{ color: 'var(--muted)', fontSize: '0.75rem', textTransform: 'uppercase', display: 'block' }}>Client Name</span>
                       <strong>{downpaymentBooking.customerName}</strong>
@@ -2550,7 +2567,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                       />
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div className="modal-two-col-grid" style={{ display: 'grid', gap: '16px' }}>
                       <div className="form-group">
                         <label style={{ fontSize: '0.82rem', fontWeight: 700, color: '#374151' }}>Role Assignment</label>
                         <select

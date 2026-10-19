@@ -60,6 +60,17 @@ function AppContent() {
   }
 
   useEffect(() => {
+    if (isMobileMenuOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [isMobileMenuOpen])
+
+  useEffect(() => {
     const handleHash = () => {
       const params = new URLSearchParams(window.location.search)
       if (params.get('view') === 'admin' || window.location.hash === '#admin') {
@@ -272,11 +283,8 @@ function AppContent() {
           <span className="brand-text">Sinag Catering</span>
         </a>
 
-        <button className="mobile-menu-toggle" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} aria-label="Toggle navigation menu">
-          {isMobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
-        </button>
-
-        <div className={`nav-links ${isMobileMenuOpen ? 'mobile-open' : ''}`}>
+        {/* Primary nav links (Desktop) */}
+        <div className="nav-links desktop-nav-links">
           <a href="#top" className={activeView === 'landing' ? 'active' : ''} onClick={handleNavigateHome}>Home</a>
           <a href="#about-section" onClick={(e) => scrollLandingSection(e, 'about-section')}>About</a>
           <a href="#services-section" onClick={(e) => scrollLandingSection(e, 'services-section')}>Services</a>
@@ -305,7 +313,6 @@ function AppContent() {
             type="button"
             className={`nav-link-btn ${activeView === 'client' ? 'active' : ''}`}
             onClick={() => {
-              setIsMobileMenuOpen(false)
               if (!currentUser) {
                 setIsAuthModalOpen(true)
               } else if (currentUser.role === 'admin') {
@@ -328,7 +335,7 @@ function AppContent() {
             <button
               type="button"
               onClick={() => navigateTo('client')}
-              className={`btn-nav-bookings ${activeView === 'client' ? 'active' : ''}`}
+              className={`btn-nav-bookings desktop-only ${activeView === 'client' ? 'active' : ''}`}
               title="Track your reservations, payment status & event timeline"
             >
               <CalendarDays size={15} />
@@ -339,12 +346,12 @@ function AppContent() {
             </button>
           )}
 
-          <button type="button" onClick={handleStartBooking} className="btn-hero-primary" style={{ padding: '8px 18px', fontSize: '0.8rem' }}>
+          <button type="button" onClick={handleStartBooking} className="btn-hero-primary nav-book-cta">
             Start Booking
           </button>
 
           {currentUser ? (
-            <div className="user-indicator">
+            <div className="user-indicator desktop-only">
               <button onClick={handleDashboardClick} className="btn-nav-logout account-chip">
                 <User size={14} /> {currentUser.name}
               </button>
@@ -360,15 +367,164 @@ function AppContent() {
               </button>
             </div>
           ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div className="desktop-only" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <a href="tel:09287144597" className="icon-button" aria-label="Call Sinag Catering 0928 714 4597" title="Call 0928 714 4597">
                 <Phone size={16} />
               </a>
               <button onClick={() => navigateTo('login')} className="btn-nav-login">Login</button>
             </div>
           )}
+
+          {/* Mobile hamburger button cleanly placed at far right */}
+          <button
+            type="button"
+            className="mobile-menu-toggle"
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            aria-label="Toggle navigation menu"
+            aria-expanded={isMobileMenuOpen}
+          >
+            {isMobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
+          </button>
         </div>
       </nav>
+
+      {/* Mobile Off-Canvas Drawer (Outside site-nav to avoid backdrop-filter confinement) */}
+      {isMobileMenuOpen && (
+        <div className="mobile-drawer-portal">
+          <div
+            className="mobile-nav-backdrop"
+            onClick={() => setIsMobileMenuOpen(false)}
+            aria-hidden="true"
+          />
+
+          <aside className="mobile-nav-drawer" role="dialog" aria-modal="true" aria-label="Mobile Navigation">
+            <div className="mobile-nav-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <img src="/sinag_logo.png" alt="Sinag Catering" style={{ width: '28px', height: '28px' }} />
+                <span className="mobile-nav-tag">Sinag Menu</span>
+              </div>
+              <button
+                type="button"
+                className="mobile-nav-close-btn"
+                onClick={() => setIsMobileMenuOpen(false)}
+                aria-label="Close navigation menu"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <nav className="mobile-nav-links-list">
+              <a href="#top" className={activeView === 'landing' ? 'active' : ''} onClick={handleNavigateHome}>Home</a>
+              <a href="#about-section" onClick={(e) => scrollLandingSection(e, 'about-section')}>About Us</a>
+              <a href="#services-section" onClick={(e) => scrollLandingSection(e, 'services-section')}>Services & Packages</a>
+              <a
+                href="#gallery"
+                className={activeView === 'gallery' ? 'active' : ''}
+                onClick={(e) => {
+                  e.preventDefault()
+                  navigateTo('gallery')
+                }}
+              >
+                Photo Gallery
+              </a>
+              <a
+                href="#testimonials"
+                className={activeView === 'testimonials' ? 'active' : ''}
+                onClick={(e) => {
+                  e.preventDefault()
+                  navigateTo('testimonials')
+                }}
+              >
+                Testimonials
+              </a>
+              <a href="#contact-section" onClick={(e) => scrollLandingSection(e, 'contact-section')}>Contact Concierge</a>
+              <button
+                type="button"
+                className={`nav-link-btn ${activeView === 'client' ? 'active' : ''}`}
+                onClick={() => {
+                  setIsMobileMenuOpen(false)
+                  if (!currentUser) {
+                    setIsAuthModalOpen(true)
+                  } else if (currentUser.role === 'admin') {
+                    navigateTo('admin')
+                  } else {
+                    navigateTo('client')
+                  }
+                }}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <CalendarDays size={16} /> My Bookings
+                </span>
+                {userBookingsCount > 0 && (
+                  <span className="nav-booking-badge">{userBookingsCount}</span>
+                )}
+              </button>
+            </nav>
+
+            <div className="mobile-drawer-footer">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileMenuOpen(false)
+                  handleStartBooking()
+                }}
+                className="btn-hero-primary"
+                style={{ width: '100%', justifyContent: 'center', padding: '12px', fontSize: '0.9rem' }}
+              >
+                Book Your Event Now
+              </button>
+
+              {currentUser ? (
+                <div className="mobile-drawer-user-card">
+                  <div className="mobile-drawer-user-info">
+                    <User size={16} />
+                    <span>{currentUser.name}</span>
+                  </div>
+                  <div className="mobile-drawer-user-actions">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false)
+                        handleDashboardClick()
+                      }}
+                      className="btn-drawer-account"
+                    >
+                      Dashboard
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false)
+                        logout()
+                        navigateTo('landing')
+                      }}
+                      className="btn-drawer-logout"
+                      title="Sign out"
+                    >
+                      <LogOut size={15} /> Sign Out
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMobileMenuOpen(false)
+                    navigateTo('login')
+                  }}
+                  className="btn-drawer-login"
+                >
+                  <User size={16} /> Client / Admin Sign In
+                </button>
+              )}
+
+              <a href="tel:09287144597" className="mobile-drawer-call-link">
+                <Phone size={14} /> Direct Hotline: <strong>0928 714 4597</strong>
+              </a>
+            </div>
+          </aside>
+        </div>
+      )}
 
       <div className="app-view-container">
         <div className="view-transition" key={activeView}>

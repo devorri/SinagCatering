@@ -79,6 +79,9 @@ export const ClientPortal: React.FC = () => {
 
   // Filter bookings for current logged in client
   const clientBookings = bookings.filter((b) => b.email?.toLowerCase().trim() === currentUser?.email?.toLowerCase().trim())
+  const activeBooking =
+    clientBookings.find((b) => b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit') ||
+    clientBookings[0]
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -332,26 +335,38 @@ export const ClientPortal: React.FC = () => {
         <div className="portal-summary-card">
           <span className="portal-summary-lbl">Upcoming Event Date</span>
           <div className="portal-summary-val font-number" style={{ fontSize: '1.25rem' }}>
-            {clientBookings[0] ? clientBookings[0].eventDate : 'No scheduled event'}
+            {activeBooking ? activeBooking.eventDate : 'No scheduled event'}
           </div>
           <span className="portal-summary-sub">
-            {clientBookings[0] ? `${clientBookings[0].eventType} Banquet` : 'Create your reservation'}
+            {activeBooking ? `${activeBooking.eventType} Banquet` : 'Create your reservation'}
           </span>
         </div>
         <div className="portal-summary-card">
           <span className="portal-summary-lbl">Downpayment Status</span>
           <div className="portal-summary-val" style={{ fontSize: '1.1rem' }}>
-            {clientBookings[0]?.paymentStatus === 'fully_paid' ? (
+            {!activeBooking ? (
+              <span style={{ color: 'var(--muted)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                No Active Booking
+              </span>
+            ) : activeBooking.paymentStatus === 'fully_paid' ? (
               <span style={{ color: '#059669', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                 <CheckCircle size={16} /> Fully Paid
               </span>
-            ) : clientBookings[0]?.paymentStatus === 'pending_verification' ? (
-              <span style={{ color: '#D97706', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                <Clock size={16} /> Under Verification
+            ) : activeBooking.paymentStatus === 'downpayment_paid' || (activeBooking as any).payment_status === 'downpayment_paid' ? (
+              <span style={{ color: '#059669', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <CheckCircle size={16} /> Downpayment Verified
               </span>
-            ) : clientBookings[0]?.paymentStatus === 'partially_paid' ? (
+            ) : activeBooking.bookingStatus === 'confirmed' || (activeBooking as any).status === 'confirmed' ? (
+              <span style={{ color: '#059669', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <CheckCircle size={16} /> Reservation Confirmed
+              </span>
+            ) : activeBooking.paymentStatus === 'partially_paid' ? (
               <span style={{ color: '#2563EB', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                 <CheckCircle size={16} /> 50% Settled
+              </span>
+            ) : activeBooking.paymentStatus === 'pending_verification' ? (
+              <span style={{ color: '#D97706', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <Clock size={16} /> Under Verification
               </span>
             ) : (
               <span style={{ color: '#DC2626', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
@@ -360,7 +375,9 @@ export const ClientPortal: React.FC = () => {
             )}
           </div>
           <span className="portal-summary-sub">
-            {clientBookings[0]?.paymentStatus === 'unpaid'
+            {!activeBooking
+              ? 'No active reservation'
+              : activeBooking.paymentStatus === 'unpaid' && activeBooking.bookingStatus !== 'confirmed'
               ? 'Required to lock calendar date'
               : 'Reservation status active'}
           </span>
@@ -382,8 +399,8 @@ export const ClientPortal: React.FC = () => {
             const balanceAmount =
               booking.paymentStatus === 'fully_paid'
                 ? 0
-                : booking.paymentStatus === 'partially_paid'
-                ? booking.totalPrice * 0.5
+                : booking.paymentStatus === 'partially_paid' || booking.paymentStatus === 'downpayment_paid'
+                ? booking.totalPrice - (booking.downpaymentAmount || booking.totalPrice * 0.5)
                 : booking.totalPrice
 
             return (
@@ -683,14 +700,16 @@ export const ClientPortal: React.FC = () => {
                   </div>
                 )}
 
-                {booking.paymentStatus === 'fully_paid' && (
+                {(booking.paymentStatus === 'fully_paid' || booking.paymentStatus === 'downpayment_paid') && (
                   <div className="portal-paid-notice">
                     <div className="portal-notice-left">
                       <div className="portal-notice-icon-circle paid">
                         <CheckCircle size={20} />
                       </div>
                       <div>
-                        <h4 className="portal-notice-title">Reservation Downpayment Completed</h4>
+                        <h4 className="portal-notice-title">
+                          {booking.paymentStatus === 'fully_paid' ? 'Full Payment Completed' : 'Reservation Downpayment Completed'}
+                        </h4>
                         <p className="portal-notice-desc">
                           Your reservation is locked in our master catering calendar. You may download your official contract and invoice anytime.
                         </p>
