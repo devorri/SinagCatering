@@ -429,7 +429,7 @@ Sinag Catering will never contact you about this email or ask for any login code
 Thanks for visiting Sinag Catering!`
 
   const serviceId = import.meta.env.VITE_EMAILJS_SERVICE_ID as string | undefined
-  const templateId = import.meta.env.VITE_EMAILJS_TEMPLATE_ID as string | undefined
+  const templateId = (import.meta.env.VITE_EMAILJS_PASSWORD_RESET_TEMPLATE_ID || 'template_lxd34qq') as string | undefined
   const publicKey = import.meta.env.VITE_EMAILJS_PUBLIC_KEY as string | undefined
 
   if (!serviceId || !templateId || !publicKey) {
