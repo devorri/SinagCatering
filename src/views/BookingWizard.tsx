@@ -24,6 +24,7 @@ import {
   ChevronUp,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { useConfirm } from '../context/ConfirmContext'
 import {
   EXCESS_PAX_RATE,
   EXTRA_DESSERT_RATE,
@@ -54,6 +55,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   initialAIFormData,
 }) => {
   const { blockedDates, bookings, createBooking, currentUser, packages } = useApp()
+  const { confirm } = useConfirm()
 
   const [currentStep, setCurrentStep] = useState(0)
   const [maxVisitedStep, setMaxVisitedStep] = useState(initialAIFormData ? 1 : 0)
@@ -572,6 +574,18 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       gcashRefNumber: gcashRefNumber.trim(),
       proofOfPaymentUrl: proofOfPaymentUrl || null,
       notes: `${currentPkg.pricePerHead !== undefined ? 'Per-head pricing; ' : `Tier: ${calculations.tier.pax} pax + ${FOOD_BUFFER_PAX} pax buffer. `}Selected mains: ${selectedMainDishes.join(', ') || 'none'}. Selected pasta: ${selectedPastaDishes.join(', ') || 'none'}. Extra mains: ${extraMainDishes.slice(0, extraMain).join(', ') || 'none'}. Extra pasta: ${extraPastaDishes.slice(0, extraPasta).join(', ') || 'none'}. Extra Dessert: ${extraDessert}. Flat add-ons: ${selectedAIAddonIds.join(', ') || 'none'}.\nPayment: ${paymentMethod === 'bank_transfer' ? 'MARIBANK / BANK TRANSFER' : 'QR PH / GCASH'} (Ref: ${gcashRefNumber.trim()}). Receipt proof attached.\n${notes}`,
+    }
+
+    const confirmed = await confirm({
+      title: 'Confirm Event Reservation',
+      message: `Are you ready to submit your catering booking for ${guestCount} guests on ${eventDate} (${currentPkg.name})?\n\nTotal package amount: ₱${calculations.totalPrice.toLocaleString()} (50% Downpayment: ₱${calculations.downpayment.toLocaleString()}).`,
+      confirmText: 'Submit Reservation',
+      cancelText: 'Review Details',
+      variant: 'primary',
+    })
+    if (!confirmed) {
+      setIsSubmitting(false)
+      return
     }
 
     createBooking(bookingData)

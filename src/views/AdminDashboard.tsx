@@ -3,6 +3,7 @@ import {
   Eye,
   ShieldCheck,
   Trash,
+  Trash2,
   X,
   Menu,
   Search,
@@ -19,20 +20,27 @@ import {
   CreditCard,
   Ban,
   Check,
+  CheckCircle2,
+  Clock,
   KeyRound,
   Printer,
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  AlertCircle,
+  Sparkles,
+  CheckCheck,
+  Filter,
+  ExternalLink,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { useConfirm } from '../context/ConfirmContext'
 import type { Booking, Inquiry, NotificationLog, Staff } from '../types'
 import {
   getNotificationLogs,
   clearNotificationLogs,
   sendSemaphoreSMS,
 } from '../lib/notifications'
-import { isSupabaseConfigured } from '../lib/supabase'
 import { formatMoney } from '../data/packages'
 
 type AdminTabType = 'analytics' | 'bookings' | 'calendar' | 'staff' | 'reviews' | 'inquiries' | 'notifications'
@@ -54,6 +62,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     updateBookingStatus,
     allocateStaff,
     addStaff,
+    removeStaff,
     blockDate,
     unblockDate,
     respondInquiry,
@@ -62,7 +71,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     updatePaymentStatus,
     verifyDownpaymentBooking,
     notifyUsers,
+    adminNotifications,
+    markNotificationAsRead,
+    markAllNotificationsAsRead,
+    clearAdminNotifications,
   } = useApp()
+
+  const { confirm } = useConfirm()
 
   const ALL_SUBCONTRACTED_SERVICES = [
     'Event Host',
@@ -372,6 +387,74 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     setShowAddStaffModal(false)
   }
 
+  const handleRemoveStaff = async (staffMember: Staff) => {
+    const confirmed = await confirm({
+      title: 'Remove Staff Member',
+      message: `Are you sure you want to remove ${staffMember.name} (${staffMember.role.replace('_', ' ')}) from the roster? This action cannot be undone.`,
+      confirmText: 'Remove Staff',
+      cancelText: 'Keep Staff',
+      variant: 'danger',
+    })
+    if (!confirmed) return
+    await removeStaff(staffMember.id)
+  }
+
+  // Admin Notification Activity Sub-tab and Filtering
+  const [notifSubTab, setNotifSubTab] = useState<'activity' | 'gateway'>('activity')
+  const [notifFilter, setNotifFilter] = useState<'all' | 'new' | 'completed' | 'confirmed' | 'inquiries' | 'unread'>('all')
+
+  const unreadNotifCount = adminNotifications.filter((n) => !n.read).length
+
+  const filteredNotifications = useMemo(() => {
+    return adminNotifications.filter((n) => {
+      if (notifFilter === 'unread') return !n.read
+      if (notifFilter === 'new') return n.type === 'booking_new'
+      if (notifFilter === 'completed') return n.type === 'booking_completed'
+      if (notifFilter === 'confirmed') return n.type === 'booking_confirmed'
+      if (notifFilter === 'inquiries') return n.type === 'inquiry_new'
+      return true
+    })
+  }, [adminNotifications, notifFilter])
+
+  const formatRelativeTime = (timestamp: string) => {
+    try {
+      const diffMs = Date.now() - new Date(timestamp).getTime()
+      const diffSec = Math.floor(diffMs / 1000)
+      if (diffSec < 60) return 'Just now'
+      const diffMin = Math.floor(diffSec / 60)
+      if (diffMin < 60) return `${diffMin}m ago`
+      const diffHr = Math.floor(diffMin / 60)
+      if (diffHr < 24) return `${diffHr}h ago`
+      const diffDay = Math.floor(diffHr / 24)
+      if (diffDay < 7) return `${diffDay}d ago`
+      return new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    } catch {
+      return timestamp
+    }
+  }
+
+  const handleClearAllNotifications = async () => {
+    const ok = await confirm({
+      title: 'Clear All Notifications',
+      message: 'Are you sure you want to clear all notification history? This will remove all alerts from the list.',
+      confirmText: 'Clear All',
+      cancelText: 'Cancel',
+      variant: 'danger',
+    })
+    if (ok) clearAdminNotifications()
+  }
+
+  const handleDeleteReview = async (reviewId: string) => {
+    const ok = await confirm({
+      title: 'Delete Testimonial',
+      message: 'Are you sure you want to delete this client testimonial? This cannot be undone.',
+      confirmText: 'Delete Review',
+      cancelText: 'Cancel',
+      variant: 'danger',
+    })
+    if (ok) deleteReview(reviewId)
+  }
+
   // Semaphore SMS and Notification Logs state (Item 9)
   const [notificationLogs, setNotificationLogs] = useState<NotificationLog[]>(() => getNotificationLogs())
   const [testSmsPhone, setTestSmsPhone] = useState('')
@@ -402,16 +485,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     }
   }
 
-  const handleClearLogs = () => {
-    if (window.confirm('Clear all notification audit logs?')) {
+  const handleClearLogs = async () => {
+    const ok = await confirm({
+      title: 'Clear Audit Logs',
+      message: 'Are you sure you want to clear all notification audit logs from browser memory?',
+      confirmText: 'Clear Logs',
+      cancelText: 'Cancel',
+      variant: 'danger',
+    })
+    if (ok) {
       clearNotificationLogs()
       setNotificationLogs([])
     }
   }
 
-  const handleLogoutClick = () => {
-    logout()
-    if (onLogout) onLogout()
+  const handleLogoutClick = async () => {
+    const ok = await confirm({
+      title: 'Sign Out of Admin Console',
+      message: 'Are you sure you want to end your executive admin session?',
+      confirmText: 'Sign Out',
+      cancelText: 'Stay Signed In',
+      variant: 'primary',
+    })
+    if (ok) {
+      logout()
+      if (onLogout) onLogout()
+    }
   }
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -546,13 +645,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   }
   const toggleServiceSelection = (service: string) => setTempServices((current) => current.includes(service) ? current.filter((item) => item !== service) : [...current, service])
 
-  const handleFullPayment = (booking: Booking) => {
+  const handleFullPayment = async (booking: Booking) => {
     const remainingBalance = booking.totalPrice - (booking.downpaymentAmount || (booking.totalPrice * 0.5))
-    if (!window.confirm(`Confirm receipt of remaining 50% balance (${formatMoney(remainingBalance, booking.currency)}) for Booking #${booking.id} (${booking.customerName})?\n\nThis will mark the reservation as Fully Paid and move status to Completed.`)) {
-      return
-    }
+    const ok = await confirm({
+      title: 'Record Full Settlement',
+      message: `Confirm receipt of remaining 50% balance (${formatMoney(remainingBalance, booking.currency)}) for Booking #${booking.id} (${booking.customerName})?\n\nThis will mark the reservation as Fully Paid and move status to Completed.`,
+      confirmText: 'Confirm Settlement',
+      cancelText: 'Cancel',
+      variant: 'success',
+    })
+    if (!ok) return
     updatePaymentStatus(booking.id, 'fully_paid', booking.totalPrice)
-    alert(`Full payment of ${formatMoney(remainingBalance, booking.currency)} recorded! Booking #${booking.id} has moved to COMPLETED.`)
   }
 
   const handleBlockDateSubmit = (e: React.FormEvent) => {
@@ -589,8 +692,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   }
 
   // Process downpayment confirmation & verification
-  const handleConfirmDownpayment = () => {
+  const handleConfirmDownpayment = async () => {
     if (!downpaymentBooking) return
+
+    const ok = await confirm({
+      title: 'Verify Downpayment & Confirm Booking',
+      message: `Verify downpayment of ${formatMoney(downpaymentAmount, downpaymentBooking.currency)} for Booking #${downpaymentBooking.id} (${downpaymentBooking.customerName})? This will lock the event date (${downpaymentBooking.eventDate}) and dispatch Semaphore SMS confirmation.`,
+      confirmText: 'Confirm & Lock Date',
+      cancelText: 'Review Again',
+      variant: 'success',
+    })
+    if (!ok) return
 
     // Update booking status to confirmed and payment to downpayment_paid, block date, and trigger real alerts
     verifyDownpaymentBooking(downpaymentBooking.id, downpaymentAmount)
@@ -598,62 +710,79 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     setShowDownpaymentModal(false)
     setShowBookingModal(false)
     setDownpaymentBooking(null)
-    alert(`Downpayment verified & booking confirmed! Date (${downpaymentBooking.eventDate}) is officially locked, and Semaphore SMS/Email confirmation alert has been dispatched to ${downpaymentBooking.phone}.`)
   }
 
   // Handle booking rejection
-  const handleRejectBooking = (bookingId: string) => {
-    if (window.confirm('Are you sure you want to reject this booking?')) {
+  const handleRejectBooking = async (bookingId: string) => {
+    const ok = await confirm({
+      title: 'Reject Reservation Request',
+      message: 'Are you sure you want to reject this booking? This will cancel the reservation and notify the client.',
+      confirmText: 'Reject Reservation',
+      cancelText: 'Keep Pending',
+      variant: 'danger',
+    })
+    if (ok) {
       updateBookingStatus(bookingId, 'cancelled')
-      alert('Booking has been rejected.')
     }
   }
 
   // Handle forfeit booking (when downpayment deadline passes)
-  const handleForfeitBooking = (bookingId: string, eventDate: string) => {
-    if (window.confirm('Mark this booking as forfeited? The date will become available again.')) {
-      updateBookingStatus(bookingId, 'forfeit')
+  const handleForfeitBooking = async (bookingId: string, eventDate: string) => {
+    const ok = await confirm({
+      title: 'Forfeit Reservation',
+      message: `Mark this booking as forfeited? The date (${eventDate}) will immediately become available again for pending clients.`,
+      confirmText: 'Forfeit Reservation',
+      cancelText: 'Cancel',
+      variant: 'warning',
+    })
+    if (!ok) return
 
-      // Unblock the date
-      unblockDate(eventDate)
+    updateBookingStatus(bookingId, 'forfeit')
 
-      // Get all pending bookings for this date
-      const pendingForDate = bookings.filter(
-        b => b.eventDate === eventDate && b.bookingStatus === 'pending'
+    // Unblock the date
+    unblockDate(eventDate)
+
+    // Get all pending bookings for this date
+    const pendingForDate = bookings.filter(
+      b => b.eventDate === eventDate && b.bookingStatus === 'pending'
+    )
+
+    // Notify all pending clients that date is available again
+    if (pendingForDate.length > 0) {
+      const emails = pendingForDate.map(b => b.email)
+      notifyUsers(
+        emails,
+        'Date Available Again!',
+        `The date ${eventDate} has become available again. Your booking request is still pending admin approval.`
       )
-
-      // Notify all pending clients that date is available again
-      if (pendingForDate.length > 0) {
-        const emails = pendingForDate.map(b => b.email)
-        notifyUsers(
-          emails,
-          'Date Available Again!',
-          `The date ${eventDate} has become available again. Your booking request is still pending admin approval.`
-        )
-      }
-
-      alert('Booking has been forfeited and date is now available again.')
     }
   }
 
   // Handle manual date unblock
-  const handleManualUnblock = (date: string) => {
-    if (window.confirm(`Unblock ${date}? This will make it available for booking.`)) {
-      unblockDate(date)
+  const handleManualUnblock = async (date: string) => {
+    const ok = await confirm({
+      title: 'Unblock Date',
+      message: `Unblock ${date}? This will make the date available again for customer bookings.`,
+      confirmText: 'Unblock Date',
+      cancelText: 'Keep Blocked',
+      variant: 'primary',
+    })
+    if (!ok) return
 
-      // Check if there are pending bookings for this date
-      const pendingForDate = bookings.filter(
-        b => b.eventDate === date && b.bookingStatus === 'pending'
+    unblockDate(date)
+
+    // Check if there are pending bookings for this date
+    const pendingForDate = bookings.filter(
+      b => b.eventDate === date && b.bookingStatus === 'pending'
+    )
+
+    if (pendingForDate.length > 0) {
+      const emails = pendingForDate.map(b => b.email)
+      notifyUsers(
+        emails,
+        'Date Available Again!',
+        `The date ${date} has become available again. Your booking request is still pending admin approval.`
       )
-
-      if (pendingForDate.length > 0) {
-        const emails = pendingForDate.map(b => b.email)
-        notifyUsers(
-          emails,
-          'Date Available Again!',
-          `The date ${date} has become available again. Your booking request is still pending admin approval.`
-        )
-      }
     }
   }
 
@@ -809,7 +938,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         group: 'COMMUNICATIONS',
         items: [
           { id: 'inquiries', label: 'Inquiry Inbox', icon: <MessageSquare size={18} />, badge: inquiries.filter(i => !i.replied).length },
-          { id: 'notifications', label: 'SMS & Email Alerts', icon: <Send size={18} /> },
+          { id: 'notifications', label: 'Notifications & Alerts', icon: <Bell size={18} />, badge: unreadNotifCount },
         ],
       },
     ]
@@ -920,10 +1049,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <button className="admin-notification-bell" title="Notifications">
+            <button
+              type="button"
+              className="admin-notification-bell"
+              title="Notifications & Live Activity"
+              onClick={() => {
+                setActiveTab('notifications')
+                setNotifSubTab('activity')
+              }}
+              style={{ position: 'relative', cursor: 'pointer' }}
+            >
               <Bell size={16} />
-              {bookings.filter(b => b.bookingStatus === 'pending').length > 0 && (
-                <span className="admin-notification-dot" />
+              {unreadNotifCount > 0 && (
+                <span
+                  className="admin-notification-dot"
+                  style={{
+                    minWidth: '16px',
+                    height: '16px',
+                    borderRadius: '8px',
+                    fontSize: '0.65rem',
+                    padding: '0 4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 700,
+                  }}
+                >
+                  {unreadNotifCount}
+                </span>
               )}
             </button>
           </div>
@@ -947,7 +1100,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   ? 'Reviews & Moderation'
                   : activeTab === 'inquiries'
                   ? 'Customer Inquiries'
-                  : 'SMS & Email Hub'}
+                  : 'Notifications & Activity Hub'}
               </h1>
               <p className="lede">
                 Welcome back, <strong>{currentUser.name}</strong>. Real-time banquet schedules, verified downpayments, kitchen staffing, and revenue registers.
@@ -1656,19 +1809,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         </span>
                       </div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '10px', borderTop: '1px dashed var(--line)', fontSize: '0.82rem' }}>
-                        <span style={{ color: 'var(--muted)', fontWeight: 600 }}>Scheduled Off-Days:</span>
-                        <span
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '10px', borderTop: '1px dashed var(--line)', fontSize: '0.82rem', gap: '8px', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ color: 'var(--muted)', fontWeight: 600 }}>Off-Days:</span>
+                          <span
+                            style={{
+                              background: s.offDays && s.offDays.length > 0 ? '#FEF3C7' : '#F1F5F9',
+                              color: s.offDays && s.offDays.length > 0 ? '#92400E' : '#64748B',
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontWeight: 700,
+                            }}
+                          >
+                            {offDaysFormatted}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveStaff(s)}
+                          title={`Remove ${s.name} from staff roster`}
                           style={{
-                            background: s.offDays && s.offDays.length > 0 ? '#FEF3C7' : '#F1F5F9',
-                            color: s.offDays && s.offDays.length > 0 ? '#92400E' : '#64748B',
-                            padding: '2px 8px',
-                            borderRadius: '4px',
-                            fontWeight: 700,
+                            background: 'transparent',
+                            border: '1px solid #FECACA',
+                            color: '#DC2626',
+                            borderRadius: '6px',
+                            padding: '3px 8px',
+                            fontSize: '0.74rem',
+                            fontWeight: 600,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = '#FEE2E2'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'transparent'
                           }}
                         >
-                          Off: {offDaysFormatted}
-                        </span>
+                          <Trash2 size={12} /> Remove
+                        </button>
                       </div>
                     </div>
                   )
@@ -1710,7 +1892,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         <strong>{rev.userName}</strong> ({rev.rating} / 5 stars)
                         <div style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>{rev.date}</div>
                       </div>
-                      <button onClick={() => deleteReview(rev.id)} className="btn-nav-logout" style={{ color: 'var(--terracotta)' }}>
+                      <button onClick={() => handleDeleteReview(rev.id)} className="btn-nav-logout" style={{ color: 'var(--terracotta)' }}>
                         <Trash size={14} /> Remove
                       </button>
                     </div>
@@ -2134,154 +2316,539 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             </div>
           )}
 
-          {/* Tab 6: SMS & Email Notifications (Item 9) */}
+          {/* Tab 7: Notifications & Activity Hub */}
           {activeTab === 'notifications' && (
-            <div className="data-table-card" style={{ padding: '36px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
-                <div>
-                  <h3 style={{ fontFamily: 'var(--font-sans)', fontSize: '1.25rem', fontWeight: 800, margin: '0 0 4px', color: '#18181B' }}>
-                    Semaphore SMS & Transactional Notification Hub
-                  </h3>
-                  <p style={{ color: 'var(--muted)', fontSize: '0.9rem', margin: 0 }}>
-                    Monitor real-time SMS dispatches (booking confirmations, downpayment verification alerts, OTPs) and email triggers.
-                  </p>
-                </div>
-                <button onClick={handleClearLogs} className="btn-nav-logout" style={{ fontSize: '0.78rem' }}>
-                  <Trash size={14} /> Clear Audit Logs
-                </button>
-              </div>
-
-              {/* Server-side Semaphore dispatch and explicit test send */}
-              <div className="admin-two-col-grid" style={{ display: 'grid', gap: '24px', marginBottom: '32px' }}>
-                {/* Server-side Semaphore configuration */}
-                <div style={{ background: 'var(--paper-warm)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--line)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                    <ShieldCheck size={18} style={{ color: 'var(--gold-dark)' }} />
-                    <strong style={{ fontSize: '0.95rem' }}>Semaphore SMS Gateway</strong>
-                  </div>
-                  <p style={{ fontSize: '0.82rem', color: 'var(--muted)', margin: '0 0 14px' }}>
-                    SMS requests are sent through a Supabase Edge Function. Store the Semaphore API key as a server secret; it is never saved in this browser.
-                  </p>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
-                    Mode: <strong>{isSupabaseConfigured ? 'Supabase function required for delivery' : 'Simulated preview mode'}</strong>
-                  </div>
-                </div>
-
-                {/* Dispatch Test SMS Form */}
-                <form onSubmit={handleSendTestSms} style={{ background: 'var(--paper-warm)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--line)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                    <Send size={18} style={{ color: 'var(--terracotta)' }} />
-                    <strong style={{ fontSize: '0.95rem' }}>Send Test SMS</strong>
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '10px', marginBottom: '12px' }}>
-                    <div>
-                      <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Recipient Mobile</label>
-                      <input
-                        type="tel"
-                        className="input-field"
-                        placeholder="0928 714 4597"
-                        value={testSmsPhone}
-                        onChange={(e) => setTestSmsPhone(e.target.value)}
-                        style={{ padding: '6px 10px', fontSize: '0.85rem' }}
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Message Body</label>
-                      <input
-                        type="text"
-                        className="input-field"
-                        value={testSmsMsg}
-                        onChange={(e) => setTestSmsMsg(e.target.value)}
-                        style={{ padding: '6px 10px', fontSize: '0.85rem' }}
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <button
-                      type="submit"
-                      disabled={isSendingTestSms}
-                      className="btn-submit-primary"
-                      style={{ width: 'auto', padding: '8px 18px', fontSize: '0.78rem' }}
-                    >
-                      {isSendingTestSms ? 'Dispatching...' : 'Dispatch Test SMS'}
-                    </button>
-                    {testSmsStatus && (
-                      <span style={{ fontSize: '0.78rem', color: testSmsStatus.includes('Failed') ? 'var(--terracotta)' : '#18181B', fontWeight: 600 }}>
-                        {testSmsStatus}
+            <div className="data-table-card" style={{ padding: '32px' }}>
+              {/* Dual Sub-tab Navigation */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)', paddingBottom: '18px', marginBottom: '24px', flexWrap: 'wrap', gap: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setNotifSubTab('activity')}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      fontSize: '0.86rem',
+                      fontWeight: 700,
+                      border: 'none',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      background: notifSubTab === 'activity' ? 'var(--gold-dark)' : '#F4EFE6',
+                      color: notifSubTab === 'activity' ? '#FFFFFF' : '#4A3E31',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <Bell size={16} /> Live Activity & Alerts
+                    {unreadNotifCount > 0 && (
+                      <span style={{
+                        background: notifSubTab === 'activity' ? '#FFFFFF' : '#DC2626',
+                        color: notifSubTab === 'activity' ? '#92400E' : '#FFFFFF',
+                        borderRadius: '999px',
+                        padding: '1px 7px',
+                        fontSize: '0.7rem',
+                        fontWeight: 800,
+                      }}>
+                        {unreadNotifCount}
                       </span>
                     )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNotifSubTab('gateway')}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      fontSize: '0.86rem',
+                      fontWeight: 700,
+                      border: 'none',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      background: notifSubTab === 'gateway' ? 'var(--gold-dark)' : '#F4EFE6',
+                      color: notifSubTab === 'gateway' ? '#FFFFFF' : '#4A3E31',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <Send size={16} /> SMS & Email Gateway
+                    {notificationLogs.length > 0 && (
+                      <span style={{
+                        background: notifSubTab === 'gateway' ? 'rgba(255,255,255,0.25)' : '#E2E8F0',
+                        color: notifSubTab === 'gateway' ? '#FFFFFF' : '#475569',
+                        borderRadius: '999px',
+                        padding: '1px 7px',
+                        fontSize: '0.7rem',
+                        fontWeight: 800,
+                      }}>
+                        {notificationLogs.length}
+                      </span>
+                    )}
+                  </button>
+                </div>
+
+                {notifSubTab === 'activity' ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={markAllNotificationsAsRead}
+                      disabled={unreadNotifCount === 0}
+                      className="btn-nav-logout"
+                      style={{
+                        fontSize: '0.78rem',
+                        opacity: unreadNotifCount === 0 ? 0.5 : 1,
+                        cursor: unreadNotifCount === 0 ? 'not-allowed' : 'pointer',
+                        color: '#059669',
+                      }}
+                    >
+                      <CheckCheck size={14} /> Mark All as Read
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClearAllNotifications}
+                      disabled={adminNotifications.length === 0}
+                      className="btn-nav-logout"
+                      style={{
+                        fontSize: '0.78rem',
+                        opacity: adminNotifications.length === 0 ? 0.5 : 1,
+                        cursor: adminNotifications.length === 0 ? 'not-allowed' : 'pointer',
+                        color: 'var(--terracotta)',
+                      }}
+                    >
+                      <Trash2 size={14} /> Clear History
+                    </button>
                   </div>
-                </form>
+                ) : (
+                  <button onClick={handleClearLogs} className="btn-nav-logout" style={{ fontSize: '0.78rem' }}>
+                    <Trash size={14} /> Clear Audit Logs
+                  </button>
+                )}
               </div>
 
-              {/* Notification Audit Log Register */}
-              <h4 style={{ fontSize: '0.85rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '16px' }}>
-                Dispatched Payload Activity Log ({notificationLogs.length} events):
-              </h4>
+              {/* Subtab 1: Live Activity & Reservation Alerts */}
+              {notifSubTab === 'activity' && (
+                <div>
+                  {/* Summary Metric Ribbon */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                    gap: '12px',
+                    marginBottom: '20px',
+                  }}>
+                    <div style={{ background: '#FAF7F2', border: '1px solid var(--line)', borderRadius: '8px', padding: '12px 14px' }}>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase' }}>Total Alerts</span>
+                      <strong style={{ display: 'block', fontSize: '1.4rem', color: '#18181B', marginTop: '2px' }}>{adminNotifications.length}</strong>
+                    </div>
+                    <div style={{ background: unreadNotifCount > 0 ? '#FEF2F2' : '#F0FDF4', border: '1px solid ' + (unreadNotifCount > 0 ? '#FECACA' : '#BBF7D0'), borderRadius: '8px', padding: '12px 14px' }}>
+                      <span style={{ fontSize: '0.72rem', color: unreadNotifCount > 0 ? '#DC2626' : '#15803D', fontWeight: 700, textTransform: 'uppercase' }}>Unread</span>
+                      <strong style={{ display: 'block', fontSize: '1.4rem', color: unreadNotifCount > 0 ? '#DC2626' : '#15803D', marginTop: '2px' }}>{unreadNotifCount}</strong>
+                    </div>
+                    <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '8px', padding: '12px 14px' }}>
+                      <span style={{ fontSize: '0.72rem', color: '#1D4ED8', fontWeight: 700, textTransform: 'uppercase' }}>New Bookings</span>
+                      <strong style={{ display: 'block', fontSize: '1.4rem', color: '#1D4ED8', marginTop: '2px' }}>
+                        {adminNotifications.filter((n) => n.type === 'booking_new').length}
+                      </strong>
+                    </div>
+                    <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '8px', padding: '12px 14px' }}>
+                      <span style={{ fontSize: '0.72rem', color: '#047857', fontWeight: 700, textTransform: 'uppercase' }}>Completed Events</span>
+                      <strong style={{ display: 'block', fontSize: '1.4rem', color: '#047857', marginTop: '2px' }}>
+                        {adminNotifications.filter((n) => n.type === 'booking_completed').length}
+                      </strong>
+                    </div>
+                  </div>
 
-              {notificationLogs.length === 0 ? (
-                <div style={{ padding: '32px', textAlign: 'center', background: 'var(--paper-warm)', borderRadius: 'var(--radius-md)', color: 'var(--muted)', fontSize: '0.88rem' }}>
-                  No notification events recorded yet. Perform a client registration, booking submission, or downpayment verification to view live events!
+                  {/* Filter Chips Bar */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '20px' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Filter size={13} /> Filter:
+                    </span>
+                    {(
+                      [
+                        { id: 'all', label: `All (${adminNotifications.length})` },
+                        { id: 'unread', label: `Unread (${unreadNotifCount})` },
+                        { id: 'new', label: 'New Bookings' },
+                        { id: 'completed', label: 'Completed' },
+                        { id: 'confirmed', label: 'Confirmed' },
+                        { id: 'inquiries', label: 'Inquiries' },
+                      ] as const
+                    ).map((chip) => (
+                      <button
+                        key={chip.id}
+                        type="button"
+                        onClick={() => setNotifFilter(chip.id)}
+                        style={{
+                          background: notifFilter === chip.id ? 'var(--ink)' : '#FFFFFF',
+                          color: notifFilter === chip.id ? '#FFFFFF' : '#475569',
+                          border: '1px solid ' + (notifFilter === chip.id ? 'var(--ink)' : 'var(--line)'),
+                          borderRadius: '20px',
+                          padding: '4px 12px',
+                          fontSize: '0.76rem',
+                          fontWeight: notifFilter === chip.id ? 700 : 500,
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                        }}
+                      >
+                        {chip.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Activity Stream Feed */}
+                  {filteredNotifications.length === 0 ? (
+                    <div style={{
+                      padding: '48px 20px',
+                      textAlign: 'center',
+                      background: 'var(--paper-warm)',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px dashed var(--line)',
+                    }}>
+                      <div style={{
+                        width: '54px',
+                        height: '54px',
+                        borderRadius: '50%',
+                        background: '#FFFFFF',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        margin: '0 auto 14px',
+                        color: 'var(--muted)',
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.04)',
+                      }}>
+                        <Bell size={24} />
+                      </div>
+                      <strong style={{ display: 'block', fontSize: '1rem', color: '#18181B', marginBottom: '4px' }}>
+                        No notifications found
+                      </strong>
+                      <p style={{ margin: 0, fontSize: '0.84rem', color: 'var(--muted)' }}>
+                        {notifFilter === 'unread'
+                          ? 'All caught up! There are no unread notifications right now.'
+                          : 'Whenever customers book an event or bookings complete, live alerts will appear here.'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {filteredNotifications.map((notif) => {
+                        const targetBooking = notif.bookingId ? bookings.find((b) => b.id === notif.bookingId) : null
+                        const isNewBooking = notif.type === 'booking_new'
+                        const isCompleted = notif.type === 'booking_completed'
+                        const isConfirmed = notif.type === 'booking_confirmed'
+                        const isInquiry = notif.type === 'inquiry_new'
+                        const isCancelled = notif.type === 'booking_cancelled'
+
+                        const iconBg = isCompleted
+                          ? '#D1FAE5'
+                          : isConfirmed
+                          ? '#E0F2FE'
+                          : isNewBooking
+                          ? '#FEF3C7'
+                          : isInquiry
+                          ? '#E0E7FF'
+                          : isCancelled
+                          ? '#FEE2E2'
+                          : '#F3F4F6'
+
+                        const iconColor = isCompleted
+                          ? '#059669'
+                          : isConfirmed
+                          ? '#0284C7'
+                          : isNewBooking
+                          ? '#D97706'
+                          : isInquiry
+                          ? '#4F46E5'
+                          : isCancelled
+                          ? '#DC2626'
+                          : '#4B5563'
+
+                        return (
+                          <div
+                            key={notif.id}
+                            style={{
+                              background: notif.read ? '#FFFFFF' : '#FFFDF7',
+                              border: '1px solid ' + (notif.read ? 'var(--line)' : '#FDE68A'),
+                              borderLeft: notif.read ? '1px solid var(--line)' : '4px solid var(--gold)',
+                              borderRadius: 'var(--radius-md)',
+                              padding: '16px 20px',
+                              display: 'flex',
+                              alignItems: 'flex-start',
+                              justifyContent: 'space-between',
+                              gap: '16px',
+                              boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+                              transition: 'all 0.15s ease',
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flex: 1 }}>
+                              <div style={{
+                                width: '38px',
+                                height: '38px',
+                                borderRadius: '10px',
+                                background: iconBg,
+                                color: iconColor,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexShrink: 0,
+                              }}>
+                                {isCompleted ? (
+                                  <CheckCircle2 size={19} />
+                                ) : isConfirmed ? (
+                                  <ShieldCheck size={19} />
+                                ) : isNewBooking ? (
+                                  <Sparkles size={19} />
+                                ) : isInquiry ? (
+                                  <MessageSquare size={19} />
+                                ) : isCancelled ? (
+                                  <AlertCircle size={19} />
+                                ) : (
+                                  <Bell size={19} />
+                                )}
+                              </div>
+
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '3px' }}>
+                                  <strong style={{ fontSize: '0.94rem', color: '#18181B' }}>{notif.title}</strong>
+                                  <span style={{
+                                    padding: '1px 8px',
+                                    borderRadius: '999px',
+                                    fontSize: '0.68rem',
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    background: iconBg,
+                                    color: iconColor,
+                                  }}>
+                                    {notif.type.replace('_', ' ')}
+                                  </span>
+                                  {!notif.read && (
+                                    <span style={{
+                                      width: '7px',
+                                      height: '7px',
+                                      borderRadius: '50%',
+                                      background: '#DC2626',
+                                      display: 'inline-block',
+                                    }} />
+                                  )}
+                                  <span style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'inline-flex', alignItems: 'center', gap: '4px', marginLeft: 'auto' }}>
+                                    <Clock size={12} /> {formatRelativeTime(notif.timestamp)}
+                                  </span>
+                                </div>
+
+                                <p style={{ margin: '0 0 10px', fontSize: '0.85rem', color: '#4B5563', lineHeight: 1.5 }}>
+                                  {notif.message}
+                                </p>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                  {targetBooking && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenBookingDetails(targetBooking)}
+                                      className="btn-submit-primary"
+                                      style={{
+                                        width: 'auto',
+                                        padding: '4px 10px',
+                                        fontSize: '0.75rem',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '5px',
+                                      }}
+                                    >
+                                      <Eye size={13} /> View Reservation <ExternalLink size={11} />
+                                    </button>
+                                  )}
+                                  {isInquiry && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setActiveTab('inquiries')}
+                                      className="btn-submit-primary"
+                                      style={{
+                                        width: 'auto',
+                                        padding: '4px 10px',
+                                        fontSize: '0.75rem',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '5px',
+                                      }}
+                                    >
+                                      <MessageSquare size={13} /> View Inquiry Inbox
+                                    </button>
+                                  )}
+                                  {!notif.read && (
+                                    <button
+                                      type="button"
+                                      onClick={() => markNotificationAsRead(notif.id)}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid var(--line)',
+                                        color: '#64748B',
+                                        borderRadius: '6px',
+                                        padding: '4px 10px',
+                                        fontSize: '0.75rem',
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                      }}
+                                    >
+                                      <Check size={12} /> Mark Read
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '2px solid var(--line)', textAlign: 'left', color: 'var(--muted)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
-                        <th style={{ padding: '10px' }}>Channel</th>
-                        <th style={{ padding: '10px' }}>Recipient</th>
-                        <th style={{ padding: '10px' }}>Message Payload</th>
-                        <th style={{ padding: '10px' }}>Status</th>
-                        <th style={{ padding: '10px' }}>Time</th>
-                        <th style={{ padding: '10px' }}>Ref</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {notificationLogs.map((log) => (
-                        <tr key={log.id} style={{ borderBottom: '1px solid var(--line)' }}>
-                          <td style={{ padding: '10px' }}>
-                            <span style={{
-                              padding: '2px 8px',
-                              borderRadius: '4px',
-                              fontSize: '0.72rem',
-                              fontWeight: 700,
-                              background: log.type === 'sms' ? '#FEF3C7' : '#DBEAFE',
-                              color: log.type === 'sms' ? '#D97706' : '#2563EB',
-                            }}>
-                              {log.provider}
-                            </span>
-                          </td>
-                          <td style={{ padding: '10px', fontWeight: 600 }}>{log.recipient}</td>
-                          <td style={{ padding: '10px', maxWidth: '380px' }}>
-                            {log.subject && <strong style={{ display: 'block', color: 'var(--ink)' }}>{log.subject}</strong>}
-                            <span style={{ color: 'var(--ink-light)', fontSize: '0.82rem', whiteSpace: 'pre-wrap' }}>{log.message}</span>
-                          </td>
-                          <td style={{ padding: '10px' }}>
-                            <span style={{
-                              padding: '2px 8px',
-                              borderRadius: '12px',
-                              fontSize: '0.72rem',
-                              fontWeight: 700,
-                              background: log.status === 'sent' ? '#D1FAE5' : log.status === 'simulated' ? '#EFF6FF' : '#FEE2E2',
-                              color: log.status === 'sent' ? '#059669' : log.status === 'simulated' ? '#2563EB' : '#DC2626',
-                            }}>
-                              {log.status === 'sent' ? 'Delivered' : log.status === 'simulated' ? 'Simulated Live' : 'Failed'}
-                            </span>
-                          </td>
-                          <td style={{ padding: '10px', color: 'var(--muted)', fontSize: '0.75rem' }}>
-                            {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                          </td>
-                          <td style={{ padding: '10px', color: 'var(--muted)', fontSize: '0.72rem' }}>
-                            {log.referenceId || '-'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              )}
+
+              {/* Subtab 2: SMS & Email Gateway Logs */}
+              {notifSubTab === 'gateway' && (
+                <div>
+                  <div style={{ marginBottom: '20px' }}>
+                    <h4 style={{ fontFamily: 'var(--font-sans)', fontSize: '1.05rem', fontWeight: 800, margin: '0 0 4px', color: '#18181B' }}>
+                      Semaphore SMS & Email Transactional Logs
+                    </h4>
+                    <p style={{ color: 'var(--muted)', fontSize: '0.85rem', margin: 0 }}>
+                      Real-time SMS dispatch register (booking confirmations, downpayment verification alerts, OTPs).
+                    </p>
+                  </div>
+
+                  {/* Server-side Semaphore dispatch and explicit test send */}
+                  <div className="admin-two-col-grid" style={{ display: 'grid', gap: '24px', marginBottom: '32px' }}>
+                    {/* Server-side Semaphore configuration */}
+                    <div style={{ background: 'var(--paper-warm)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--line)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                        <ShieldCheck size={18} style={{ color: 'var(--gold-dark)' }} />
+                        <strong style={{ fontSize: '0.95rem' }}>Semaphore SMS Gateway</strong>
+                      </div>
+                      <p style={{ fontSize: '0.82rem', color: 'var(--muted)', margin: '0 0 14px' }}>
+                        SMS requests are sent through our secure Netlify serverless function or Supabase Edge Function. Store the Semaphore API key as a server secret.
+                      </p>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+                        Status: <strong>Active & Connected</strong>
+                      </div>
+                    </div>
+
+                    {/* Dispatch Test SMS Form */}
+                    <form onSubmit={handleSendTestSms} style={{ background: 'var(--paper-warm)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--line)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                        <Send size={18} style={{ color: 'var(--terracotta)' }} />
+                        <strong style={{ fontSize: '0.95rem' }}>Send Test SMS</strong>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '10px', marginBottom: '12px' }}>
+                        <div>
+                          <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Recipient Mobile</label>
+                          <input
+                            type="tel"
+                            className="input-field"
+                            placeholder="0928 714 4597"
+                            value={testSmsPhone}
+                            onChange={(e) => setTestSmsPhone(e.target.value)}
+                            style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Message Body</label>
+                          <input
+                            type="text"
+                            className="input-field"
+                            value={testSmsMsg}
+                            onChange={(e) => setTestSmsMsg(e.target.value)}
+                            style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <button
+                          type="submit"
+                          disabled={isSendingTestSms}
+                          className="btn-submit-primary"
+                          style={{ width: 'auto', padding: '8px 18px', fontSize: '0.78rem' }}
+                        >
+                          {isSendingTestSms ? 'Dispatching...' : 'Dispatch Test SMS'}
+                        </button>
+                        {testSmsStatus && (
+                          <span style={{ fontSize: '0.78rem', color: testSmsStatus.includes('Failed') ? 'var(--terracotta)' : '#18181B', fontWeight: 600 }}>
+                            {testSmsStatus}
+                          </span>
+                        )}
+                      </div>
+                    </form>
+                  </div>
+
+                  {/* Notification Audit Log Register */}
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '16px' }}>
+                    Dispatched Payload Activity Log ({notificationLogs.length} events):
+                  </h4>
+
+                  {notificationLogs.length === 0 ? (
+                    <div style={{ padding: '32px', textAlign: 'center', background: 'var(--paper-warm)', borderRadius: 'var(--radius-md)', color: 'var(--muted)', fontSize: '0.88rem' }}>
+                      No notification events recorded yet. Perform a client registration, booking submission, or downpayment verification to view live events!
+                    </div>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '2px solid var(--line)', textAlign: 'left', color: 'var(--muted)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+                            <th style={{ padding: '10px' }}>Channel</th>
+                            <th style={{ padding: '10px' }}>Recipient</th>
+                            <th style={{ padding: '10px' }}>Message Payload</th>
+                            <th style={{ padding: '10px' }}>Status</th>
+                            <th style={{ padding: '10px' }}>Time</th>
+                            <th style={{ padding: '10px' }}>Ref</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {notificationLogs.map((log) => (
+                            <tr key={log.id} style={{ borderBottom: '1px solid var(--line)' }}>
+                              <td style={{ padding: '10px' }}>
+                                <span style={{
+                                  padding: '2px 8px',
+                                  borderRadius: '4px',
+                                  fontSize: '0.72rem',
+                                  fontWeight: 700,
+                                  background: log.type === 'sms' ? '#FEF3C7' : '#DBEAFE',
+                                  color: log.type === 'sms' ? '#D97706' : '#2563EB',
+                                }}>
+                                  {log.provider}
+                                </span>
+                              </td>
+                              <td style={{ padding: '10px', fontWeight: 600 }}>{log.recipient}</td>
+                              <td style={{ padding: '10px', maxWidth: '380px' }}>
+                                {log.subject && <strong style={{ display: 'block', color: 'var(--ink)' }}>{log.subject}</strong>}
+                                <span style={{ color: 'var(--ink-light)', fontSize: '0.82rem', whiteSpace: 'pre-wrap' }}>{log.message}</span>
+                              </td>
+                              <td style={{ padding: '10px' }}>
+                                <span style={{
+                                  padding: '2px 8px',
+                                  borderRadius: '12px',
+                                  fontSize: '0.72rem',
+                                  fontWeight: 700,
+                                  background: log.status === 'sent' ? '#D1FAE5' : log.status === 'simulated' ? '#EFF6FF' : '#FEE2E2',
+                                  color: log.status === 'sent' ? '#059669' : log.status === 'simulated' ? '#2563EB' : '#DC2626',
+                                }}>
+                                  {log.status === 'sent' ? 'Delivered' : log.status === 'simulated' ? 'Simulated Live' : 'Failed'}
+                                </span>
+                              </td>
+                              <td style={{ padding: '10px', color: 'var(--muted)', fontSize: '0.75rem' }}>
+                                {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              </td>
+                              <td style={{ padding: '10px', color: 'var(--muted)', fontSize: '0.72rem' }}>
+                                {log.referenceId || '-'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

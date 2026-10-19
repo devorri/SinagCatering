@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { ArrowRight, Eye, EyeOff, ShieldCheck } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { PasswordStrengthIndicator, getPasswordValidationError } from '../components/PasswordStrengthIndicator'
+import { LoadingScreen } from '../components/LoadingScreen'
 
 interface LoginPageProps {
   onLoginSuccess: (role: 'client' | 'admin') => void
@@ -21,6 +22,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [isRegistering, setIsRegistering] = useState(false)
   const [clientError, setClientError] = useState('')
+  const [isLoggingIn, setIsLoggingIn] = useState(false)
 
   const handleClientSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -70,18 +72,38 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       }
     }
 
+    setIsLoggingIn(true)
     const result = isRegistering
       ? await signUp(clientName, clientEmail, clientPhone, clientPassword)
       : await signIn(clientEmail, clientPassword)
     if (result.error) {
+      setIsLoggingIn(false)
       setClientError(result.error)
       return
     }
     if (result.confirmationRequired) {
+      setIsLoggingIn(false)
       setClientError('Check your email to confirm your account, then sign in here.')
       return
     }
-    if (result.user) onLoginSuccess(result.user.role)
+    const authenticatedUser = result.user
+    if (authenticatedUser) {
+      setTimeout(() => {
+        setIsLoggingIn(false)
+        onLoginSuccess(authenticatedUser.role)
+      }, 600)
+    } else {
+      setIsLoggingIn(false)
+    }
+  }
+
+  if (isLoggingIn) {
+    return (
+      <LoadingScreen
+        message={isRegistering ? 'Creating Client Account...' : 'Authenticating Session...'}
+        subMessage="Preparing your reservations and catering preferences..."
+      />
+    )
   }
 
   return (

@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react'
 import type { ReactNode } from 'react'
-import type { User, Booking, Review, Staff, Inquiry } from '../types'
+import type { User, Booking, Review, Staff, Inquiry, AdminNotification } from '../types'
 import { supabase } from '../lib/supabase'
-import { mapDatabasePackage, SINAG_PACKAGES } from '../data/packages'
+import { mapDatabasePackage, SINAG_PACKAGES, formatMoney } from '../data/packages'
 import type { CateringPackage } from '../data/packages'
 import {
   sendBookingSubmissionNotifications,
@@ -29,6 +29,7 @@ interface AppContextType {
   deleteReview: (reviewId: string) => void
   allocateStaff: (bookingId: string, staffIds: string[], assignedServices?: string[]) => void
   addStaff: (staffData: Omit<Staff, 'id' | 'status'>) => Promise<Staff>
+  removeStaff: (staffId: string) => Promise<void>
   blockDate: (date: string) => void
   unblockDate: (date: string) => void
   respondInquiry: (inquiryId: string, replyText: string) => void
@@ -37,6 +38,11 @@ interface AppContextType {
   updatePaymentStatus: (bookingId: string, paymentStatus: Booking['paymentStatus'], amount?: number) => void
   verifyDownpaymentBooking: (bookingId: string, verifiedAmount?: number) => void
   notifyUsers: (emails: string[], subject: string, message: string) => void
+  adminNotifications: AdminNotification[]
+  markNotificationAsRead: (id: string) => void
+  markAllNotificationsAsRead: () => void
+  clearAdminNotifications: () => void
+  addAdminNotification: (notif: Omit<AdminNotification, 'id' | 'timestamp' | 'read'>) => void
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined)
@@ -149,6 +155,92 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [baseStaff, setBaseStaff] = useState<Staff[]>(DEFAULT_STAFF)
   const [blockedDates, setBlockedDates] = useState<string[]>([])
   const [inquiries, setInquiries] = useState<Inquiry[]>([])
+
+  const ADMIN_NOTIF_STORAGE_KEY = 'sinag_admin_notifications'
+  const [adminNotifications, setAdminNotifications] = useState<AdminNotification[]>(() => {
+    try {
+      const stored = localStorage.getItem(ADMIN_NOTIF_STORAGE_KEY)
+      if (stored) return JSON.parse(stored)
+    } catch {
+      // fallback
+    }
+    return []
+  })
+
+  // Save admin notifications to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(ADMIN_NOTIF_STORAGE_KEY, JSON.stringify(adminNotifications))
+    } catch {
+      // ignore
+    }
+  }, [adminNotifications])
+
+  const addAdminNotification = (notif: Omit<AdminNotification, 'id' | 'timestamp' | 'read'>) => {
+    const newNotif: AdminNotification = {
+      ...notif,
+      id: `an-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      read: false,
+    }
+    setAdminNotifications((prev) => [newNotif, ...prev])
+  }
+
+  const markNotificationAsRead = (id: string) => {
+    setAdminNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+    )
+  }
+
+  const markAllNotificationsAsRead = () => {
+    setAdminNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
+  }
+
+  const clearAdminNotifications = () => {
+    setAdminNotifications([])
+    localStorage.removeItem(ADMIN_NOTIF_STORAGE_KEY)
+  }
+
+  // Seed initial notification history from bookings if storage is empty
+  useEffect(() => {
+    if (adminNotifications.length === 0 && bookings.length > 0) {
+      const seedNotifs: AdminNotification[] = []
+      bookings.slice(0, 15).forEach((b) => {
+        if (b.bookingStatus === 'completed' || b.paymentStatus === 'fully_paid') {
+          seedNotifs.push({
+            id: `an-comp-${b.id}`,
+            type: 'booking_completed',
+            title: 'Booking Completed & Settled',
+            message: `Event for ${b.customerName} on ${b.eventDate} marked as Completed. Full payment settled.`,
+            bookingId: b.id,
+            timestamp: b.createdAt || new Date().toISOString(),
+            read: true,
+          })
+        } else if (b.bookingStatus === 'confirmed' || b.paymentStatus === 'downpayment_paid') {
+          seedNotifs.push({
+            id: `an-conf-${b.id}`,
+            type: 'booking_confirmed',
+            title: 'Downpayment Verified & Confirmed',
+            message: `Booking #${b.id} for ${b.customerName} (${b.eventDate}) is verified and locked on the calendar.`,
+            bookingId: b.id,
+            timestamp: b.createdAt || new Date().toISOString(),
+            read: true,
+          })
+        } else {
+          seedNotifs.push({
+            id: `an-new-${b.id}`,
+            type: 'booking_new',
+            title: 'New Booking Request',
+            message: `${b.customerName} requested a ${b.eventType} reservation for ${b.eventDate} (${b.guestCount} pax). Ref: #${b.id}`,
+            bookingId: b.id,
+            timestamp: b.createdAt || new Date().toISOString(),
+            read: false,
+          })
+        }
+      })
+      setAdminNotifications(seedNotifs)
+    }
+  }, [bookings])
 
   // 1. Session Restoration
   useEffect(() => {
@@ -408,6 +500,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Trigger live Semaphore SMS and transactional email alerts
     sendBookingSubmissionNotifications(newBooking).catch(console.error)
 
+    addAdminNotification({
+      type: 'booking_new',
+      title: 'New Booking Request',
+      message: `${newBooking.customerName} submitted a ${newBooking.eventType} reservation for ${newBooking.eventDate} (${newBooking.guestCount} pax). Ref: #${newBooking.id}`,
+      bookingId: newBooking.id,
+    })
+
     return newBooking
   }
 
@@ -424,6 +523,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           : bk,
       ),
     )
+
+    addAdminNotification({
+      type: 'booking_confirmed',
+      title: 'Payment Proof Uploaded',
+      message: `Client submitted 50% downpayment proof (Ref: ${refNumber || 'Receipt Image'}) for Booking #${bookingId}. Pending verification.`,
+      bookingId,
+    })
 
     if (supabase) {
       supabase.from('bookings').update({
@@ -456,6 +562,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           : bk,
       ),
     )
+
+    addAdminNotification({
+      type: 'booking_cancelled',
+      title: 'Booking Cancelled',
+      message: `Booking #${bookingId} (${booking.customerName}) was cancelled. Refund: ${refundPercentage}%.`,
+      bookingId,
+    })
 
     if (supabase) {
       supabase.from('bookings').update({
@@ -596,6 +709,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return newStaff
   }
 
+  const removeStaff = async (staffId: string): Promise<void> => {
+    setBaseStaff((prev) => prev.filter((s) => s.id !== staffId))
+    if (supabase) {
+      const { error } = await supabase.from('staff').delete().eq('id', staffId)
+      if (error) console.error('Error deleting staff from Supabase:', error.message)
+    }
+  }
+
   const blockDate = (date: string) => {
     if (!blockedDates.includes(date)) {
       setBlockedDates((prev) => [...prev, date])
@@ -639,6 +760,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
     setInquiries((prev) => [newInq, ...prev])
 
+    addAdminNotification({
+      type: 'inquiry_new',
+      title: 'New Customer Inquiry',
+      message: `${name} sent an inquiry: "${message.slice(0, 80)}${message.length > 80 ? '...' : ''}"`,
+    })
+
     if (supabase) {
       supabase.from('catering_inquiries').insert({
         customer_name: name,
@@ -660,9 +787,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       prev.map((bk) => {
         if (bk.id !== bookingId) return bk
         const updated: Booking = { ...bk, paymentStatus }
-        if (paymentStatus === 'fully_paid') updated.bookingStatus = 'completed'
+        if (paymentStatus === 'fully_paid') {
+          updated.bookingStatus = 'completed'
+          addAdminNotification({
+            type: 'booking_completed',
+            title: 'Booking Completed & Fully Paid',
+            message: `Booking #${bk.id} (${bk.customerName}) has completed full payment of ${formatMoney(bk.totalPrice, bk.currency)}. Reservation moved to Completed.`,
+            bookingId: bk.id,
+          })
+        }
         if (paymentStatus === 'downpayment_paid') {
           updated.downpaymentAmount = amount ?? bk.downpaymentAmount ?? bk.totalPrice * 0.5
+          addAdminNotification({
+            type: 'booking_confirmed',
+            title: 'Downpayment Verified',
+            message: `Downpayment of ${formatMoney(updated.downpaymentAmount, bk.currency)} verified for Booking #${bk.id} (${bk.customerName}).`,
+            bookingId: bk.id,
+          })
         }
         return updated
       }),
@@ -688,6 +829,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     bookingStatus: Booking['bookingStatus'],
     paymentStatus?: Booking['paymentStatus'],
   ) => {
+    let targetBooking: Booking | undefined
     setBookings((prev) =>
       prev.map((bk) => {
         if (bk.id === bookingId) {
@@ -696,14 +838,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             updated.paymentStatus = paymentStatus
           } else {
             if (bookingStatus === 'confirmed' && bk.paymentStatus === 'pending_verification') {
-              updated.paymentStatus = 'partially_paid'
+              updated.paymentStatus = 'downpayment_paid'
             }
           }
+          targetBooking = updated
           return updated
         }
         return bk
       }),
     )
+
+    if (targetBooking && bookingStatus === 'confirmed') {
+      blockDate((targetBooking as Booking).eventDate)
+      sendPaymentVerificationNotifications(targetBooking as Booking).catch(console.error)
+      addAdminNotification({
+        type: 'booking_confirmed',
+        title: 'Booking Approved & Confirmed',
+        message: `Booking #${targetBooking.id} (${targetBooking.customerName}) was confirmed for ${targetBooking.eventDate}.`,
+        bookingId: targetBooking.id,
+      })
+    }
 
     if (supabase) {
       supabase.from('bookings').update({
@@ -736,6 +890,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (targetBooking) {
       blockDate((targetBooking as Booking).eventDate)
       sendPaymentVerificationNotifications(targetBooking as Booking).catch(console.error)
+      addAdminNotification({
+        type: 'booking_confirmed',
+        title: 'Downpayment Verified & Confirmed',
+        message: `Booking #${targetBooking.id} (${targetBooking.customerName}) confirmed for ${targetBooking.eventDate}. SMS and email notifications dispatched.`,
+        bookingId: targetBooking.id,
+      })
 
       if (supabase) {
         supabase.from('bookings').update({
@@ -771,6 +931,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         deleteReview,
         allocateStaff,
         addStaff,
+        removeStaff,
         blockDate,
         unblockDate,
         respondInquiry,
@@ -779,6 +940,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updatePaymentStatus,
         verifyDownpaymentBooking,
         notifyUsers,
+        adminNotifications,
+        markNotificationAsRead,
+        markAllNotificationsAsRead,
+        clearAdminNotifications,
+        addAdminNotification,
       }}
     >
       {children}

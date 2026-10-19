@@ -26,6 +26,7 @@ import type { Booking } from '../types'
 import { formatMoney } from '../data/packages'
 import { PasswordStrengthIndicator, getPasswordValidationError } from '../components/PasswordStrengthIndicator'
 import { EmbeddedCheckoutModal } from '../components/EmbeddedCheckoutModal'
+import { useConfirm } from '../context/ConfirmContext'
 
 export const ClientPortal: React.FC = () => {
   const {
@@ -38,6 +39,8 @@ export const ClientPortal: React.FC = () => {
     cancelBooking,
     rebookEvent,
   } = useApp()
+
+  const { confirm } = useConfirm()
 
   // Authentication states
   const [emailInput, setEmailInput] = useState('')
@@ -80,6 +83,15 @@ export const ClientPortal: React.FC = () => {
   // Filter bookings for current logged in client
   const clientBookings = bookings.filter((b) => b.email?.toLowerCase().trim() === currentUser?.email?.toLowerCase().trim())
   const activeBooking =
+    clientBookings.find(
+      (b) =>
+        b.bookingStatus === 'confirmed' ||
+        (b as any).status === 'confirmed' ||
+        (b as any).booking_status === 'confirmed' ||
+        b.paymentStatus === 'downpayment_paid' ||
+        (b as any).payment_status === 'downpayment_paid' ||
+        b.paymentStatus === 'fully_paid',
+    ) ||
     clientBookings.find((b) => b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit') ||
     clientBookings[0]
 
@@ -177,11 +189,32 @@ export const ClientPortal: React.FC = () => {
     setShowCancelModal(true)
   }
 
-  const handleCancelConfirm = () => {
+  const handleCancelConfirm = async () => {
     if (!selectedBooking) return
+    const refundText = cancelRefundResult && cancelRefundResult.refundAmount > 0
+      ? `Based on our cancellation policy, your estimated refund is ${formatMoney(cancelRefundResult.refundAmount, selectedBooking.currency)} (${cancelRefundResult.refundPercentage}%).`
+      : 'Under our cancellation policy, no refund applies for this notice period.'
+    const ok = await confirm({
+      title: 'Confirm Booking Cancellation',
+      message: `Are you sure you want to cancel booking #${selectedBooking.id} (${selectedBooking.eventType} on ${selectedBooking.eventDate})?\n\n${refundText}`,
+      confirmText: 'Yes, Cancel Reservation',
+      cancelText: 'Keep My Booking',
+      variant: 'danger',
+    })
+    if (!ok) return
     cancelBooking(selectedBooking.id)
-    alert('Booking cancelled successfully.')
     setShowCancelModal(false)
+  }
+
+  const handleClientLogout = async () => {
+    const ok = await confirm({
+      title: 'Sign Out',
+      message: 'Are you sure you want to sign out of your client portal session?',
+      confirmText: 'Sign Out',
+      cancelText: 'Stay Signed In',
+      variant: 'primary',
+    })
+    if (ok) logout()
   }
 
   const viewInvoice = (booking: Booking) => {
@@ -318,7 +351,7 @@ export const ClientPortal: React.FC = () => {
           </p>
         </div>
         <div className="portal-header-actions">
-          <button onClick={logout} className="portal-btn-ghost">
+          <button onClick={handleClientLogout} className="portal-btn-ghost">
             <LogOut size={14} />
             <span>Sign Out</span>
           </button>
@@ -348,17 +381,13 @@ export const ClientPortal: React.FC = () => {
               <span style={{ color: 'var(--muted)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                 No Active Booking
               </span>
-            ) : activeBooking.paymentStatus === 'fully_paid' ? (
+            ) : activeBooking.paymentStatus === 'fully_paid' || (activeBooking as any).payment_status === 'fully_paid' ? (
               <span style={{ color: '#059669', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                 <CheckCircle size={16} /> Fully Paid
               </span>
-            ) : activeBooking.paymentStatus === 'downpayment_paid' || (activeBooking as any).payment_status === 'downpayment_paid' ? (
+            ) : activeBooking.paymentStatus === 'downpayment_paid' || (activeBooking as any).payment_status === 'downpayment_paid' || activeBooking.bookingStatus === 'confirmed' || (activeBooking as any).status === 'confirmed' || (activeBooking as any).booking_status === 'confirmed' ? (
               <span style={{ color: '#059669', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                 <CheckCircle size={16} /> Downpayment Verified
-              </span>
-            ) : activeBooking.bookingStatus === 'confirmed' || (activeBooking as any).status === 'confirmed' ? (
-              <span style={{ color: '#059669', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                <CheckCircle size={16} /> Reservation Confirmed
               </span>
             ) : activeBooking.paymentStatus === 'partially_paid' ? (
               <span style={{ color: '#2563EB', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
@@ -377,7 +406,7 @@ export const ClientPortal: React.FC = () => {
           <span className="portal-summary-sub">
             {!activeBooking
               ? 'No active reservation'
-              : activeBooking.paymentStatus === 'unpaid' && activeBooking.bookingStatus !== 'confirmed'
+              : activeBooking.paymentStatus === 'unpaid' && activeBooking.bookingStatus !== 'confirmed' && (activeBooking as any).booking_status !== 'confirmed'
               ? 'Required to lock calendar date'
               : 'Reservation status active'}
           </span>
@@ -509,7 +538,7 @@ export const ClientPortal: React.FC = () => {
                 </div>
 
                 {/* Payment Actions Box */}
-                {booking.paymentStatus === 'unpaid' && (
+                {booking.paymentStatus === 'unpaid' && booking.bookingStatus !== 'confirmed' && (activeBooking as any).booking_status !== 'confirmed' && (
                   <div className="portal-checkout-panel">
                     <div className="portal-checkout-grid">
                       {/* Left Column: QR & Instant Payment */}

@@ -86,3 +86,14 @@ export interface NotificationLog {
   provider: 'Semaphore' | 'Email'
   referenceId?: string
 }
+
+export interface AdminNotification {
+  id: string
+  type: 'booking_new' | 'booking_confirmed' | 'booking_completed' | 'booking_cancelled' | 'inquiry_new' | 'review_new'
+  title: string
+  message: string
+  bookingId?: string
+  timestamp: string
+  read: boolean
+}
+

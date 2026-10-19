@@ -3,6 +3,7 @@ import Lenis from 'lenis'
 import { Bot, CalendarDays, Clock3, LogOut, Mail, MapPin, Menu, Phone, User, X } from 'lucide-react'
 import './App.css'
 import { AppProvider, useApp } from './context/AppContext'
+import { ConfirmProvider } from './context/ConfirmContext'
 import { AdminDashboard } from './views/AdminDashboard'
 import { AIAssistant } from './views/AIAssistant'
 import { BookingWizard } from './views/BookingWizard'
@@ -632,7 +633,9 @@ function AppContent() {
 function App() {
   return (
     <AppProvider>
-      <AppContent />
+      <ConfirmProvider>
+        <AppContent />
+      </ConfirmProvider>
     </AppProvider>
   )
 }
