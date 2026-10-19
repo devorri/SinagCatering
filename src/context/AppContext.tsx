@@ -8,6 +8,7 @@ import {
   sendBookingSubmissionNotifications,
   sendPaymentVerificationNotifications,
 } from '../lib/notifications'
+import { playNotificationSound } from '../lib/sound'
 
 interface AppContextType {
   currentUser: User | null
@@ -43,6 +44,7 @@ interface AppContextType {
   markAllNotificationsAsRead: () => void
   clearAdminNotifications: () => void
   addAdminNotification: (notif: Omit<AdminNotification, 'id' | 'timestamp' | 'read'>) => void
+  playNotificationSound: () => void
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined)
@@ -184,6 +186,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       read: false,
     }
     setAdminNotifications((prev) => [newNotif, ...prev])
+    playNotificationSound()
   }
 
   const markNotificationAsRead = (id: string) => {
@@ -256,6 +259,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const client = supabase
     const channel = client.channel('sinag-live-bookings')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
+        playNotificationSound()
         client.from('bookings').select('*').order('created_at', { ascending: false }).then(({ data }) => {
           if (data) setBookings(data.map(mapDbBooking))
         })
@@ -945,6 +949,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         markAllNotificationsAsRead,
         clearAdminNotifications,
         addAdminNotification,
+        playNotificationSound,
       }}
     >
       {children}

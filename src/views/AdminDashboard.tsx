@@ -32,6 +32,7 @@ import {
   CheckCheck,
   Filter,
   ExternalLink,
+  Volume2,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useConfirm } from '../context/ConfirmContext'
@@ -75,6 +76,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     markNotificationAsRead,
     markAllNotificationsAsRead,
     clearAdminNotifications,
+    playNotificationSound,
   } = useApp()
 
   const { confirm } = useConfirm()
@@ -2391,6 +2393,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
                 {notifSubTab === 'activity' ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={playNotificationSound}
+                      title="Play Sinag Notification Chime"
+                      className="btn-nav-logout"
+                      style={{
+                        fontSize: '0.78rem',
+                        color: 'var(--gold-dark)',
+                      }}
+                    >
+                      <Volume2 size={14} /> Test Chime
+                    </button>
                     <button
                       type="button"
                       onClick={markAllNotificationsAsRead}
