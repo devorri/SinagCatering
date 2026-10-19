@@ -37,6 +37,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  User as UserIcon,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useConfirm } from '../context/ConfirmContext'
@@ -47,6 +48,8 @@ import {
   sendSemaphoreSMS,
 } from '../lib/notifications'
 import { formatMoney } from '../data/packages'
+import { ForgotPasswordModal } from '../components/ForgotPasswordModal'
+import { UserProfileModal } from '../components/UserProfileModal'
 
 type AdminTabType = 'analytics' | 'bookings' | 'calendar' | 'staff' | 'reviews' | 'inquiries' | 'notifications'
 
@@ -121,6 +124,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loginError, setLoginError] = useState('')
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
+  const [showProfileModal, setShowProfileModal] = useState(false)
 
   // Admin section navigation state
   const [activeTab, setActiveTab] = useState<AdminTabType>('analytics')
@@ -895,7 +900,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             </div>
 
             <div className="form-group">
-              <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155' }}>Password</label>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155' }}>Password</label>
+                <button
+                  type="button"
+                  onClick={() => setShowForgotPassword(true)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--terracotta)',
+                    fontSize: '0.78rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    textDecoration: 'underline',
+                    padding: 0,
+                  }}
+                >
+                  Forgot password?
+                </button>
+              </div>
               <input
                 type="password"
                 className="input-field"
@@ -934,6 +957,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             </button>
           </div>
         </div>
+
+        <ForgotPasswordModal
+          isOpen={showForgotPassword}
+          onClose={() => setShowForgotPassword(false)}
+          initialIdentifier={email || 'admin@sinagcatering.ph'}
+          initialMethod="email"
+          onSuccess={() => setShowForgotPassword(false)}
+        />
       </div>
     )
   }
@@ -1028,12 +1059,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         </div>
 
         <div className="admin-sidebar-footer">
-          <div className="admin-user-chip">
+          <div
+            className="admin-user-chip"
+            onClick={() => setShowProfileModal(true)}
+            style={{ cursor: 'pointer' }}
+            title="Open Admin Profile & Security Settings"
+          >
             <div className="admin-avatar">A</div>
             <div>
               <strong style={{ display: 'block', fontSize: '0.86rem', color: '#18181B' }}>{currentUser.name}</strong>
-              <span style={{ fontSize: '0.74rem', color: '#71717A', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#71717A', display: 'inline-block' }}></span> Active Session
+              <span style={{ fontSize: '0.74rem', color: 'var(--gold-dark)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                Profile & Security
               </span>
             </div>
           </div>
@@ -1072,6 +1108,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button
+              type="button"
+              className="admin-notification-bell"
+              title="Admin Profile & Password"
+              onClick={() => setShowProfileModal(true)}
+              style={{ cursor: 'pointer' }}
+            >
+              <UserIcon size={16} />
+            </button>
+
             <button
               type="button"
               className="admin-notification-bell"
@@ -3432,6 +3478,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           )}
         </div>
       </div>
+
+      {/* ADMIN PROFILE & CHANGE PASSWORD MODAL */}
+      {showProfileModal && (
+        <UserProfileModal
+          isOpen={showProfileModal}
+          onClose={() => setShowProfileModal(false)}
+        />
+      )}
     </div>
   )
 }

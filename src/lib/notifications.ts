@@ -405,6 +405,114 @@ export const sendRegistrationOTP = async (phone: string, otp: string) => {
 }
 
 /**
+ * Trigger Email OTP verification for Password Reset matching EmailJS template {{passcode}} & {{time}}
+ */
+export const sendPasswordResetEmailOTP = async (
+  recipientEmail: string,
+  otpCode: string,
+): Promise<{ success: boolean; simulated?: boolean; error?: string }> => {
+  const expiryDate = new Date(Date.now() + 15 * 60 * 1000)
+  const formattedTime = expiryDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+
+  // Use the exact customized template provided
+  const otpMessage = `To authenticate, please use the following One Time Password (OTP):
+
+${otpCode}
+
+This OTP will be valid for 15 minutes till ${formattedTime}.
+
+Do not share this OTP with anyone. If you didn't make this request, you can safely ignore this email.
+Sinag Catering will never contact you about this email or ask for any login codes or links. Beware of phishing scams.
+
+Thanks for visiting Sinag Catering!`
+
+  const serviceId = import.meta.env.VITE_EMAILJS_SERVICE_ID as string | undefined
+  const templateId = import.meta.env.VITE_EMAILJS_TEMPLATE_ID as string | undefined
+  const publicKey = import.meta.env.VITE_EMAILJS_PUBLIC_KEY as string | undefined
+
+  if (!serviceId || !templateId || !publicKey) {
+    logNotification({
+      type: 'email',
+      recipient: recipientEmail,
+      subject: 'Sinag Catering Password Reset OTP',
+      message: otpMessage,
+      status: 'simulated',
+      provider: 'Email',
+      referenceId: 'OTP-RESET-PW',
+    })
+    return { success: true, simulated: true }
+  }
+
+  try {
+    const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        service_id: serviceId,
+        template_id: templateId,
+        user_id: publicKey,
+        template_params: {
+          to_email: recipientEmail,
+          email: recipientEmail,
+          to_name: recipientEmail.split('@')[0],
+          passcode: otpCode,
+          time: formattedTime,
+          message: otpMessage,
+          company_name: 'Sinag Catering',
+          company: 'Sinag Catering',
+        },
+      }),
+    })
+
+    if (!response.ok) {
+      const errText = await response.text()
+      logNotification({
+        type: 'email',
+        recipient: recipientEmail,
+        subject: 'Sinag Catering Password Reset OTP',
+        message: `${otpMessage} [Warning: ${errText}]`,
+        status: 'failed',
+        provider: 'Email',
+        referenceId: 'OTP-RESET-PW',
+      })
+      return { success: false, simulated: false, error: errText }
+    }
+
+    logNotification({
+      type: 'email',
+      recipient: recipientEmail,
+      subject: 'Sinag Catering Password Reset OTP',
+      message: otpMessage,
+      status: 'sent',
+      provider: 'Email',
+      referenceId: 'OTP-RESET-PW',
+    })
+    return { success: true, simulated: false }
+  } catch (err: any) {
+    logNotification({
+      type: 'email',
+      recipient: recipientEmail,
+      subject: 'Sinag Catering Password Reset OTP',
+      message: `${otpMessage} [Error: ${err.message}]`,
+      status: 'failed',
+      provider: 'Email',
+      referenceId: 'OTP-RESET-PW',
+    })
+    return { success: false, error: err.message }
+  }
+}
+
+/**
+ * Trigger SMS OTP verification code for Password Reset
+ */
+export const sendPasswordResetSMSOTP = async (phone: string, otp: string) => {
+  const expiryDate = new Date(Date.now() + 15 * 60 * 1000)
+  const formattedTime = expiryDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+  const message = `[Sinag Catering] Your password reset OTP is: ${otp}. Valid for 15 minutes till ${formattedTime}. Do not share this OTP with anyone.`
+  return await sendSemaphoreSMS(phone, message, 'OTP-RESET-PW')
+}
+
+/**
  * Trigger Booking Submission alerts (SMS + Email)
  */
 export const sendBookingSubmissionNotifications = async (booking: Booking) => {

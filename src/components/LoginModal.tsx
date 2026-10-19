@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { ArrowRight, X, Eye, EyeOff, AlertCircle, Lock, Sparkles, CheckCircle2, ShieldCheck } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { PasswordStrengthIndicator, getPasswordValidationError } from './PasswordStrengthIndicator'
+import { ForgotPasswordModal } from './ForgotPasswordModal'
 
 interface LoginModalProps {
   isOpen: boolean
@@ -23,6 +24,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
   const [error, setError] = useState('')
   const [infoMessage, setInfoMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
 
   if (!isOpen) return null
 
@@ -245,9 +247,27 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
             {isRegistering ? (
               <PasswordStrengthIndicator password={password} showChecklist={true} />
             ) : (
-              <span style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '4px' }}>
-                Enter your account password
-              </span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
+                <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>
+                  Enter your account password
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowForgotPassword(true)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--terracotta)',
+                    fontSize: '0.74rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    textDecoration: 'underline',
+                    padding: 0,
+                  }}
+                >
+                  Forgot password?
+                </button>
+              </div>
             )}
           </div>
 
@@ -381,6 +401,14 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
           </div>
         </form>
       </div>
+
+      <ForgotPasswordModal
+        isOpen={showForgotPassword}
+        onClose={() => setShowForgotPassword(false)}
+        initialIdentifier={email}
+        initialMethod="email"
+        onSuccess={() => setShowForgotPassword(false)}
+      />
     </div>
   )
 }

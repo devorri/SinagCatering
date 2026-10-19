@@ -7,8 +7,35 @@ import type { CateringPackage } from '../data/packages'
 import {
   sendBookingSubmissionNotifications,
   sendPaymentVerificationNotifications,
+  sendPasswordResetEmailOTP,
+  sendPasswordResetSMSOTP,
+  normalizePhPhoneNumber,
 } from '../lib/notifications'
 import { playNotificationSound } from '../lib/sound'
+import { getPasswordValidationError } from '../components/PasswordStrengthIndicator'
+
+export const maskEmail = (email: string): string => {
+  const parts = email.split('@')
+  if (parts.length !== 2) return email
+  const name = parts[0]
+  const domain = parts[1]
+  if (name.length <= 2) {
+    return `${name[0]}***@${domain}`
+  }
+  return `${name[0]}${name[1]}***${name[name.length - 1]}@${domain}`
+}
+
+export const maskPhone = (phone: string): string => {
+  const clean = phone.replace(/[^0-9]/g, '')
+  if (clean.length < 10) return phone
+  if (clean.startsWith('63') && clean.length === 12) {
+    return `+63 ${clean.slice(2, 5)} ••• ${clean.slice(-4)}`
+  }
+  if (clean.startsWith('09') && clean.length === 11) {
+    return `${clean.slice(0, 4)} ••• ${clean.slice(-4)}`
+  }
+  return `${clean.slice(0, 4)} ••• ${clean.slice(-4)}`
+}
 
 interface AppContextType {
   currentUser: User | null
@@ -21,6 +48,10 @@ interface AppContextType {
   signIn: (email: string, password: string) => Promise<{ user: User | null; error: string | null; confirmationRequired?: boolean }>
   signUp: (name: string, email: string, phone: string, password: string) => Promise<{ user: User | null; error: string | null; confirmationRequired?: boolean }>
   logout: () => Promise<void>
+  requestPasswordResetOTP: (identifier: string, method: 'email' | 'sms') => Promise<{ success: boolean; maskedTarget?: string; error?: string; simulatedOtp?: string }>
+  verifyAndResetPassword: (otpCode: string, newPassword: string) => Promise<{ success: boolean; error?: string }>
+  changeUserPassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>
+  updateUserProfile: (name: string, phone: string) => Promise<{ success: boolean; error?: string }>
   createBooking: (bookingData: Omit<Booking, 'id' | 'userId' | 'createdAt' | 'bookingStatus' | 'paymentStatus' | 'staffIds'> & { proofOfPaymentUrl?: string | null }, bookingId?: string) => Booking
   uploadPayment: (bookingId: string, proofUrl: string, refNumber?: string) => void
   cancelBooking: (bookingId: string) => { refundPercentage: number; refundAmount: number }
@@ -465,6 +496,213 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     sessionStorage.removeItem(SESSION_TOKEN_KEY)
     sessionStorage.removeItem(LOCAL_USER_BACKUP_KEY)
     setCurrentUser(null)
+  }
+
+  const requestPasswordResetOTP = async (
+    identifier: string,
+    method: 'email' | 'sms',
+  ): Promise<{ success: boolean; maskedTarget?: string; error?: string; simulatedOtp?: string }> => {
+    let targetUser: { id: string; email: string; phone?: string; full_name?: string } | null = null
+
+    if (method === 'email') {
+      const cleanEmail = identifier.trim().toLowerCase()
+      if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        return { success: false, error: 'Please enter a valid email address format (e.g. name@domain.com).' }
+      }
+      if (supabase) {
+        try {
+          const { data, error } = await supabase
+            .from('users')
+            .select('id, email, phone, full_name')
+            .ilike('email', cleanEmail)
+            .maybeSingle()
+          if (!error && data) targetUser = data
+        } catch (err) {
+          console.warn('Error querying user by email:', err)
+        }
+      }
+      if (!targetUser && cleanEmail === 'admin@sinagcatering.ph') {
+        targetUser = { id: 'admin-seed-id', email: 'admin@sinagcatering.ph', phone: '0928 714 4597', full_name: 'Executive Admin' }
+      }
+      if (!targetUser && currentUser && currentUser.email.toLowerCase() === cleanEmail) {
+        targetUser = { id: currentUser.id, email: currentUser.email, phone: currentUser.phone, full_name: currentUser.name }
+      }
+      if (!targetUser) {
+        return { success: false, error: 'No registered account found with this email address. Please double-check spelling.' }
+      }
+    } else {
+      const cleanDigits = identifier.replace(/[^0-9]/g, '')
+      if (cleanDigits.length < 10) {
+        return { success: false, error: 'Please provide a valid Philippine mobile number (e.g. 0928 714 4597).' }
+      }
+      const normInputPhone = normalizePhPhoneNumber(identifier)
+      if (supabase) {
+        try {
+          const { data } = await supabase.from('users').select('id, email, phone, full_name')
+          if (data && data.length > 0) {
+            targetUser = data.find((u: any) => u.phone && normalizePhPhoneNumber(u.phone) === normInputPhone) || null
+          }
+        } catch (err) {
+          console.warn('Error querying user by phone:', err)
+        }
+      }
+      if (!targetUser && (normInputPhone.endsWith('9287144597') || normInputPhone.includes('9287144597'))) {
+        targetUser = { id: 'admin-seed-id', email: 'admin@sinagcatering.ph', phone: '0928 714 4597', full_name: 'Executive Admin' }
+      }
+      if (!targetUser && currentUser && currentUser.phone && normalizePhPhoneNumber(currentUser.phone) === normInputPhone) {
+        targetUser = { id: currentUser.id, email: currentUser.email, phone: currentUser.phone, full_name: currentUser.name }
+      }
+      if (!targetUser) {
+        return { success: false, error: 'No registered account found with this mobile number.' }
+      }
+    }
+
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString()
+    const sessionData = {
+      userId: targetUser.id,
+      email: targetUser.email,
+      phone: targetUser.phone || identifier,
+      otp: otpCode,
+      expiresAt: Date.now() + 15 * 60 * 1000,
+      method,
+    }
+    sessionStorage.setItem('sinag_pwd_reset_session', JSON.stringify(sessionData))
+
+    let sendRes: { success: boolean; simulated?: boolean; error?: string }
+    if (method === 'email') {
+      sendRes = await sendPasswordResetEmailOTP(targetUser.email, otpCode)
+    } else {
+      sendRes = await sendPasswordResetSMSOTP(targetUser.phone || identifier, otpCode)
+    }
+
+    const maskedTarget = method === 'email'
+      ? maskEmail(targetUser.email)
+      : maskPhone(targetUser.phone || identifier)
+
+    return {
+      success: true,
+      maskedTarget,
+      simulatedOtp: sendRes.simulated ? otpCode : undefined,
+    }
+  }
+
+  const verifyAndResetPassword = async (
+    otpInput: string,
+    newPassword: string,
+  ): Promise<{ success: boolean; error?: string }> => {
+    const raw = sessionStorage.getItem('sinag_pwd_reset_session')
+    if (!raw) {
+      return { success: false, error: 'Reset session expired or not found. Please request a new OTP.' }
+    }
+    let sessionData: any
+    try {
+      sessionData = JSON.parse(raw)
+    } catch {
+      return { success: false, error: 'Invalid session state. Please request a new OTP.' }
+    }
+
+    if (Date.now() > sessionData.expiresAt) {
+      return { success: false, error: 'This OTP has expired (15-minute window). Please request a new code.' }
+    }
+
+    if (sessionData.otp !== otpInput.trim()) {
+      return { success: false, error: 'Incorrect 6-digit OTP passcode. Please check and try again.' }
+    }
+
+    const passwordError = getPasswordValidationError(newPassword)
+    if (passwordError) {
+      return { success: false, error: passwordError }
+    }
+
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('users')
+          .update({ password: newPassword, updated_at: new Date().toISOString() })
+          .eq('id', sessionData.userId)
+        if (error) {
+          console.error('Supabase password reset update error:', error)
+          return { success: false, error: error.message }
+        }
+      } catch (err: any) {
+        return { success: false, error: err.message || 'Failed to update password in database.' }
+      }
+    }
+
+    sessionStorage.removeItem('sinag_pwd_reset_session')
+    return { success: true }
+  }
+
+  const changeUserPassword = async (
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!currentUser) return { success: false, error: 'You must be signed in to change your password.' }
+
+    const passwordError = getPasswordValidationError(newPassword)
+    if (passwordError) return { success: false, error: passwordError }
+
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('id, password')
+          .eq('id', currentUser.id)
+          .maybeSingle()
+
+        if (error) return { success: false, error: error.message }
+        if (data && data.password !== currentPassword) {
+          return { success: false, error: 'Current password does not match. Please verify your current password.' }
+        }
+
+        const { error: updateErr } = await supabase
+          .from('users')
+          .update({ password: newPassword, updated_at: new Date().toISOString() })
+          .eq('id', currentUser.id)
+
+        if (updateErr) return { success: false, error: updateErr.message }
+      } catch (err: any) {
+        return { success: false, error: err.message || 'Failed to update password.' }
+      }
+    }
+
+    return { success: true }
+  }
+
+  const updateUserProfile = async (
+    name: string,
+    phone: string,
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!currentUser) return { success: false, error: 'You must be signed in to update your profile.' }
+
+    const cleanName = name.trim()
+    const cleanPhone = phone.trim()
+    if (!cleanName || cleanName.length < 2) return { success: false, error: 'Please enter a valid full name.' }
+
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('users')
+          .update({
+            full_name: cleanName,
+            phone: cleanPhone,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', currentUser.id)
+        if (error) return { success: false, error: error.message }
+      } catch (err: any) {
+        return { success: false, error: err.message || 'Failed to update profile.' }
+      }
+    }
+
+    const updated: User = {
+      ...currentUser,
+      name: cleanName,
+      phone: cleanPhone || undefined,
+    }
+    setCurrentUser(updated)
+    sessionStorage.setItem(LOCAL_USER_BACKUP_KEY, JSON.stringify(updated))
+    return { success: true }
   }
 
   const createBooking = (bookingData: Omit<Booking, 'id' | 'userId' | 'createdAt' | 'bookingStatus' | 'paymentStatus' | 'staffIds'> & { proofOfPaymentUrl?: string | null }, bookingId?: string): Booking => {
@@ -926,6 +1164,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         signIn,
         signUp,
         logout,
+        requestPasswordResetOTP,
+        verifyAndResetPassword,
+        changeUserPassword,
+        updateUserProfile,
         createBooking,
         uploadPayment,
         cancelBooking,

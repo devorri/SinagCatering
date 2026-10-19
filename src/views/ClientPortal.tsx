@@ -20,6 +20,7 @@ import {
   ArrowUpRight,
   Lock,
   CalendarDays,
+  User as UserIcon,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import type { Booking } from '../types'
@@ -27,6 +28,8 @@ import { formatMoney } from '../data/packages'
 import { PasswordStrengthIndicator, getPasswordValidationError } from '../components/PasswordStrengthIndicator'
 import { EmbeddedCheckoutModal } from '../components/EmbeddedCheckoutModal'
 import { useConfirm } from '../context/ConfirmContext'
+import { ForgotPasswordModal } from '../components/ForgotPasswordModal'
+import { UserProfileModal } from '../components/UserProfileModal'
 
 export const ClientPortal: React.FC = () => {
   const {
@@ -51,6 +54,8 @@ export const ClientPortal: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState('')
   const [paymentRefInput, setPaymentRefInput] = useState('')
   const [paymentProofError, setPaymentProofError] = useState('')
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
+  const [showProfileModal, setShowProfileModal] = useState(false)
 
   // Action states
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null)
@@ -299,9 +304,27 @@ export const ClientPortal: React.FC = () => {
               {isRegistering ? (
                 <PasswordStrengthIndicator password={passwordInput} showChecklist={true} />
               ) : (
-                <span style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '4px' }}>
-                  Enter your account password
-                </span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>
+                    Enter your account password
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowForgotPassword(true)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--terracotta)',
+                      fontSize: '0.74rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                      padding: 0,
+                    }}
+                  >
+                    Forgot password?
+                  </button>
+                </div>
               )}
             </div>
 
@@ -327,6 +350,14 @@ export const ClientPortal: React.FC = () => {
           </div>
 
         </div>
+
+        <ForgotPasswordModal
+          isOpen={showForgotPassword}
+          onClose={() => setShowForgotPassword(false)}
+          initialIdentifier={emailInput}
+          initialMethod="email"
+          onSuccess={() => setShowForgotPassword(false)}
+        />
       </div>
     )
   }
@@ -350,7 +381,24 @@ export const ClientPortal: React.FC = () => {
             Review event reservations, track payment verifications, and download official invoices.
           </p>
         </div>
-        <div className="portal-header-actions">
+        <div className="portal-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button
+            type="button"
+            onClick={() => setShowProfileModal(true)}
+            className="btn-nav-login"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 14px',
+              fontSize: '0.84rem',
+              fontWeight: 600,
+              borderRadius: '8px',
+            }}
+          >
+            <UserIcon size={14} />
+            <span>My Profile</span>
+          </button>
           <button onClick={handleClientLogout} className="portal-btn-ghost">
             <LogOut size={14} />
             <span>Sign Out</span>
@@ -935,6 +983,14 @@ export const ClientPortal: React.FC = () => {
           onPaymentSuccess={(_ref) => {
             // Updated directly in database & AppContext
           }}
+        />
+      )}
+
+      {/* USER PROFILE & CHANGE PASSWORD MODAL */}
+      {showProfileModal && (
+        <UserProfileModal
+          isOpen={showProfileModal}
+          onClose={() => setShowProfileModal(false)}
         />
       )}
     </div>
