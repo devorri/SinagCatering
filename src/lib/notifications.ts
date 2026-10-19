@@ -415,7 +415,9 @@ export const sendPasswordResetEmailOTP = async (
   const formattedTime = expiryDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
 
   // Use the exact customized template provided
-  const otpMessage = `To authenticate, please use the following One Time Password (OTP):
+  const otpMessage = `Hello ${recipientEmail.split('@')[0]},
+
+To authenticate your password reset request, please use the following One Time Password (OTP):
 
 ${otpCode}
 
