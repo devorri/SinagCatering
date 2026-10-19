@@ -33,6 +33,10 @@ import {
   Filter,
   ExternalLink,
   Volume2,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useConfirm } from '../context/ConfirmContext'
@@ -822,6 +826,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     })
   }, [filteredBookings, bookingSortCol, bookingSortDir])
 
+  // Pagination for Master Reservations Register (10 rows per page)
+  const [bookingPage, setBookingPage] = useState(1)
+  const [rowsPerPage, setRowsPerPage] = useState(10)
+
+  // Auto-reset page to 1 whenever filters or sorting change
+  useEffect(() => {
+    setBookingPage(1)
+  }, [bookingFilter, searchQuery, bookingSortCol, bookingSortDir, rowsPerPage])
+
+  const totalBookingPages = Math.max(1, Math.ceil(sortedBookings.length / rowsPerPage))
+  const safeBookingPage = Math.min(bookingPage, totalBookingPages)
+
+  const paginatedBookings = useMemo(() => {
+    const start = (safeBookingPage - 1) * rowsPerPage
+    return sortedBookings.slice(start, start + rowsPerPage)
+  }, [sortedBookings, safeBookingPage, rowsPerPage])
+
   // Sorted inquiries
   const sortedInquiries = useMemo(() => {
     return [...inquiries].sort((a, b) => {
@@ -1508,95 +1529,267 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {sortedBookings.map((b) => (
-                      <tr key={b.id}>
-                        <td className="font-number" style={{ fontWeight: 700, fontSize: '0.8rem', color: '#78716C' }}>
-                          #{b.id.slice(0, 14)}...
-                        </td>
-                        <td>
-                          <div style={{ fontWeight: 700, color: '#18181B' }}>{b.customerName}</div>
-                          <div style={{ fontSize: '0.8rem', color: '#71717A' }}>{b.email}</div>
-                        </td>
-                        <td>
-                          <div style={{ fontWeight: 600, color: '#18181B' }}>{b.eventType} ({b.guestCount} pax)</div>
-                          <div style={{ fontSize: '0.82rem', color: '#71717A' }}>{b.eventDate}</div>
-                        </td>
-                        <td className="font-number" style={{ fontWeight: 700, color: '#9A3412' }}>
-                          {formatMoney(b.totalPrice, b.currency)}
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', gap: '4px', flexDirection: 'column' }}>
-                            <span className={`portal-status-badge badge-payment-${b.paymentStatus}`} style={{ width: 'fit-content' }}>
-                              <span className="status-dot" />
-                              <span style={{ textTransform: 'capitalize' }}>
-                                {b.paymentStatus === 'downpayment_paid' ? 'Downpayment' : b.paymentStatus.replace('_', ' ')}
-                              </span>
-                            </span>
-                            {b.paymentStatus === 'downpayment_paid' && b.downpaymentAmount && (
-                              <span style={{ fontSize: '0.72rem', color: '#71717A' }}>
-                                {formatMoney(b.downpaymentAmount, b.currency)}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td>
-                          <span className={`portal-status-badge badge-${b.bookingStatus}`} style={{ width: 'fit-content' }}>
-                            <span className="status-dot" />
-                            <span style={{ textTransform: 'capitalize' }}>
-                              {b.bookingStatus === 'forfeit' ? 'Forfeited' : b.bookingStatus}
-                            </span>
-                          </span>
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                            <button
-                              onClick={() => handleOpenBookingDetails(b)}
-                              className="btn-action-view"
-                            >
-                              <Eye size={13} /> View
-                            </button>
-
-                            {b.bookingStatus === 'pending' && (
-                              <>
-                                <button
-                                  onClick={() => handleApproveBooking(b)}
-                                  className="btn-action-approve"
-                                >
-                                  <Check size={13} /> Approve
-                                </button>
-                                <button
-                                  onClick={() => handleRejectBooking(b.id)}
-                                  className="btn-action-forfeit"
-                                  style={{ color: '#DC2626' }}
-                                >
-                                  <X size={13} /> Reject
-                                </button>
-                              </>
-                            )}
-
-                            {b.bookingStatus === 'confirmed' && b.paymentStatus === 'downpayment_paid' && (
-                              <button
-                                onClick={() => handleFullPayment(b)}
-                                className="btn-action-fullpay"
-                              >
-                                <CreditCard size={13} /> Settle Full
-                              </button>
-                            )}
-
-                            {(b.bookingStatus === 'pending' || b.bookingStatus === 'confirmed') && (
-                              <button
-                                onClick={() => handleForfeitBooking(b.id, b.eventDate)}
-                                className="btn-action-forfeit"
-                              >
-                                <Ban size={13} /> Forfeit
-                              </button>
-                            )}
-                          </div>
+                    {paginatedBookings.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} style={{ textAlign: 'center', padding: '36px', color: '#94A3B8' }}>
+                          No reservations match the selected filter or search query.
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      paginatedBookings.map((b) => (
+                        <tr key={b.id}>
+                          <td className="font-number" style={{ fontWeight: 700, fontSize: '0.8rem', color: '#78716C' }}>
+                            #{b.id.slice(0, 14)}...
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: 700, color: '#18181B' }}>{b.customerName}</div>
+                            <div style={{ fontSize: '0.8rem', color: '#71717A' }}>{b.email}</div>
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: 600, color: '#18181B' }}>{b.eventType} ({b.guestCount} pax)</div>
+                            <div style={{ fontSize: '0.82rem', color: '#71717A' }}>{b.eventDate}</div>
+                          </td>
+                          <td className="font-number" style={{ fontWeight: 700, color: '#9A3412' }}>
+                            {formatMoney(b.totalPrice, b.currency)}
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', gap: '4px', flexDirection: 'column' }}>
+                              <span className={`portal-status-badge badge-payment-${b.paymentStatus}`} style={{ width: 'fit-content' }}>
+                                <span className="status-dot" />
+                                <span style={{ textTransform: 'capitalize' }}>
+                                  {b.paymentStatus === 'downpayment_paid' ? 'Downpayment' : b.paymentStatus.replace('_', ' ')}
+                                </span>
+                              </span>
+                              {b.paymentStatus === 'downpayment_paid' && b.downpaymentAmount && (
+                                <span style={{ fontSize: '0.72rem', color: '#71717A' }}>
+                                  {formatMoney(b.downpaymentAmount, b.currency)}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td>
+                            <span className={`portal-status-badge badge-${b.bookingStatus}`} style={{ width: 'fit-content' }}>
+                              <span className="status-dot" />
+                              <span style={{ textTransform: 'capitalize' }}>
+                                {b.bookingStatus === 'forfeit' ? 'Forfeited' : b.bookingStatus}
+                              </span>
+                            </span>
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                              <button
+                                onClick={() => handleOpenBookingDetails(b)}
+                                className="btn-action-view"
+                              >
+                                <Eye size={13} /> View
+                              </button>
+
+                              {b.bookingStatus === 'pending' && (
+                                <>
+                                  <button
+                                    onClick={() => handleApproveBooking(b)}
+                                    className="btn-action-approve"
+                                  >
+                                    <Check size={13} /> Approve
+                                  </button>
+                                  <button
+                                    onClick={() => handleRejectBooking(b.id)}
+                                    className="btn-action-forfeit"
+                                    style={{ color: '#DC2626' }}
+                                  >
+                                    <X size={13} /> Reject
+                                  </button>
+                                </>
+                              )}
+
+                              {b.bookingStatus === 'confirmed' && b.paymentStatus === 'downpayment_paid' && (
+                                <button
+                                  onClick={() => handleFullPayment(b)}
+                                  className="btn-action-fullpay"
+                                >
+                                  <CreditCard size={13} /> Settle Full
+                                </button>
+                              )}
+
+                              {(b.bookingStatus === 'pending' || b.bookingStatus === 'confirmed') && (
+                                <button
+                                  onClick={() => handleForfeitBooking(b.id, b.eventDate)}
+                                  className="btn-action-forfeit"
+                                >
+                                  <Ban size={13} /> Forfeit
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
+              </div>
+
+              {/* Pagination Controls Toolbar */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '16px 20px',
+                borderTop: '1px solid var(--line)',
+                background: '#FCFBF9',
+                flexWrap: 'wrap',
+                gap: '12px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '0.84rem', color: '#64748B' }}>
+                    Showing{' '}
+                    <strong style={{ color: '#0F172A' }}>
+                      {sortedBookings.length === 0 ? 0 : (safeBookingPage - 1) * rowsPerPage + 1}
+                    </strong>{' '}
+                    to{' '}
+                    <strong style={{ color: '#0F172A' }}>
+                      {Math.min(safeBookingPage * rowsPerPage, sortedBookings.length)}
+                    </strong>{' '}
+                    of <strong style={{ color: '#0F172A' }}>{sortedBookings.length}</strong> reservations
+                  </span>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '0.78rem', color: '#94A3B8', fontWeight: 600 }}>Per page:</span>
+                    <select
+                      value={rowsPerPage}
+                      onChange={(e) => setRowsPerPage(Number(e.target.value))}
+                      style={{
+                        padding: '4px 8px',
+                        borderRadius: '6px',
+                        border: '1px solid var(--line)',
+                        background: '#FFFFFF',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        color: '#334155',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <option value={10}>10 rows</option>
+                      <option value={20}>20 rows</option>
+                      <option value={50}>50 rows</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setBookingPage(1)}
+                    disabled={safeBookingPage === 1}
+                    title="First Page"
+                    className="btn-nav-logout"
+                    style={{
+                      padding: '6px 8px',
+                      fontSize: '0.78rem',
+                      opacity: safeBookingPage === 1 ? 0.35 : 1,
+                      cursor: safeBookingPage === 1 ? 'not-allowed' : 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <ChevronsLeft size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBookingPage((prev) => Math.max(1, prev - 1))}
+                    disabled={safeBookingPage === 1}
+                    className="btn-nav-logout"
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: '0.8rem',
+                      opacity: safeBookingPage === 1 ? 0.35 : 1,
+                      cursor: safeBookingPage === 1 ? 'not-allowed' : 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                    }}
+                  >
+                    <ChevronLeft size={14} /> Previous
+                  </button>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    {Array.from({ length: totalBookingPages }, (_, idx) => idx + 1).map((p) => {
+                      if (
+                        p === 1 ||
+                        p === totalBookingPages ||
+                        (p >= safeBookingPage - 1 && p <= safeBookingPage + 1)
+                      ) {
+                        const isActive = p === safeBookingPage
+                        return (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => setBookingPage(p)}
+                            style={{
+                              minWidth: '32px',
+                              height: '32px',
+                              padding: '0 8px',
+                              borderRadius: '6px',
+                              border: isActive ? 'none' : '1px solid var(--line)',
+                              background: isActive ? 'var(--gold-dark)' : '#FFFFFF',
+                              color: isActive ? '#FFFFFF' : '#334155',
+                              fontSize: '0.82rem',
+                              fontWeight: isActive ? 700 : 500,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              transition: 'all 0.15s ease',
+                            }}
+                          >
+                            {p}
+                          </button>
+                        )
+                      } else if (p === safeBookingPage - 2 || p === safeBookingPage + 2) {
+                        return (
+                          <span key={p} style={{ padding: '0 2px', color: '#94A3B8', fontSize: '0.85rem' }}>
+                            •••
+                          </span>
+                        )
+                      }
+                      return null
+                    })}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setBookingPage((prev) => Math.min(totalBookingPages, prev + 1))}
+                    disabled={safeBookingPage >= totalBookingPages}
+                    className="btn-nav-logout"
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: '0.8rem',
+                      opacity: safeBookingPage >= totalBookingPages ? 0.35 : 1,
+                      cursor: safeBookingPage >= totalBookingPages ? 'not-allowed' : 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                    }}
+                  >
+                    Next <ChevronRight size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBookingPage(totalBookingPages)}
+                    disabled={safeBookingPage >= totalBookingPages}
+                    title="Last Page"
+                    className="btn-nav-logout"
+                    style={{
+                      padding: '6px 8px',
+                      fontSize: '0.78rem',
+                      opacity: safeBookingPage >= totalBookingPages ? 0.35 : 1,
+                      cursor: safeBookingPage >= totalBookingPages ? 'not-allowed' : 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <ChevronsRight size={15} />
+                  </button>
+                </div>
               </div>
             </div>
           )}
