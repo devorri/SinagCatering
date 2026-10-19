@@ -101,11 +101,18 @@ function AppContent() {
       const confirmPayment = async () => {
         let verified = false
         try {
-          const res = await fetch('/api/paymongo/verify-payment', {
+          let res = await fetch('/api/paymongo/verify-payment', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ bookingId }),
           })
+          if (!res.ok) {
+            res = await fetch('/.netlify/functions/paymongo-verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ bookingId }),
+            })
+          }
           const data = await res.json()
           if (res.ok && data.paid) {
             verified = true

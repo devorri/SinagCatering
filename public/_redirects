@@ -1,0 +1,6 @@
+/api/sms/send                          /.netlify/functions/sms-send                   200
+/api/paymongo/create-checkout-session  /.netlify/functions/paymongo-checkout          200
+/api/paymongo/verify-payment           /.netlify/functions/paymongo-verify            200
+/api/paymongo/generate-qrph            /.netlify/functions/paymongo-qrph             200
+/api/paymongo/check-payment-intent     /.netlify/functions/paymongo-check            200
+/*                                     /index.html                                    200

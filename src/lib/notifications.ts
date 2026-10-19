@@ -119,6 +119,39 @@ export const sendSemaphoreSMS = async (
     if (err?.message) lastErrorMessage = err.message
   }
 
+  // 1b. Try Netlify Functions direct endpoint (works even if /api rewrite is pending)
+  try {
+    const netlifyRes = await fetch('/.netlify/functions/sms-send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipientPhone: cleanedPhone, message, referenceId }),
+    })
+    const netlifyResult = await netlifyRes.json().catch(() => null)
+    if (netlifyRes.ok && netlifyResult?.success) {
+      const item = Array.isArray(netlifyResult.data) ? netlifyResult.data[0] : (netlifyResult.data || null)
+      const msgId = netlifyResult.message_id || item?.message_id
+      const network = netlifyResult.network || item?.network
+      const status = netlifyResult.status || item?.status || 'Queued'
+      const enrichedMessage = msgId
+        ? `${message} [Semaphore ID: ${msgId} | Net: ${network || 'PH'} | Status: ${status}]`
+        : message
+
+      logNotification({
+        type: 'sms',
+        recipient: cleanedPhone,
+        message: enrichedMessage,
+        status: 'sent',
+        provider: 'Semaphore',
+        referenceId: referenceId || (msgId ? String(msgId) : undefined),
+      })
+      return { success: true, simulated: false }
+    } else if (netlifyResult?.error) {
+      lastErrorMessage = String(netlifyResult.error)
+    }
+  } catch {
+    // continue to Supabase edge function
+  }
+
   // 2. Fall back to Supabase Edge Function ('send-sms')
   if (supabase) {
     try {
@@ -143,7 +176,9 @@ export const sendSemaphoreSMS = async (
         })
         return { success: true, simulated }
       } else if (error?.message) {
-        lastErrorMessage = error.message
+        lastErrorMessage = error.message.includes('Failed to send a request')
+          ? 'Edge Function not deployed on Supabase project'
+          : error.message
       }
     } catch (edgeErr: any) {
       if (edgeErr?.message) lastErrorMessage = edgeErr.message

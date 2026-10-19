@@ -76,7 +76,7 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
     const fetchRealQr = async () => {
       setIsLoadingQr(true)
       try {
-        const res = await fetch('/api/paymongo/generate-qrph', {
+        let res = await fetch('/api/paymongo/generate-qrph', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -86,6 +86,18 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
             email: customerEmail,
           }),
         })
+        if (!res.ok) {
+          res = await fetch('/.netlify/functions/paymongo-qrph', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              bookingId,
+              packageName,
+              amount,
+              email: customerEmail,
+            }),
+          })
+        }
         const data = await res.json()
         if (isMounted && res.ok && data.qr_image) {
           setRealQrCode(data.qr_image)
@@ -111,11 +123,18 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
 
     const interval = setInterval(async () => {
       try {
-        const res = await fetch('/api/paymongo/check-payment-intent', {
+        let res = await fetch('/api/paymongo/check-payment-intent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ paymentIntentId }),
         })
+        if (!res.ok) {
+          res = await fetch('/.netlify/functions/paymongo-check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paymentIntentId }),
+          })
+        }
         const data = await res.json()
         if (data.paid) {
           clearInterval(interval)
