@@ -263,6 +263,23 @@ a {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* ✦ Prevent Native Browser Duplicate Eye Icon (Edge, IE, Chromium) */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  pointer-events: none !important;
+}
+
+input::-ms-clear,
+input::-ms-reveal {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  pointer-events: none !important;
+}
+
 code {
   padding: 2px 8px;
   color: var(--gold-dark);

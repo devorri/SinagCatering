@@ -286,6 +286,7 @@ export const ClientPortal: React.FC = () => {
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  title={showPassword ? 'Hide password' : 'Show password'}
                   style={{
                     position: 'absolute',
                     right: '12px',
@@ -294,11 +295,12 @@ export const ClientPortal: React.FC = () => {
                     background: 'none',
                     border: 'none',
                     cursor: 'pointer',
-                    color: 'var(--muted)',
+                    color: showPassword ? 'var(--terracotta)' : 'var(--muted)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     padding: '4px',
+                    zIndex: 2,
                   }}
                 >
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}

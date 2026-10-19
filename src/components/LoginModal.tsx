@@ -226,6 +226,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
+                title={showPassword ? 'Hide password' : 'Show password'}
                 style={{
                   position: 'absolute',
                   right: '12px',
@@ -234,11 +235,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
                   background: 'none',
                   border: 'none',
                   cursor: 'pointer',
-                  color: 'var(--muted)',
+                  color: showPassword ? 'var(--terracotta)' : 'var(--muted)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   padding: '4px',
+                  zIndex: 2,
                 }}
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
@@ -292,6 +294,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
                     type="button"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                     aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                    title={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
                     style={{
                       position: 'absolute',
                       right: '12px',
@@ -300,11 +303,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
                       background: 'none',
                       border: 'none',
                       cursor: 'pointer',
-                      color: 'var(--muted)',
+                      color: showConfirmPassword ? 'var(--terracotta)' : 'var(--muted)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       padding: '4px',
+                      zIndex: 2,
                     }}
                   >
                     {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}

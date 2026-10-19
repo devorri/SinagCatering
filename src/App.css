@@ -1497,6 +1497,17 @@
   box-shadow: 0 0 0 3px rgba(139, 38, 19, 0.1);
 }
 
+/* Suppress browser native password reveal/clear icons (Edge, IE, Chromium) */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear,
+input::-ms-clear,
+input::-ms-reveal {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  pointer-events: none !important;
+}
+
 .btn-submit-primary {
   width: 100%;
   padding: 16px;

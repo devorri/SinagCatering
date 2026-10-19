@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react'
 import {
   Eye,
+  EyeOff,
   ShieldCheck,
   Trash,
   Trash2,
@@ -123,6 +124,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   // Admin login states
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showAdminPassword, setShowAdminPassword] = useState(false)
   const [loginError, setLoginError] = useState('')
   const [showForgotPassword, setShowForgotPassword] = useState(false)
   const [showProfileModal, setShowProfileModal] = useState(false)
@@ -922,14 +924,40 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   Forgot password?
                 </button>
               </div>
-              <input
-                type="password"
-                className="input-field"
-                required
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showAdminPassword ? 'text' : 'password'}
+                  className="input-field"
+                  required
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  style={{ width: '100%', paddingRight: '44px' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowAdminPassword(!showAdminPassword)}
+                  aria-label={showAdminPassword ? 'Hide password' : 'Show password'}
+                  title={showAdminPassword ? 'Hide password' : 'Show password'}
+                  style={{
+                    position: 'absolute',
+                    right: '12px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: showAdminPassword ? 'var(--terracotta)' : 'var(--muted)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '4px',
+                    zIndex: 2,
+                  }}
+                >
+                  {showAdminPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
 
             {loginError && (

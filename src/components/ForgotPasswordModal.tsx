@@ -457,6 +457,7 @@ export const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({
                     type="button"
                     onClick={() => setShowNewPassword(!showNewPassword)}
                     aria-label={showNewPassword ? 'Hide password' : 'Show password'}
+                    title={showNewPassword ? 'Hide password' : 'Show password'}
                     style={{
                       position: 'absolute',
                       right: '10px',
@@ -465,10 +466,11 @@ export const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({
                       background: 'none',
                       border: 'none',
                       cursor: 'pointer',
-                      color: '#94A3B8',
+                      color: showNewPassword ? 'var(--terracotta)' : '#94A3B8',
                       display: 'flex',
                       alignItems: 'center',
                       padding: '4px',
+                      zIndex: 2,
                     }}
                   >
                     {showNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -496,6 +498,7 @@ export const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({
                     type="button"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                     aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                    title={showConfirmPassword ? 'Hide password' : 'Show password'}
                     style={{
                       position: 'absolute',
                       right: '10px',
@@ -504,10 +507,11 @@ export const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({
                       background: 'none',
                       border: 'none',
                       cursor: 'pointer',
-                      color: '#94A3B8',
+                      color: showConfirmPassword ? 'var(--terracotta)' : '#94A3B8',
                       display: 'flex',
                       alignItems: 'center',
                       padding: '4px',
+                      zIndex: 2,
                     }}
                   >
                     {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
