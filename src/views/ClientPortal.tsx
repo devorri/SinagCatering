@@ -212,12 +212,15 @@ export const ClientPortal: React.FC = () => {
   }
 
   const handleClientLogout = async () => {
+    const hasActiveCheckout = Boolean(checkoutBooking)
     const ok = await confirm({
-      title: 'Sign Out',
-      message: 'Are you sure you want to sign out of your client portal session?',
-      confirmText: 'Sign Out',
+      title: hasActiveCheckout ? 'Discard Payment & Sign Out?' : 'Confirm Sign Out',
+      message: hasActiveCheckout
+        ? 'You have an active payment transaction currently in progress. Signing out will cancel this checkout.\n\nAre you sure you want to sign out?'
+        : 'Are you sure you want to sign out of your client portal session?',
+      confirmText: hasActiveCheckout ? 'Yes, Discard & Sign Out' : 'Sign Out',
       cancelText: 'Stay Signed In',
-      variant: 'primary',
+      variant: hasActiveCheckout ? 'danger' : 'primary',
     })
     if (ok) logout()
   }

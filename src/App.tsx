@@ -3,7 +3,7 @@ import Lenis from 'lenis'
 import { Bot, CalendarDays, Clock3, LogOut, Mail, MapPin, Menu, Phone, User, X } from 'lucide-react'
 import './App.css'
 import { AppProvider, useApp } from './context/AppContext'
-import { ConfirmProvider } from './context/ConfirmContext'
+import { ConfirmProvider, useConfirm } from './context/ConfirmContext'
 import { AdminDashboard } from './views/AdminDashboard'
 import { AIAssistant } from './views/AIAssistant'
 import { BookingWizard } from './views/BookingWizard'
@@ -20,6 +20,7 @@ type ViewName = 'landing' | 'gallery' | 'testimonials' | 'login' | 'client' | 'a
 
 function AppContent() {
   const { currentUser, bookings, logout, updatePaymentStatus } = useApp()
+  const { confirm } = useConfirm()
   const userBookings = currentUser
     ? bookings.filter((b) => b.email?.toLowerCase().trim() === currentUser.email?.toLowerCase().trim())
     : []
@@ -54,10 +55,50 @@ function AppContent() {
     document.title = pageTitles[activeView]
   }, [activeView])
 
-  const navigateTo = (view: ViewName) => {
+  const confirmIfProcessActive = async (): Promise<boolean> => {
+    if (activeView === 'booking') {
+      const ok = await confirm({
+        title: 'Discard Reservation in Progress?',
+        message: 'You have an active booking reservation in progress. Leaving this page will discard your event setup and selected options.\n\nAre you sure you want to discard your progress and leave?',
+        confirmText: 'Discard & Leave',
+        cancelText: 'Stay on Reservation',
+        variant: 'danger',
+      })
+      return ok
+    }
+    return true
+  }
+
+  const navigateTo = async (view: ViewName) => {
+    if (view === activeView) {
+      setIsMobileMenuOpen(false)
+      return
+    }
+    if (activeView === 'booking' && view !== 'booking') {
+      const ok = await confirmIfProcessActive()
+      if (!ok) return
+    }
     setActiveView(view)
     setIsMobileMenuOpen(false)
     window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const handleLogout = async () => {
+    const hasOngoingProcess = activeView === 'booking'
+    const ok = await confirm({
+      title: hasOngoingProcess ? 'Discard Process & Sign Out?' : 'Confirm Sign Out',
+      message: hasOngoingProcess
+        ? 'You currently have an active reservation in progress. Signing out now will discard your booking details and cannot be undone.\n\nAre you sure you want to sign out?'
+        : 'Are you sure you want to end your current session and sign out?',
+      confirmText: hasOngoingProcess ? 'Yes, Discard & Sign Out' : 'Sign Out',
+      cancelText: 'Stay Signed In',
+      variant: hasOngoingProcess ? 'danger' : 'primary',
+    })
+    if (ok) {
+      setIsMobileMenuOpen(false)
+      await logout()
+      setActiveView('landing')
+    }
   }
 
   useEffect(() => {
@@ -193,9 +234,13 @@ function AppContent() {
     }
   }, [activeView])
 
-  const handleNavigateHome = (e: React.MouseEvent) => {
-    e.preventDefault()
+  const handleNavigateHome = async (e?: React.MouseEvent) => {
+    if (e) e.preventDefault()
     setIsMobileMenuOpen(false)
+    if (activeView === 'booking') {
+      const ok = await confirmIfProcessActive()
+      if (!ok) return
+    }
     const lenis = (window as unknown as { __lenis?: Lenis }).__lenis
     if (activeView !== 'landing') {
       setActiveView('landing')
@@ -230,7 +275,11 @@ function AppContent() {
     }
   }
 
-  const handleDashboardClick = () => {
+  const handleDashboardClick = async () => {
+    if (activeView === 'booking') {
+      const ok = await confirmIfProcessActive()
+      if (!ok) return
+    }
     if (!currentUser) {
       navigateTo('login')
     } else if (currentUser.role === 'admin') {
@@ -240,9 +289,13 @@ function AppContent() {
     }
   }
 
-  const scrollLandingSection = (e: React.MouseEvent, sectionId: string) => {
+  const scrollLandingSection = async (e: React.MouseEvent, sectionId: string) => {
     e.preventDefault()
     setIsMobileMenuOpen(false)
+    if (activeView === 'booking') {
+      const ok = await confirmIfProcessActive()
+      if (!ok) return
+    }
     const lenis = (window as unknown as { __lenis?: Lenis }).__lenis
 
     const scrollToSection = () => {
@@ -364,10 +417,7 @@ function AppContent() {
                 <User size={14} /> {currentUser.name}
               </button>
               <button
-                onClick={() => {
-                  logout()
-                  navigateTo('landing')
-                }}
+                onClick={handleLogout}
                 className="btn-nav-logout"
                 title="Sign out"
               >
@@ -501,11 +551,7 @@ function AppContent() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        setIsMobileMenuOpen(false)
-                        logout()
-                        navigateTo('landing')
-                      }}
+                      onClick={handleLogout}
                       className="btn-drawer-logout"
                       title="Sign out"
                     >

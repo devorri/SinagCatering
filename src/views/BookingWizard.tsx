@@ -496,13 +496,31 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     }
   }
 
-  const goBack = () => {
+  React.useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (currentStep > 0 || isSubmitting) {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [currentStep, isSubmitting])
+
+  const goBack = async () => {
     setErrorMsg('')
     if (currentStep > 0) {
       setCurrentStep(currentStep - 1)
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } else {
-      onBack()
+      const ok = await confirm({
+        title: 'Exit Booking Wizard?',
+        message: 'Are you sure you want to exit the booking wizard? Any event selections and customizations will be discarded.',
+        confirmText: 'Yes, Discard & Exit',
+        cancelText: 'Stay and Continue Booking',
+        variant: 'warning',
+      })
+      if (ok) onBack()
     }
   }
 

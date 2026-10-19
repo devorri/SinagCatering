@@ -511,12 +511,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   }
 
   const handleLogoutClick = async () => {
+    const hasOpenModal = Boolean(showBookingModal || showAddStaffModal)
     const ok = await confirm({
-      title: 'Sign Out of Admin Console',
-      message: 'Are you sure you want to end your executive admin session?',
-      confirmText: 'Sign Out',
+      title: hasOpenModal ? 'Discard Work & Sign Out?' : 'Sign Out of Admin Console',
+      message: hasOpenModal
+        ? 'You have an open editor or staff allocation modal with unsaved entries. Signing out will discard these entries.\n\nAre you sure you want to sign out?'
+        : 'Are you sure you want to end your executive admin session?',
+      confirmText: hasOpenModal ? 'Yes, Discard & Sign Out' : 'Sign Out',
       cancelText: 'Stay Signed In',
-      variant: 'primary',
+      variant: hasOpenModal ? 'danger' : 'primary',
     })
     if (ok) {
       logout()
