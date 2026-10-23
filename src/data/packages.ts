@@ -143,9 +143,9 @@ export const SINAG_PACKAGES: CateringPackage[] = [
 ]
 
 export const AI_CATALOG_ADDONS: CateringAddon[] = [
-  { id: 'ADD-CANDY-01', name: 'Chocolate Fountain & Candy Buffet', price: 150, currency: 'PHP' },
-  { id: 'ADD-HOST-02', name: 'Party Emcee & Games Host', price: 200, currency: 'PHP' },
-  { id: 'ADD-DESSERT-03', name: 'Assorted Dessert Station', price: 100, currency: 'PHP' },
+  { id: 'ADD-CANDY-01', name: 'Chocolate Fountain & Candy Buffet', price: 1500, currency: 'PHP' },
+  { id: 'ADD-HOST-02', name: 'Party Emcee & Games Host', price: 2000, currency: 'PHP' },
+  { id: 'ADD-DESSERT-03', name: 'Assorted Dessert Station', price: 1000, currency: 'PHP' },
 ]
 
 export const mapDatabasePackage = (record: any): CateringPackage => {
@@ -257,6 +257,45 @@ export const DISH_DETAILS: Record<string, DishMetadata> = {
     tag: 'Creamy Bacon',
     description: 'Al dente pasta coated in luscious garlic cream with crispy smoked bacon.',
     image: getGalleryAssetUrl('food/food_carbonara.jpg'),
+  },
+}
+
+export const DRINK_OPTIONS = ['Blue Lemonade', 'Iced Tea', 'Cucumber'] as const
+export type DrinkOption = typeof DRINK_OPTIONS[number]
+
+export interface DrinkMetadata {
+  name: string
+  tag: string
+  description: string
+  image: string
+  color: string
+  accentColor: string
+}
+
+export const DRINK_DETAILS: Record<string, DrinkMetadata> = {
+  'Blue Lemonade': {
+    name: 'Blue Lemonade',
+    tag: 'Citrus Cooler',
+    description: 'Vibrant chilled sweet-tangy blue lemonade garnished with fresh lemon slices and mint leaves.',
+    image: getGalleryAssetUrl('food/drink_blue_lemonade.jpg'),
+    color: '#0284C7',
+    accentColor: '#F0F9FF',
+  },
+  'Iced Tea': {
+    name: 'Iced Tea',
+    tag: 'Signature House Blend',
+    description: 'Crisp and refreshing house-blend sweet iced tea brewed fresh and served ice-chilled.',
+    image: getGalleryAssetUrl('food/drink_iced_tea.jpg'),
+    color: '#D97706',
+    accentColor: '#FFFBEB',
+  },
+  'Cucumber': {
+    name: 'Cucumber',
+    tag: 'Crisp Refresher',
+    description: 'Cooling cucumber-infused lemon refreshment with crisp fresh cucumber ribbon slices.',
+    image: getGalleryAssetUrl('food/drink_cucumber.jpg'),
+    color: '#059669',
+    accentColor: '#ECFDF5',
   },
 }
 

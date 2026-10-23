@@ -204,12 +204,18 @@ export const sendTransactionalEmail = async (
   subject: string,
   body: string,
   referenceId?: string,
+  extraParams?: Record<string, unknown>,
 ): Promise<{ success: boolean; simulated?: boolean; error?: string }> => {
   // Replace generic boilerplate placeables like [Company Name] with official branding
   const formattedBody = body.replace(/\[Company Name\]/g, 'Sinag Catering Services')
 
   const serviceId = import.meta.env.VITE_EMAILJS_SERVICE_ID as string | undefined
-  const templateId = (import.meta.env.VITE_EMAILJS_TRANSACTIONAL_TEMPLATE_ID || import.meta.env.VITE_EMAILJS_TEMPLATE_ID) as string | undefined
+  const templateId = (
+    import.meta.env.VITE_EMAILJS_ORDER_CONFIRMATION_TEMPLATE_ID ||
+    import.meta.env.VITE_EMAILJS_TRANSACTIONAL_TEMPLATE_ID ||
+    import.meta.env.VITE_EMAILJS_TEMPLATE_ID ||
+    'template_dzofr5w'
+  ) as string | undefined
   const publicKey = import.meta.env.VITE_EMAILJS_PUBLIC_KEY as string | undefined
 
   if (serviceId && templateId && publicKey) {
@@ -229,7 +235,7 @@ export const sendTransactionalEmail = async (
           template_params: {
             to_email: recipientEmail,
             email: recipientEmail,
-            to_name: recipientEmail.split('@')[0],
+            to_name: (extraParams?.customer_name as string) || recipientEmail.split('@')[0],
             subject: subject,
             message: formattedBody,
             // CRITICAL FIX: Replace raw UUID string with the formatted message payload
@@ -240,6 +246,8 @@ export const sendTransactionalEmail = async (
             company: "Sinag Catering Services",
             time: formattedTime,
             reference_id: referenceId || '',
+            booking_id: referenceId || '',
+            ...extraParams,
           },
         }),
       })
@@ -518,30 +526,69 @@ export const sendPasswordResetSMSOTP = async (phone: string, otp: string) => {
  * Trigger Booking Submission alerts (SMS + Email)
  */
 export const sendBookingSubmissionNotifications = async (booking: Booking) => {
-  const downpaymentReq = booking.downpaymentAmount || Math.round(booking.totalPrice * 0.5)
+  const isFullPayment = booking.paymentTerm === 'full' || (booking.downpaymentAmount && booking.downpaymentAmount >= booking.totalPrice)
   const currency = booking.currency ?? 'PHP'
-  const smsText = `[Sinag Catering] Mabuhay ${booking.customerName}! Your booking request #${booking.id} for ${booking.eventDate} (${booking.guestCount} pax) has been submitted. 50% Downpayment: ${formatMoney(downpaymentReq, currency)}. Contact: 0928 714 4597.`
+  const payableAmount = isFullPayment ? booking.totalPrice : (booking.downpaymentAmount || Math.round(booking.totalPrice * 0.5))
+  const remainingBalance = isFullPayment ? 0 : Math.max(0, booking.totalPrice - payableAmount)
+  const paymentTermLabel = isFullPayment ? '100% Full Payment Upfront' : '50% Required Downpayment'
+
+  const smsText = isFullPayment
+    ? `[Sinag Catering] Mabuhay ${booking.customerName}! Your booking request #${booking.id} for ${booking.eventDate} (${booking.guestCount} pax) has been submitted with 100% Full Payment: ${formatMoney(payableAmount, currency)} (Zero Balance on event day). Contact: 0928 714 4597.`
+    : `[Sinag Catering] Mabuhay ${booking.customerName}! Your booking request #${booking.id} for ${booking.eventDate} (${booking.guestCount} pax) has been submitted. 50% Downpayment: ${formatMoney(payableAmount, currency)}. Contact: 0928 714 4597.`
   
   await sendSemaphoreSMS(booking.phone, smsText, booking.id)
 
   const emailSubject = `Sinag Catering: Booking Request Received #${booking.id}`
-  const emailBody = `Dear ${booking.customerName},\n\nThank you for choosing Sinag's Catering Services!\n\nBooking ID: ${booking.id}\nEvent Type: ${booking.eventType}\nEvent Date: ${booking.eventDate}\nGuest Count: ${booking.guestCount} pax\nTotal Estimate: ${formatMoney(booking.totalPrice, currency)}\n50% Downpayment: ${formatMoney(downpaymentReq, currency)}\nPayment Method: ${booking.paymentMethod?.toUpperCase() || 'GCash / QR Ph'}\nReference No.: ${booking.gcashRefNumber || 'Pending'}\n\nOur concierge desk is reviewing your reservation. Once downpayment is verified, your date will be locked.\n\nWarm regards,\nSinag Catering Services Team\nBaliwag, Bulacan | Hotline: 0928 714 4597`
+  const emailBody = `Dear ${booking.customerName},\n\nThank you for choosing Sinag's Catering Services!\n\nBooking ID: ${booking.id}\nEvent Type: ${booking.eventType}\nEvent Date: ${booking.eventDate}\nGuest Count: ${booking.guestCount} pax\nTotal Estimate: ${formatMoney(booking.totalPrice, currency)}\nPayment Term: ${paymentTermLabel}\nAmount Transferred: ${formatMoney(payableAmount, currency)}\nRemaining Balance: ${isFullPayment ? '₱0.00 (Fully Settled / Zero Balance)' : formatMoney(remainingBalance, currency) + ' (Payable on event day)'}\nPayment Method: ${booking.paymentMethod?.toUpperCase() || 'GCash / QR Ph'}\nReference No.: ${booking.gcashRefNumber || 'Pending'}\n\nOur concierge desk is reviewing your reservation. Once your payment is verified, your date will be locked.\n\nWarm regards,\nSinag Catering Services Team\nBaliwag, Bulacan | Hotline: 0928 714 4597`
 
-  await sendTransactionalEmail(booking.email, emailSubject, emailBody, booking.id)
+  await sendTransactionalEmail(booking.email, emailSubject, emailBody, booking.id, {
+    customer_name: booking.customerName,
+    package_name: booking.packageName,
+    event_type: booking.eventType,
+    event_date: booking.eventDate,
+    guest_count: `${booking.guestCount} pax`,
+    total_price: formatMoney(booking.totalPrice, currency),
+    downpayment: formatMoney(payableAmount, currency),
+    paid_amount: formatMoney(payableAmount, currency),
+    payment_term_label: paymentTermLabel,
+    remaining_balance: isFullPayment ? '₱0.00 (Zero Balance)' : formatMoney(remainingBalance, currency),
+    balance_note: isFullPayment ? 'Your celebration is 100% fully settled upfront with zero balance on event day.' : 'The remaining balance will be settled on your celebration day.',
+    payment_method: booking.paymentMethod?.toUpperCase() || 'GCash / QR Ph',
+    ref_number: booking.gcashRefNumber || 'Pending Verification',
+  })
 }
 
 /**
- * Trigger Downpayment Verification alerts (SMS + Email)
+ * Trigger Payment Verification alerts (SMS + Email)
  */
 export const sendPaymentVerificationNotifications = async (booking: Booking) => {
-  const verifiedAmount = booking.downpaymentAmount || Math.round(booking.totalPrice * 0.5)
+  const isFullPayment = booking.paymentTerm === 'full' || (booking.downpaymentAmount && booking.downpaymentAmount >= booking.totalPrice)
   const currency = booking.currency ?? 'PHP'
-  const smsText = `[Sinag Catering] Payment Verified! Downpayment of ${formatMoney(verifiedAmount, currency)} for Booking #${booking.id} (${booking.eventDate}) is verified. Your event date is locked in our calendar! Salamat po!`
+  const verifiedAmount = isFullPayment ? booking.totalPrice : (booking.downpaymentAmount || Math.round(booking.totalPrice * 0.5))
+  const remainingBalance = isFullPayment ? 0 : Math.max(0, booking.totalPrice - verifiedAmount)
+  const paymentTermLabel = isFullPayment ? '100% Full Payment' : '50% Downpayment'
+
+  const smsText = isFullPayment
+    ? `[Sinag Catering] Payment Verified! 100% Full Payment of ${formatMoney(verifiedAmount, currency)} for Booking #${booking.id} (${booking.eventDate}) is verified. Your date is locked with ₱0 balance on event day! Salamat po!`
+    : `[Sinag Catering] Payment Verified! Downpayment of ${formatMoney(verifiedAmount, currency)} for Booking #${booking.id} (${booking.eventDate}) is verified. Your event date is locked in our calendar! Salamat po!`
 
   await sendSemaphoreSMS(booking.phone, smsText, booking.id)
 
-  const emailSubject = `Sinag Catering: Downpayment Verified & Booking Confirmed! #${booking.id}`
-  const emailBody = `Mabuhay ${booking.customerName}!\n\nWe are pleased to inform you that your 50% downpayment of ${formatMoney(verifiedAmount, currency)} has been verified by our management team.\n\nBooking Reference: #${booking.id}\nScheduled Date: ${booking.eventDate}\nPackage: ${booking.packageName}\nStatus: Confirmed / Downpayment Verified\nRemaining Balance: ${formatMoney(booking.totalPrice - verifiedAmount, currency)} (Payable on event day)\n\nOur event coordinator and kitchen team are now prepping your banquet.\n\nThank you for trusting Sinag's Catering Services!\nHotline: 0928 714 4597`
+  const emailSubject = `Sinag Catering: Payment Verified & Booking Confirmed! #${booking.id}`
+  const emailBody = `Mabuhay ${booking.customerName}!\n\nWe are pleased to inform you that your ${paymentTermLabel} of ${formatMoney(verifiedAmount, currency)} has been verified by our management team.\n\nBooking Reference: #${booking.id}\nScheduled Date: ${booking.eventDate}\nPackage: ${booking.packageName}\nStatus: Confirmed / Payment Verified\nPayment Term: ${paymentTermLabel}\nRemaining Balance: ${isFullPayment ? '₱0.00 (Fully Settled / Zero Balance)' : formatMoney(remainingBalance, currency) + ' (Payable on event day)'}\n\nOur event coordinator and kitchen team are now prepping your banquet.\n\nThank you for trusting Sinag's Catering Services!\nHotline: 0928 714 4597`
 
-  await sendTransactionalEmail(booking.email, emailSubject, emailBody, booking.id)
+  await sendTransactionalEmail(booking.email, emailSubject, emailBody, booking.id, {
+    customer_name: booking.customerName,
+    package_name: booking.packageName,
+    event_type: booking.eventType,
+    event_date: booking.eventDate,
+    guest_count: `${booking.guestCount} pax`,
+    total_price: formatMoney(booking.totalPrice, currency),
+    downpayment: formatMoney(verifiedAmount, currency),
+    paid_amount: formatMoney(verifiedAmount, currency),
+    payment_term_label: paymentTermLabel,
+    remaining_balance: isFullPayment ? '₱0.00 (Zero Balance)' : formatMoney(remainingBalance, currency),
+    balance_note: isFullPayment ? 'Your celebration is 100% fully settled upfront with zero balance on event day.' : 'The remaining balance will be settled on your celebration day.',
+    status: isFullPayment ? '100% Fully Paid & Date Locked' : 'Downpayment Verified & Date Locked',
+  })
 }

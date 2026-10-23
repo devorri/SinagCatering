@@ -13,6 +13,7 @@ export interface AddOnItem {
   selectedAddonIds?: string[]
   selectedMainDishes?: string[]
   selectedPastaDishes?: string[]
+  selectedDrinks?: string[]
   extraMainDishes?: string[]
   extraPastaDishes?: string[]
 }
@@ -34,6 +35,7 @@ export interface Booking {
   extraPaxFee: number
   addOns: AddOnItem
   totalPrice: number
+  paymentTerm?: 'downpayment' | 'full'
   downpaymentAmount?: number
   bookingStatus: 'pending' | 'approved' | 'confirmed' | 'completed' | 'cancelled' | 'forfeit'
   paymentStatus: 'unpaid' | 'pending_verification' | 'partially_paid' | 'downpayment_paid' | 'fully_paid'

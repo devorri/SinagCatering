@@ -13,6 +13,7 @@ import { LandingPage } from './views/LandingPage'
 import { LoginPage } from './views/LoginPage'
 import { TestimonialsPage } from './views/TestimonialsPage'
 import { LoginModal } from './components/LoginModal'
+import { PublicAvailabilityModal } from './components/PublicAvailabilityModal'
 import type { AIFormData } from './lib/ai'
 import { supabase } from './lib/supabase'
 
@@ -35,6 +36,8 @@ function AppContent() {
   const [isChatOpen, setIsChatOpen] = useState(false)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
+  const [isAvailabilityModalOpen, setIsAvailabilityModalOpen] = useState(false)
+  const [preselectedBookingDate, setPreselectedBookingDate] = useState<string | null>(null)
   const [aiBookingPreset, setAiBookingPreset] = useState<AIFormData | null>(null)
   const [paymongoNotice, setPaymongoNotice] = useState(() =>
     new URLSearchParams(window.location.search).get('paymongo') === 'cancelled'
@@ -69,12 +72,12 @@ function AppContent() {
     return true
   }
 
-  const navigateTo = async (view: ViewName) => {
+  const navigateTo = async (view: ViewName, options?: { bypassConfirm?: boolean }) => {
     if (view === activeView) {
       setIsMobileMenuOpen(false)
       return
     }
-    if (activeView === 'booking' && view !== 'booking') {
+    if (activeView === 'booking' && view !== 'booking' && !options?.bypassConfirm) {
       const ok = await confirmIfProcessActive()
       if (!ok) return
     }
@@ -254,7 +257,10 @@ function AppContent() {
     }
   }
 
-  const handleStartBooking = () => {
+  const handleStartBooking = (initialDate?: string) => {
+    if (initialDate && typeof initialDate === 'string') {
+      setPreselectedBookingDate(initialDate)
+    }
     if (!currentUser) {
       setIsAuthModalOpen(true)
     } else if (currentUser.role === 'admin') {
@@ -372,22 +378,12 @@ function AppContent() {
           <a href="#contact-section" onClick={(e) => scrollLandingSection(e, 'contact-section')}>Contact</a>
           <button
             type="button"
-            className={`nav-link-btn ${activeView === 'client' ? 'active' : ''}`}
-            onClick={() => {
-              if (!currentUser) {
-                setIsAuthModalOpen(true)
-              } else if (currentUser.role === 'admin') {
-                navigateTo('admin')
-              } else {
-                navigateTo('client')
-              }
-            }}
+            className="nav-link-btn"
+            onClick={() => setIsAvailabilityModalOpen(true)}
+            title="Check real-time catering date availability on our live calendar"
           >
             <CalendarDays size={14} />
-            <span>My Bookings</span>
-            {userBookingsCount > 0 && (
-              <span className="nav-booking-badge">{userBookingsCount}</span>
-            )}
+            <span>Check Availability</span>
           </button>
         </div>
 
@@ -407,7 +403,7 @@ function AppContent() {
             </button>
           )}
 
-          <button type="button" onClick={handleStartBooking} className="btn-hero-primary nav-book-cta">
+          <button type="button" onClick={() => handleStartBooking()} className="btn-hero-primary nav-book-cta">
             Start Booking
           </button>
 
@@ -496,6 +492,18 @@ function AppContent() {
                 Testimonials
               </a>
               <a href="#contact-section" onClick={(e) => scrollLandingSection(e, 'contact-section')}>Contact Concierge</a>
+              <button
+                type="button"
+                className="nav-link-btn"
+                onClick={() => {
+                  setIsMobileMenuOpen(false)
+                  setIsAvailabilityModalOpen(true)
+                }}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <CalendarDays size={16} /> Check Availability
+                </span>
+              </button>
               <button
                 type="button"
                 className={`nav-link-btn ${activeView === 'client' ? 'active' : ''}`}
@@ -605,9 +613,16 @@ function AppContent() {
           {activeView === 'client' && <ClientPortal />}
           {activeView === 'booking' && (
             <BookingWizard
-              onComplete={() => navigateTo('client')}
-              onBack={() => navigateTo('landing')}
+              onComplete={() => {
+                setPreselectedBookingDate(null)
+                navigateTo('client', { bypassConfirm: true })
+              }}
+              onBack={() => {
+                setPreselectedBookingDate(null)
+                navigateTo('landing')
+              }}
               initialAIFormData={aiBookingPreset ?? undefined}
+              initialDate={preselectedBookingDate ?? undefined}
             />
           )}
         </div>
@@ -619,6 +634,15 @@ function AppContent() {
         onSuccess={() => {
           setIsAuthModalOpen(false)
           navigateTo('booking')
+        }}
+      />
+
+      <PublicAvailabilityModal
+        isOpen={isAvailabilityModalOpen}
+        onClose={() => setIsAvailabilityModalOpen(false)}
+        onSelectDateToBook={(dateStr) => {
+          setIsAvailabilityModalOpen(false)
+          handleStartBooking(dateStr)
         }}
       />
 

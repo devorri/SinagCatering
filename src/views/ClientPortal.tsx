@@ -21,6 +21,7 @@ import {
   Lock,
   CalendarDays,
   User as UserIcon,
+  Maximize2,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import type { Booking } from '../types'
@@ -71,7 +72,10 @@ export const ClientPortal: React.FC = () => {
   // Copy and upload states
   const [copiedRefId, setCopiedRefId] = useState<string | null>(null)
   const [copiedGcash, setCopiedGcash] = useState(false)
+  const [copiedMaribank, setCopiedMaribank] = useState(false)
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null)
+  const [portalQrMethod, setPortalQrMethod] = useState<'gcash' | 'maribank'>('gcash')
+  const [portalQrZoom, setPortalQrZoom] = useState<{ title: string; imageSrc: string; name: string; acc: string } | null>(null)
 
   const handleCopyRef = (id: string) => {
     navigator.clipboard.writeText(id)
@@ -607,40 +611,171 @@ export const ClientPortal: React.FC = () => {
                           To lock your reservation date on our official catering schedule, scan the verified QR Ph code or pay via PayMongo.
                         </p>
 
-                        <div className="portal-qr-showcase">
-                          <div className="portal-qr-frame">
-                            <img
-                              src="/sinag_gcash_qr.png"
-                              alt="Scan GCash / QR Ph"
-                              className="portal-qr-img"
-                            />
-                          </div>
-                          <div className="portal-qr-details">
-                            <span className="portal-qr-account-lbl">Official QR Ph / GCash</span>
-                            <strong className="portal-qr-account-name">Sinag Catering Services / Sunshine C.</strong>
-                            <div className="portal-qr-copy-row">
-                              <span className="portal-qr-phone">0928 714 4597</span>
+                        {/* QR Method Toggle */}
+                        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                          <button
+                            type="button"
+                            onClick={() => setPortalQrMethod('gcash')}
+                            style={{
+                              flex: 1,
+                              padding: '8px 12px',
+                              borderRadius: '6px',
+                              border: portalQrMethod === 'gcash' ? '1.5px solid #005CE6' : '1px solid #E2E8F0',
+                              background: portalQrMethod === 'gcash' ? '#EFF6FF' : '#FFFFFF',
+                              color: portalQrMethod === 'gcash' ? '#1D4ED8' : 'var(--ink)',
+                              fontWeight: 700,
+                              fontSize: '0.78rem',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            GCash (QR Ph)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPortalQrMethod('maribank')}
+                            style={{
+                              flex: 1,
+                              padding: '8px 12px',
+                              borderRadius: '6px',
+                              border: portalQrMethod === 'maribank' ? '1.5px solid #EA580C' : '1px solid #E2E8F0',
+                              background: portalQrMethod === 'maribank' ? '#FFF7ED' : '#FFFFFF',
+                              color: portalQrMethod === 'maribank' ? '#C2410C' : 'var(--ink)',
+                              fontWeight: 700,
+                              fontSize: '0.78rem',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            MariBank (InstaPay)
+                          </button>
+                        </div>
+
+                        {portalQrMethod === 'gcash' ? (
+                          <div className="portal-qr-showcase" style={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+                            <div
+                              className="portal-qr-frame"
+                              onClick={() => setPortalQrZoom({
+                                title: 'GCash / QR Ph Code',
+                                imageSrc: '/sinag_gcash_qr.png',
+                                name: 'SU*****E C.',
+                                acc: '0928 714 4597',
+                              })}
+                              style={{ width: '240px', height: '240px', cursor: 'pointer', position: 'relative', background: '#FFF', padding: '10px', borderRadius: '10px', border: '1.5px solid #BFDBFE' }}
+                              title="Click to enlarge GCash QR"
+                            >
+                              <img
+                                src="/sinag_gcash_qr.png"
+                                alt="Scan GCash / QR Ph"
+                                className="portal-qr-img"
+                                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                              />
+                              <div style={{ position: 'absolute', bottom: '10px', right: '10px', background: 'rgba(0, 92, 230, 0.9)', color: '#FFF', borderRadius: '4px', padding: '3px 6px', fontSize: '0.65rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <Maximize2 size={10} /> Fullscreen
+                              </div>
+                            </div>
+                            <div className="portal-qr-details" style={{ minWidth: '220px' }}>
+                              <span className="portal-qr-account-lbl" style={{ color: '#005CE6', fontSize: '0.74rem' }}>Official GCash InstaPay QR</span>
+                              <strong className="portal-qr-account-name" style={{ fontSize: '1.05rem' }}>SU*****E C. (Sinag Catering)</strong>
+                              <div className="portal-qr-copy-row">
+                                <span className="portal-qr-phone" style={{ fontSize: '1rem' }}>0928 714 4597</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyGcash('09287144597')}
+                                  className="portal-copy-pill"
+                                >
+                                  {copiedGcash ? (
+                                    <>
+                                      <Check size={11} style={{ color: '#059669' }} />
+                                      <span style={{ color: '#059669' }}>Copied</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy size={11} />
+                                      <span>Copy</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                              <span className="portal-qr-hint" style={{ fontSize: '0.8rem', lineHeight: 1.4 }}>Scan with GCash, Maya, BDO, BPI, or any mobile bank app via QR Ph.</span>
                               <button
                                 type="button"
-                                onClick={() => handleCopyGcash('09287144597')}
-                                className="portal-copy-pill"
+                                onClick={() => setPortalQrZoom({
+                                  title: 'GCash / QR Ph Code',
+                                  imageSrc: '/sinag_gcash_qr.png',
+                                  name: 'SU*****E C.',
+                                  acc: '0928 714 4597',
+                                })}
+                                style={{ marginTop: '8px', background: '#DBEAFE', border: '1px solid #BFDBFE', padding: '6px 12px', borderRadius: '6px', color: '#1E40AF', fontSize: '0.76rem', fontWeight: 700, cursor: 'pointer', textAlign: 'left', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
                               >
-                                {copiedGcash ? (
-                                  <>
-                                    <Check size={11} style={{ color: '#059669' }} />
-                                    <span style={{ color: '#059669' }}>Copied</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Copy size={11} />
-                                    <span>Copy</span>
-                                  </>
-                                )}
+                                <Maximize2 size={12} /> View Large Fullscreen QR
                               </button>
                             </div>
-                            <span className="portal-qr-hint">Scan using GCash, Maya, BDO, BPI, or any mobile bank app.</span>
                           </div>
-                        </div>
+                        ) : (
+                          <div className="portal-qr-showcase" style={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+                            <div
+                              className="portal-qr-frame"
+                              onClick={() => setPortalQrZoom({
+                                title: 'MariBank / InstaPay QR Code',
+                                imageSrc: '/sinag_maribank_qr.png',
+                                name: 'SUNSHINE CRUZ (MariBank ****2765)',
+                                acc: '0928 714 4597',
+                              })}
+                              style={{ width: '240px', height: '240px', cursor: 'pointer', position: 'relative', background: '#FFF', padding: '10px', borderRadius: '10px', border: '1.5px solid #FED7AA' }}
+                              title="Click to enlarge MariBank QR"
+                            >
+                              <img
+                                src="/sinag_maribank_qr.png"
+                                alt="Scan MariBank / InstaPay QR"
+                                className="portal-qr-img"
+                                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                              />
+                              <div style={{ position: 'absolute', bottom: '10px', right: '10px', background: 'rgba(234, 88, 12, 0.9)', color: '#FFF', borderRadius: '4px', padding: '3px 6px', fontSize: '0.65rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <Maximize2 size={10} /> Fullscreen
+                              </div>
+                            </div>
+                            <div className="portal-qr-details" style={{ minWidth: '220px' }}>
+                              <span className="portal-qr-account-lbl" style={{ color: '#EA580C', fontSize: '0.74rem' }}>Official MariBank InstaPay QR</span>
+                              <strong className="portal-qr-account-name" style={{ fontSize: '1.05rem' }}>SUNSHINE CRUZ - MariBank(****2765)</strong>
+                              <div className="portal-qr-copy-row">
+                                <span className="portal-qr-phone" style={{ fontSize: '1rem' }}>0928 714 4597</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText('09287144597')
+                                    setCopiedMaribank(true)
+                                    setTimeout(() => setCopiedMaribank(false), 2000)
+                                  }}
+                                  className="portal-copy-pill"
+                                >
+                                  {copiedMaribank ? (
+                                    <>
+                                      <Check size={11} style={{ color: '#059669' }} />
+                                      <span style={{ color: '#059669' }}>Copied</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy size={11} />
+                                      <span>Copy</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                              <span className="portal-qr-hint">Scan with MariBank, GCash, Maya, or any bank via InstaPay.</span>
+                              <button
+                                type="button"
+                                onClick={() => setPortalQrZoom({
+                                  title: 'MariBank / InstaPay QR Code',
+                                  imageSrc: '/sinag_maribank_qr.png',
+                                  name: 'SUNSHINE CRUZ (MariBank ****2765)',
+                                  acc: '0928 714 4597',
+                                })}
+                                style={{ marginTop: '6px', background: 'none', border: 'none', padding: 0, color: '#EA580C', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', textAlign: 'left', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                              >
+                                <Maximize2 size={11} /> View Fullscreen QR
+                              </button>
+                            </div>
+                          </div>
+                        )}
 
                         <button
                           type="button"
@@ -997,6 +1132,103 @@ export const ClientPortal: React.FC = () => {
           isOpen={showProfileModal}
           onClose={() => setShowProfileModal(false)}
         />
+      )}
+
+      {/* FULLSCREEN QR CODE MODAL */}
+      {portalQrZoom && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setPortalQrZoom(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            background: 'rgba(15, 23, 42, 0.78)',
+            backdropFilter: 'blur(6px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#FFFFFF',
+              borderRadius: '16px',
+              maxWidth: '540px',
+              width: '100%',
+              padding: '28px',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
+              border: '1px solid #E2E8F0',
+              textAlign: 'center',
+              position: 'relative',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setPortalQrZoom(null)}
+              style={{
+                position: 'absolute',
+                top: '16px',
+                right: '16px',
+                background: '#F1F5F9',
+                border: 'none',
+                borderRadius: '50%',
+                width: '32px',
+                height: '32px',
+                display: 'grid',
+                placeItems: 'center',
+                cursor: 'pointer',
+                color: '#64748B',
+              }}
+            >
+              <X size={18} />
+            </button>
+
+            <h3 style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--ink)', margin: '0 0 6px' }}>
+              {portalQrZoom.title}
+            </h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0 0 16px' }}>
+              Scan directly using GCash, MariBank, Maya, or any banking app via QR Ph / InstaPay.
+            </p>
+
+            <div style={{ background: '#FFFFFF', padding: '16px', borderRadius: '14px', border: '2px solid #CBD5E1', display: 'inline-block', margin: '0 auto 16px', boxShadow: '0 8px 24px rgba(0,0,0,0.08)' }}>
+              <img
+                src={portalQrZoom.imageSrc}
+                alt={portalQrZoom.title}
+                style={{ width: '380px', maxWidth: '100%', height: '380px', objectFit: 'contain', display: 'block', borderRadius: '8px' }}
+              />
+            </div>
+
+            <div style={{ background: '#F8FAFC', padding: '12px', borderRadius: '8px', border: '1px solid #E2E8F0', marginBottom: '16px', textAlign: 'left', fontSize: '0.85rem' }}>
+              <div style={{ color: 'var(--muted)', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 700 }}>ACCOUNT DETAILS</div>
+              <strong style={{ color: 'var(--ink)', fontSize: '0.92rem' }}>{portalQrZoom.name}</strong>
+              <div style={{ marginTop: '2px', color: 'var(--ink-light)', fontSize: '0.8rem' }}>
+                Account / Hotline: <strong>{portalQrZoom.acc}</strong>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <a
+                href={portalQrZoom.imageSrc}
+                download
+                className="btn-hero-primary"
+                style={{ flex: 1, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', fontSize: '0.85rem' }}
+              >
+                Save / Download QR
+              </a>
+              <button
+                type="button"
+                onClick={() => setPortalQrZoom(null)}
+                style={{ flex: 1, padding: '10px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '8px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer', color: 'var(--ink)' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

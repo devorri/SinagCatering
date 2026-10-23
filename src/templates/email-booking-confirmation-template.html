@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Booking Confirmation - Sinag Catering</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F4F4F5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #18181B; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
+  <!-- Outer Wrapper Table -->
+  <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #F4F4F5; padding: 48px 16px;">
+    <tr>
+      <td align="center">
+        <!-- Main Email Container (560px Max) -->
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 560px; background-color: #FFFFFF; border-radius: 12px; overflow: hidden; border: 1px solid #E4E4E7; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+          
+          <!-- Minimal Brand Bar -->
+          <tr>
+            <td style="padding: 28px 36px 20px; border-bottom: 1px solid #F4F4F5;">
+              <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background-color: #E8820A;"></span>
+                      <span style="font-size: 15px; font-weight: 700; color: #18181B; letter-spacing: -0.02em;">
+                        Sinag Catering
+                      </span>
+                    </div>
+                  </td>
+                  <td align="right">
+                    <span style="font-size: 12px; font-weight: 600; color: #047857; background-color: #ECFDF5; padding: 3px 10px; border-radius: 6px; border: 1px solid #A7F3D0;">
+                      Reservation
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Main Content -->
+          <tr>
+            <td style="padding: 32px 36px 36px;">
+              <span style="font-size: 12px; font-weight: 700; color: #71717A; letter-spacing: 0.06em; text-transform: uppercase; display: block; margin-bottom: 6px;">
+                Booking Reference #{{reference_id}}
+              </span>
+              <h1 style="margin: 0 0 12px; font-size: 22px; font-weight: 600; color: #18181B; letter-spacing: -0.03em;">
+                Booking Request Received
+              </h1>
+              <p style="margin: 0 0 16px; font-size: 14px; line-height: 22px; color: #52525B;">
+                Hello {{to_name}},
+              </p>
+              <p style="margin: 0 0 24px; font-size: 14px; line-height: 22px; color: #52525B;">
+                Thank you for choosing <strong>{{company_name}}</strong>! We have received your catering reservation request. Our banquet concierge team is currently reviewing your celebration details.
+              </p>
+
+              <!-- Structured Reservation Summary Card -->
+              <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="margin: 0 0 24px; background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; overflow: hidden;">
+                <tr>
+                  <td style="padding: 18px 20px; border-bottom: 1px solid #E2E8F0; background-color: #F1F5F9;">
+                    <strong style="font-size: 13px; color: #0F172A; text-transform: uppercase; letter-spacing: 0.04em;">
+                      Event Summary
+                    </strong>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 16px 20px;">
+                    <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0">
+                      <tr>
+                        <td style="padding: 6px 0; font-size: 13px; color: #64748B; width: 40%;">Event Date:</td>
+                        <td style="padding: 6px 0; font-size: 13px; font-weight: 600; color: #0F172A;">{{event_date}}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 6px 0; font-size: 13px; color: #64748B;">Catering Package:</td>
+                        <td style="padding: 6px 0; font-size: 13px; font-weight: 600; color: #0F172A;">{{package_name}}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 6px 0; font-size: 13px; color: #64748B;">Event Type:</td>
+                        <td style="padding: 6px 0; font-size: 13px; font-weight: 600; color: #0F172A;">{{event_type}}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 6px 0; font-size: 13px; color: #64748B;">Guest Count:</td>
+                        <td style="padding: 6px 0; font-size: 13px; font-weight: 600; color: #0F172A;">{{guest_count}}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 6px 0; font-size: 13px; color: #64748B; border-top: 1px dashed #CBD5E1;">Total Package:</td>
+                        <td style="padding: 6px 0; font-size: 14px; font-weight: 700; color: #0F172A; border-top: 1px dashed #CBD5E1;">{{total_price}}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 6px 0; font-size: 13px; color: #64748B;">{{payment_term_label}}:</td>
+                        <td style="padding: 6px 0; font-size: 14px; font-weight: 700; color: #E8820A;">{{paid_amount}}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 6px 0; font-size: 13px; color: #64748B;">Remaining Balance:</td>
+                        <td style="padding: 6px 0; font-size: 13px; font-weight: 600; color: #0F172A;">{{remaining_balance}}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 6px 0; font-size: 13px; color: #64748B;">Payment Method:</td>
+                        <td style="padding: 6px 0; font-size: 13px; font-weight: 600; color: #0F172A;">{{payment_method}}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 6px 0; font-size: 13px; color: #64748B;">Reference No.:</td>
+                        <td style="padding: 6px 0; font-size: 13px; font-family: monospace, Courier, sans-serif; font-weight: 600; color: #0F172A;">{{ref_number}}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Payment Status Callout -->
+              <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-left: 4px solid #E8820A; border-radius: 6px; padding: 12px 16px; margin: 0 0 24px;">
+                <p style="margin: 0; font-size: 13px; line-height: 19px; color: #334155;">
+                  <strong>Payment Note:</strong> {{balance_note}}
+                </p>
+              </div>
+
+              <!-- What Happens Next Section -->
+              <h3 style="margin: 0 0 10px; font-size: 14px; font-weight: 600; color: #18181B;">
+                What happens next?
+              </h3>
+              <ol style="margin: 0 0 24px; padding-left: 20px; font-size: 13px; line-height: 20px; color: #52525B;">
+                <li style="margin-bottom: 6px;"><strong>Payment Verification:</strong> Our desk reviews your GCash / MariBank proof of transfer.</li>
+                <li style="margin-bottom: 6px;"><strong>Date Lock:</strong> Once verified, your celebration date is locked on our catering calendar.</li>
+                <li><strong>Banquet Coordination:</strong> Our coordinator will reach out to confirm your dishes and final setup.</li>
+              </ol>
+
+              <!-- Concierge Hotline Support Card -->
+              <div style="background-color: #FAFAFA; border: 1px solid #E4E4E7; border-radius: 8px; padding: 14px 18px; margin: 0 0 24px;">
+                <p style="margin: 0; font-size: 13px; line-height: 20px; color: #52525B;">
+                  Need to make adjustments to your menu or guest count? Call or message our team at <strong>0928 714 4597</strong>.
+                </p>
+              </div>
+
+              <p style="margin: 0; font-size: 13px; line-height: 20px; color: #71717A;">
+                Warm regards,<br>
+                <strong style="color: #27272A;">The Sinag Catering Team</strong>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Minimal Footer -->
+          <tr>
+            <td style="background-color: #FAFAFA; padding: 20px 36px; border-top: 1px solid #E4E4E7; text-align: center;">
+              <p style="margin: 0 0 4px; font-size: 12px; color: #71717A;">
+                Sinag Catering Services &middot; 0928 714 4597 &middot; Bulacan, Philippines
+              </p>
+              <p style="margin: 0; font-size: 11px; color: #A1A1AA;">
+                This is an automated confirmation sent regarding booking request #{{reference_id}}.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+        <!-- End Main Container -->
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

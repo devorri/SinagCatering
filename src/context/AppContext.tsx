@@ -102,6 +102,9 @@ const mapDbBooking = (row: any): Booking => ({
     : { extraMainCount: 0, extraPastaCount: 0, extraDessertCount: 0 },
   totalPrice: Number(row.total_price) || 0,
   downpaymentAmount: Number(row.downpayment_amount) || 0,
+  paymentTerm: (Number(row.downpayment_amount) >= Number(row.total_price) && Number(row.total_price) > 0) || (row.notes && /100% full payment/i.test(row.notes))
+    ? 'full'
+    : 'downpayment',
   bookingStatus: row.booking_status || 'pending',
   paymentStatus: row.payment_status || 'unpaid',
   paymentMethod: row.payment_method,
@@ -731,9 +734,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // Persist to Supabase Database
     if (supabase) {
-      const dbPayload: any = mapToDbBooking(newBooking)
-      // Omit assigned_services on client creation so it doesn't fail if column has not been added to Supabase yet
-      delete dbPayload.assigned_services
+      const dbPayload = mapToDbBooking(newBooking)
       supabase.from('bookings').insert(dbPayload).then(({ error }) => {
         if (error) console.error('Error inserting booking into Supabase:', error.message)
       })
@@ -1117,10 +1118,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       prev.map((bk) => {
         if (bk.id === bookingId) {
           const finalAmount = verifiedAmount ?? bk.downpaymentAmount ?? bk.totalPrice * 0.5
+          const isFull = bk.paymentTerm === 'full' || finalAmount >= bk.totalPrice
           targetBooking = {
             ...bk,
             bookingStatus: 'confirmed',
-            paymentStatus: 'downpayment_paid',
+            paymentStatus: isFull ? 'fully_paid' : 'downpayment_paid',
             downpaymentAmount: finalAmount,
           }
           return targetBooking
@@ -1132,9 +1134,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (targetBooking) {
       blockDate((targetBooking as Booking).eventDate)
       sendPaymentVerificationNotifications(targetBooking as Booking).catch(console.error)
+      const isFull = (targetBooking as Booking).paymentStatus === 'fully_paid'
       addAdminNotification({
         type: 'booking_confirmed',
-        title: 'Downpayment Verified & Confirmed',
+        title: isFull ? 'Full Payment Verified & Confirmed' : 'Downpayment Verified & Confirmed',
         message: `Booking #${targetBooking.id} (${targetBooking.customerName}) confirmed for ${targetBooking.eventDate}. SMS and email notifications dispatched.`,
         bookingId: targetBooking.id,
       })
@@ -1142,7 +1145,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (supabase) {
         supabase.from('bookings').update({
           booking_status: 'confirmed',
-          payment_status: 'downpayment_paid',
+          payment_status: targetBooking.paymentStatus,
           downpayment_amount: targetBooking.downpaymentAmount,
         }).eq('id', bookingId).then(({ error }) => {
           if (error) console.error('Error verifying downpayment in Supabase:', error.message)

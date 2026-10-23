@@ -2307,6 +2307,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     <p style={{ margin: '0 0 4px' }}><strong>Date:</strong> {selectedBooking.eventDate}</p>
                     <p style={{ margin: '0 0 4px' }}><strong>Attendees:</strong> {selectedBooking.guestCount} pax</p>
                     <p style={{ margin: '0 0 4px' }}><strong>Total Price:</strong> {formatMoney(selectedBooking.totalPrice, selectedBooking.currency)}</p>
+                    <p style={{ margin: '0 0 4px' }}>
+                      <strong>Payment Term:</strong>{' '}
+                      {selectedBooking.paymentTerm === 'full' ? (
+                        <span style={{ background: '#ECFDF5', color: '#065F46', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 700 }}>
+                          100% Full Upfront Payment (Zero Balance)
+                        </span>
+                      ) : (
+                        <span style={{ background: '#FEF3C7', color: '#92400E', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 700 }}>
+                          50% Downpayment (Remaining 50% Due on Event Day)
+                        </span>
+                      )}
+                    </p>
                     <p style={{ margin: '0 0 10px' }}><strong>Payment Status:</strong> {selectedBooking.paymentStatus.replace('_', ' ')}</p>
 
                     {/* Checklist Item 8: Detailed Menu Breakdown */}
@@ -2342,6 +2354,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                           </div>
                         ) : (
                           <span style={{ fontSize: '0.8rem', color: '#94A3B8', fontStyle: 'italic' }}>None specified</span>
+                        )}
+                      </div>
+
+                      <div style={{ marginBottom: '10px' }}>
+                        <strong style={{ fontSize: '0.8rem', color: '#334155', display: 'block', marginBottom: '4px' }}>Selected Buffet Beverage:</strong>
+                        {selectedBooking.addOns.selectedDrinks && selectedBooking.addOns.selectedDrinks.length > 0 ? (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                            {selectedBooking.addOns.selectedDrinks.map((drink) => (
+                              <span key={drink} style={{ background: '#ECFDF5', color: '#065F46', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600, border: '1px solid #A7F3D0' }}>
+                                🥤 {drink}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: '0.8rem', color: '#94A3B8', fontStyle: 'italic' }}>Standard House Drink</span>
                         )}
                       </div>
 

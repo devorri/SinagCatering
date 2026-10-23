@@ -324,3 +324,32 @@ code {
 .drawer-nav-item { display: flex; align-items: center; width: 100%; padding: 14px 20px; background: transparent; border: none; text-align: left; font-size: 0.92rem; font-weight: 500; color: var(--ink); cursor: pointer; transition: var(--transition-fast); border-left: 3px solid transparent; }
 .drawer-nav-item:hover { background: var(--paper-warm); color: var(--terracotta); }
 .drawer-nav-item.active { background: var(--paper-warm); color: var(--gold-dark); border-left-color: var(--gold-dark); font-weight: 700; }
+
+/* ✦ Screen/Element Vibration & Attention Pulse */
+@keyframes sinag-vibrate {
+  0%, 100% { transform: translateX(0); }
+  15% { transform: translateX(-9px) rotate(-0.5deg); }
+  30% { transform: translateX(8px) rotate(0.5deg); }
+  45% { transform: translateX(-7px) rotate(-0.3deg); }
+  60% { transform: translateX(6px) rotate(0.3deg); }
+  75% { transform: translateX(-4px); }
+  90% { transform: translateX(2px); }
+}
+
+@keyframes sinag-glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4), 0 4px 18px rgba(239, 68, 68, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0.2), 0 6px 24px rgba(239, 68, 68, 0.25);
+  }
+}
+
+.shake-vibrate {
+  animation: sinag-vibrate 0.65s cubic-bezier(0.36, 0.07, 0.19, 0.97) both, sinag-glow-pulse 1.8s ease-in-out infinite;
+}
+
+.field-error-highlight {
+  border-color: #EF4444 !important;
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.25), 0 4px 14px rgba(239, 68, 68, 0.15) !important;
+}

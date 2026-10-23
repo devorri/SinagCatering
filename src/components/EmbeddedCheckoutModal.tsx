@@ -472,16 +472,16 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
                     >
                       <div
                         style={{
-                          width: '136px',
-                          height: '136px',
-                          borderRadius: '8px',
+                          width: '200px',
+                          height: '200px',
+                          borderRadius: '10px',
                           background: '#FFF',
-                          padding: '6px',
-                          border: '1px solid #BBF7D0',
+                          padding: '8px',
+                          border: '1.5px solid #BBF7D0',
                           display: 'grid',
                           placeItems: 'center',
                           flexShrink: 0,
-                          boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
                         }}
                       >
                         {isLoadingQr ? (

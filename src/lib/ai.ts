@@ -19,6 +19,7 @@ export interface AIFormData {
   guest_count: number
   estimated_total: number
   selected_menu: string[]
+  selected_drinks?: string[]
   addons: string[]
   extra_main_count?: number
   extra_pasta_count?: number
@@ -325,9 +326,9 @@ Official Add-ons & Upgrades Catalog:
 - EXTRA PASTA COURSES: +PHP 80 per guest (Cap: up to 2 extra pasta dishes).
 - EXTRA DESSERT COURSES: +PHP 50 per guest (Cap: up to 2 extra dessert courses).
 - FLAT-RATE CELEBRATION STATIONS:
-  * ADD-CANDY-01: Chocolate Fountain & Candy Buffet (PHP 150 flat)
-  * ADD-HOST-02: Party Emcee & Games Host (PHP 200 flat)
-  * ADD-DESSERT-03: Assorted Dessert Station (PHP 100 flat)
+  * ADD-CANDY-01: Chocolate Fountain & Candy Buffet (PHP 1,500 flat)
+  * ADD-HOST-02: Party Emcee & Games Host (PHP 2,000 flat)
+  * ADD-DESSERT-03: Assorted Dessert Station (PHP 1,000 flat)
 - EXCESS GUEST BUFFER FEE: +PHP 700 per excess guest beyond capacity (+10 food buffer pax).
 
 CONTEXT-AWARE EVENT CLASSIFICATION:

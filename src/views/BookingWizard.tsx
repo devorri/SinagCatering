@@ -20,8 +20,11 @@ import {
   Building,
   User,
   Utensils,
+  CupSoda,
   ChevronDown,
   ChevronUp,
+  Maximize2,
+  X,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useConfirm } from '../context/ConfirmContext'
@@ -34,17 +37,21 @@ import {
   MAIN_DISHES,
   PASTA_DISHES,
   DISH_DETAILS,
+  DRINK_OPTIONS,
+  DRINK_DETAILS,
   findTierForGuestCount,
   recommendPackage,
 } from '../data/packages'
 import { CATEGORY_SHOWCASE_GALLERY } from '../data/eventGalleries'
 import { AI_CATALOG_ADDONS, formatMoney } from '../data/packages'
 import type { AIFormData } from '../lib/ai'
+import { EmbeddedCheckoutModal } from '../components/EmbeddedCheckoutModal'
 
 interface BookingWizardProps {
   onComplete: () => void
   onBack: () => void
   initialAIFormData?: AIFormData
+  initialDate?: string
 }
 
 const STEP_LABELS = ['Select Package', 'Customize', 'Pick Date', 'Your Details', 'Review & Submit']
@@ -53,6 +60,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   onComplete,
   onBack,
   initialAIFormData,
+  initialDate,
 }) => {
   const { blockedDates, bookings, createBooking, currentUser, packages } = useApp()
   const { confirm } = useConfirm()
@@ -84,11 +92,56 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const [extraDessert, setExtraDessert] = useState(initialAIFormData?.extra_dessert_count || 0)
   const [selectedMainDishes, setSelectedMainDishes] = useState<string[]>([])
   const [selectedPastaDishes, setSelectedPastaDishes] = useState<string[]>([])
+  const [selectedDrinks, setSelectedDrinks] = useState<string[]>(initialAIFormData?.selected_drinks ?? [])
   const [extraMainDishes, setExtraMainDishes] = useState<string[]>([])
   const [extraPastaDishes, setExtraPastaDishes] = useState<string[]>([])
+  const [showExtraDishErrors, setShowExtraDishErrors] = useState(false)
   const [isIncludedDishesCollapsed, setIsIncludedDishesCollapsed] = useState(false)
   const [isMainDishesCollapsed, setIsMainDishesCollapsed] = useState(false)
   const [isPastaDishesCollapsed, setIsPastaDishesCollapsed] = useState(false)
+  const [isDrinksCollapsed, setIsDrinksCollapsed] = useState(false)
+  const [isCompleted, setIsCompleted] = useState(false)
+
+  // Screen/Element vibration and smooth scroll for validation
+  const [shakeSection, setShakeSection] = useState<'mains' | 'pasta' | 'drinks' | 'extraDishes' | null>(null)
+  const [attemptedStep1Next, setAttemptedStep1Next] = useState(false)
+
+  const triggerSectionAttention = (
+    section: 'mains' | 'pasta' | 'drinks' | 'extraDishes',
+    elementId: string
+  ) => {
+    setAttemptedStep1Next(true)
+    setShakeSection(section)
+
+    if (section === 'mains') {
+      setIsIncludedDishesCollapsed(false)
+      setIsMainDishesCollapsed(false)
+    } else if (section === 'pasta') {
+      setIsIncludedDishesCollapsed(false)
+      setIsPastaDishesCollapsed(false)
+    } else if (section === 'drinks') {
+      setIsDrinksCollapsed(false)
+    }
+
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try {
+        navigator.vibrate([120, 60, 120, 60, 200])
+      } catch {
+        // Safe fallback
+      }
+    }
+
+    setTimeout(() => {
+      const el = document.getElementById(elementId)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    }, 60)
+
+    setTimeout(() => {
+      setShakeSection((prev) => (prev === section ? null : prev))
+    }, 1200)
+  }
 
   // Step 3 — Calendar (14-Day Advance Booking Rule: initial focus starts on valid date)
   const getMinBookingDate = () => {
@@ -104,9 +157,24 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     return `${y}-${m}-${day}`
   }
 
-  const [eventDate, setEventDate] = useState(() => formatToDateStr(getMinBookingDate()))
-  const [currentYear, setCurrentYear] = useState(() => getMinBookingDate().getFullYear())
-  const [currentMonth, setCurrentMonth] = useState(() => getMinBookingDate().getMonth())
+  const [eventDate, setEventDate] = useState(() => initialDate || formatToDateStr(getMinBookingDate()))
+  const [currentYear, setCurrentYear] = useState(() => {
+    if (initialDate) {
+      const d = new Date(`${initialDate}T00:00:00`)
+      if (!isNaN(d.getTime())) return d.getFullYear()
+    }
+    return getMinBookingDate().getFullYear()
+  })
+  const [currentMonth, setCurrentMonth] = useState(() => {
+    if (initialDate) {
+      const d = new Date(`${initialDate}T00:00:00`)
+      if (!isNaN(d.getTime())) return d.getMonth()
+    }
+    return getMinBookingDate().getMonth()
+  })
+
+  // Payment Term Option (50% Downpayment vs. 100% Full Payment Upfront)
+  const [paymentTerm, setPaymentTerm] = useState<'downpayment' | 'full'>('downpayment')
 
   // Step 4 — Client Details & Category Selection
   const [clientName, setClientName] = useState(currentUser?.name || '')
@@ -160,6 +228,15 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const [proofError, setProofError] = useState('')
   const [copiedAccount, setCopiedAccount] = useState(false)
   const [isDraggingProof, setIsDraggingProof] = useState(false)
+  const [qrModalInfo, setQrModalInfo] = useState<{
+    isOpen: boolean
+    title: string
+    imageSrc: string
+    subtitle: string
+    accountName: string
+    accountNo: string
+  } | null>(null)
+  const [isPayMongoModalOpen, setIsPayMongoModalOpen] = useState(false)
 
   // Step 5 — Temporary Booking Reference ID & Timestamp for Digital Receipt
   const tempBookingRef = useMemo(() => {
@@ -219,6 +296,11 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     }
   }, [currentPkg, guestCount, extraMain, extraPasta, extraDessert, selectedAIAddonIds])
 
+  // Dynamic payable amount based on payment term (50% downpayment vs. 100% full payment)
+  const payableAmount = useMemo(() => {
+    return paymentTerm === 'full' ? calculations.totalPrice : calculations.downpayment
+  }, [paymentTerm, calculations.totalPrice, calculations.downpayment])
+
   // Dedicated AI Recommendation Calculation (For Step 1 AI Tab)
   const aiRecommendation = useMemo(() => {
     return recommendPackage(packages, aiGuestCount, aiBudget)
@@ -245,6 +327,14 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
           : current
       )
     }
+  }
+
+  const toggleDrink = (drink: string) => {
+    setSelectedDrinks((current) =>
+      current.includes(drink)
+        ? []
+        : [drink]
+    )
   }
 
   // Calendar logic
@@ -381,6 +471,30 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
           error: `Please select 1 pasta dish (${selectedPastaDishes.length}/1 selected).`,
         }
       }
+      if (selectedDrinks.length !== 1) {
+        return {
+          valid: false,
+          error: 'Please select 1 included buffet drink (Blue Lemonade, Iced Tea, or Cucumber).',
+        }
+      }
+      if (extraMain > 0) {
+        const chosenMains = extraMainDishes.slice(0, extraMain)
+        if (chosenMains.length < extraMain || chosenMains.some((dish) => !dish || !dish.trim())) {
+          return {
+            valid: false,
+            error: 'Please select a specific dish for your extra main course before proceeding.',
+          }
+        }
+      }
+      if (extraPasta > 0) {
+        const chosenPastas = extraPastaDishes.slice(0, extraPasta)
+        if (chosenPastas.length < extraPasta || chosenPastas.some((dish) => !dish || !dish.trim())) {
+          return {
+            valid: false,
+            error: 'Please select a specific dish for your extra pasta course before proceeding.',
+          }
+        }
+      }
       return { valid: true }
     }
     if (stepIndex === 2) {
@@ -414,7 +528,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
         return { valid: false, error: 'Please enter your payment transaction reference number.' }
       }
       if (!proofOfPaymentUrl) {
-        return { valid: false, error: 'Please attach a screenshot proof of your 50% downpayment receipt.' }
+        return { valid: false, error: `Please attach a screenshot proof of your ${paymentTerm === 'full' ? 'full payment' : '50% downpayment'} receipt.` }
       }
       return { valid: true }
     }
@@ -460,6 +574,25 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       for (let s = 0; s < targetIndex; s++) {
         const val = validateStep(s)
         if (!val.valid) {
+          if (s === 1) {
+            if (selectedMainDishes.length !== 3) {
+              triggerSectionAttention('mains', 'booking-main-dishes-section')
+            } else if (selectedPastaDishes.length !== 1) {
+              triggerSectionAttention('pasta', 'booking-pasta-dishes-section')
+            } else if (selectedDrinks.length !== 1) {
+              triggerSectionAttention('drinks', 'booking-drinks-section')
+            } else {
+              setShowExtraDishErrors(true)
+              triggerSectionAttention('extraDishes', 'booking-extra-dishes-section')
+              confirm({
+                title: 'Incomplete Extra Course Selection',
+                message: 'Please select a specific dish for your extra main or pasta course before proceeding.',
+                confirmText: 'Select Dishes',
+                cancelText: 'Dismiss',
+                variant: 'warning',
+              })
+            }
+          }
           setErrorMsg(val.error || `Please complete Step ${s + 1} (${STEP_LABELS[s]}) first.`)
           if (s !== currentStep) {
             setCurrentStep(s)
@@ -478,11 +611,56 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const goNext = () => {
+  const goNext = async () => {
     setErrorMsg('')
     if (currentStep === 3) {
       setPhoneTouched(true)
     }
+
+    if (currentStep === 1) {
+      if (selectedMainDishes.length !== 3) {
+        triggerSectionAttention('mains', 'booking-main-dishes-section')
+        setErrorMsg(`Please select 3 main dishes (${selectedMainDishes.length}/3 selected).`)
+        return
+      }
+      if (selectedPastaDishes.length !== 1) {
+        triggerSectionAttention('pasta', 'booking-pasta-dishes-section')
+        setErrorMsg(`Please select 1 pasta dish (${selectedPastaDishes.length}/1 selected).`)
+        return
+      }
+      if (selectedDrinks.length !== 1) {
+        triggerSectionAttention('drinks', 'booking-drinks-section')
+        setErrorMsg('Please select 1 included buffet drink (Blue Lemonade, Iced Tea, or Cucumber).')
+        return
+      }
+      if (extraMain > 0 && extraMainDishes.slice(0, extraMain).some((dish) => !dish || !dish.trim())) {
+        setShowExtraDishErrors(true)
+        triggerSectionAttention('extraDishes', 'booking-extra-dishes-section')
+        await confirm({
+          title: 'Incomplete Extra Course Selection',
+          message: 'Please select a specific dish for your extra main course before proceeding.',
+          confirmText: 'Select Dishes',
+          cancelText: 'Dismiss',
+          variant: 'warning',
+        })
+        setErrorMsg('Please select a specific dish for your extra main course before proceeding.')
+        return
+      }
+      if (extraPasta > 0 && extraPastaDishes.slice(0, extraPasta).some((dish) => !dish || !dish.trim())) {
+        setShowExtraDishErrors(true)
+        triggerSectionAttention('extraDishes', 'booking-extra-dishes-section')
+        await confirm({
+          title: 'Incomplete Extra Course Selection',
+          message: 'Please select a specific dish for your extra pasta course before proceeding.',
+          confirmText: 'Select Dishes',
+          cancelText: 'Dismiss',
+          variant: 'warning',
+        })
+        setErrorMsg('Please select a specific dish for your extra pasta course before proceeding.')
+        return
+      }
+    }
+
     const check = validateStep(currentStep)
     if (!check.valid) {
       setErrorMsg(check.error || 'Please complete the required fields to continue.')
@@ -498,14 +676,14 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
   React.useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (currentStep > 0 || isSubmitting) {
+      if (!isCompleted && (currentStep > 0 || isSubmitting)) {
         e.preventDefault()
         e.returnValue = ''
       }
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [currentStep, isSubmitting])
+  }, [currentStep, isSubmitting, isCompleted])
 
   const goBack = async () => {
     setErrorMsg('')
@@ -548,13 +726,13 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       return
     }
 
-    if (extraMain > 0 && (extraMainDishes.slice(0, extraMain).some((dish) => !dish) || new Set(extraMainDishes.slice(0, extraMain)).size !== extraMain)) {
-      setErrorMsg('Please choose a different main dish for every extra main-dish add-on.')
+    if (extraMain > 0 && extraMainDishes.slice(0, extraMain).some((dish) => !dish || !dish.trim())) {
+      setErrorMsg('Please choose a main dish for every extra main-dish add-on.')
       setIsSubmitting(false)
       return
     }
-    if (extraPasta > 0 && (extraPastaDishes.slice(0, extraPasta).some((dish) => !dish) || new Set(extraPastaDishes.slice(0, extraPasta)).size !== extraPasta)) {
-      setErrorMsg('Please choose a different pasta dish for every extra pasta add-on.')
+    if (extraPasta > 0 && extraPastaDishes.slice(0, extraPasta).some((dish) => !dish || !dish.trim())) {
+      setErrorMsg('Please choose a pasta dish for every extra pasta add-on.')
       setIsSubmitting(false)
       return
     }
@@ -583,20 +761,22 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
         selectedAddonIds: selectedAIAddonIds,
         selectedMainDishes,
         selectedPastaDishes,
+        selectedDrinks,
         extraMainDishes: extraMainDishes.slice(0, extraMain),
         extraPastaDishes: extraPastaDishes.slice(0, extraPasta),
       },
       totalPrice: calculations.totalPrice,
-      downpaymentAmount: calculations.downpayment,
+      downpaymentAmount: payableAmount,
+      paymentTerm,
       paymentMethod,
       gcashRefNumber: gcashRefNumber.trim(),
       proofOfPaymentUrl: proofOfPaymentUrl || null,
-      notes: `${currentPkg.pricePerHead !== undefined ? 'Per-head pricing; ' : `Tier: ${calculations.tier.pax} pax + ${FOOD_BUFFER_PAX} pax buffer. `}Selected mains: ${selectedMainDishes.join(', ') || 'none'}. Selected pasta: ${selectedPastaDishes.join(', ') || 'none'}. Extra mains: ${extraMainDishes.slice(0, extraMain).join(', ') || 'none'}. Extra pasta: ${extraPastaDishes.slice(0, extraPasta).join(', ') || 'none'}. Extra Dessert: ${extraDessert}. Flat add-ons: ${selectedAIAddonIds.join(', ') || 'none'}.\nPayment: ${paymentMethod === 'bank_transfer' ? 'MARIBANK / BANK TRANSFER' : 'QR PH / GCASH'} (Ref: ${gcashRefNumber.trim()}). Receipt proof attached.\n${notes}`,
+      notes: `${currentPkg.pricePerHead !== undefined ? 'Per-head pricing; ' : `Tier: ${calculations.tier.pax} pax + ${FOOD_BUFFER_PAX} pax buffer. `}Selected mains: ${selectedMainDishes.join(', ') || 'none'}. Selected pasta: ${selectedPastaDishes.join(', ') || 'none'}. Selected drink: ${selectedDrinks.join(', ') || 'none'}. Extra mains: ${extraMainDishes.slice(0, extraMain).join(', ') || 'none'}. Extra pasta: ${extraPastaDishes.slice(0, extraPasta).join(', ') || 'none'}. Extra Dessert: ${extraDessert}. Flat add-ons: ${selectedAIAddonIds.join(', ') || 'none'}.\nPayment Term: ${paymentTerm === 'full' ? '100% FULL PAYMENT UPFRONT' : '50% DOWNPAYMENT'}. Payment: ${paymentMethod === 'bank_transfer' ? 'MARIBANK / BANK TRANSFER' : 'QR PH / GCASH'} (Ref: ${gcashRefNumber.trim()}). Receipt proof attached.\n${notes}`,
     }
 
     const confirmed = await confirm({
       title: 'Confirm Event Reservation',
-      message: `Are you ready to submit your catering booking for ${guestCount} guests on ${eventDate} (${currentPkg.name})?\n\nTotal package amount: ₱${calculations.totalPrice.toLocaleString()} (50% Downpayment: ₱${calculations.downpayment.toLocaleString()}).`,
+      message: `Are you ready to submit your catering booking for ${guestCount} guests on ${eventDate} (${currentPkg.name})?\n\nTotal package amount: ₱${calculations.totalPrice.toLocaleString()} (${paymentTerm === 'full' ? '100% Full Payment Upfront' : '50% Downpayment'}: ₱${payableAmount.toLocaleString()}).`,
       confirmText: 'Submit Reservation',
       cancelText: 'Review Details',
       variant: 'primary',
@@ -608,7 +788,10 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
     createBooking(bookingData)
 
-    setSuccessMsg('Booking submitted successfully! You will receive an SMS and email notification with your booking reference. Please wait for downpayment verification.')
+    setIsCompleted(true)
+    setSuccessMsg(paymentTerm === 'full'
+      ? 'Booking submitted successfully! You will receive an SMS and email notification with your booking reference. Please wait for payment verification.'
+      : 'Booking submitted successfully! You will receive an SMS and email notification with your booking reference. Please wait for downpayment verification.')
     setIsSubmitting(false)
     setTimeout(onComplete, 2400)
   }
@@ -1078,13 +1261,19 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                         Selected Buffet Inclusions Preview:
                       </span>
                       <div style={{ fontSize: '0.88rem', color: 'var(--ink)' }}>
-                        {selectedMainDishes.length > 0 || selectedPastaDishes.length > 0 ? (
+                        {selectedMainDishes.length > 0 || selectedPastaDishes.length > 0 || selectedDrinks.length > 0 ? (
                           <>
                             <strong style={{ color: '#991B1B' }}>3 Mains:</strong>{' '}
                             {selectedMainDishes.length > 0 ? selectedMainDishes.join(', ') : <span style={{ color: '#991B1B', fontStyle: 'italic' }}>Pending selection ({3 - selectedMainDishes.length} remaining)</span>}
                             &nbsp;&nbsp;•&nbsp;&nbsp;
                             <strong style={{ color: '#1E40AF' }}>1 Pasta:</strong>{' '}
                             {selectedPastaDishes.length > 0 ? selectedPastaDishes.join(', ') : <span style={{ color: '#1E40AF', fontStyle: 'italic' }}>Pending selection</span>}
+                            {selectedDrinks.length > 0 && (
+                              <>
+                                &nbsp;&nbsp;•&nbsp;&nbsp;
+                                <strong style={{ color: '#059669' }}>1 Drink:</strong> {selectedDrinks.join(', ')}
+                              </>
+                            )}
                           </>
                         ) : (
                           <span style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
@@ -1104,12 +1293,15 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   <>
                     {/* Main Dishes (Red Box Area) */}
                     <div
+                      id="booking-main-dishes-section"
+                      className={`dish-section-box ${shakeSection === 'mains' ? 'shake-vibrate' : ''}`}
                       style={{
                         marginBottom: '22px',
-                        border: '1.5px solid #FCA5A5',
-                        background: '#FFF8F8',
+                        border: (attemptedStep1Next && selectedMainDishes.length !== 3) ? '2.5px solid #EF4444' : '1.5px solid #FCA5A5',
+                        background: (attemptedStep1Next && selectedMainDishes.length !== 3) ? '#FEF2F2' : '#FFF8F8',
                         borderRadius: '12px',
                         padding: '18px 20px',
+                        transition: 'all 0.3s ease',
                       }}
                     >
                       <div
@@ -1137,12 +1329,20 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                             fontWeight: 700,
                             background: selectedMainDishes.length === 3 ? '#ECFDF5' : '#FEE2E2',
                             color: selectedMainDishes.length === 3 ? '#065F46' : '#991B1B',
-                            border: `1px solid ${selectedMainDishes.length === 3 ? '#A7F3D0' : '#FCA5A5'}`,
+                            border: `1.5px solid ${selectedMainDishes.length === 3 ? '#A7F3D0' : '#EF4444'}`,
                           }}
                         >
                           [ {selectedMainDishes.length} / 3 Selected ]
                         </div>
                       </div>
+
+                      {/* Red indicator banner when needed to be filled */}
+                      {attemptedStep1Next && selectedMainDishes.length !== 3 && (
+                        <div style={{ background: '#FEE2E2', border: '1.5px solid #EF4444', color: '#991B1B', padding: '10px 14px', borderRadius: '8px', fontSize: '0.82rem', fontWeight: 700, marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <AlertCircle size={16} style={{ color: '#DC2626', flexShrink: 0 }} />
+                          <span>Action Required: Please select 3 main dishes ({selectedMainDishes.length}/3 selected).</span>
+                        </div>
+                      )}
 
                       {!isMainDishesCollapsed && (
                         <div className="dish-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
@@ -1250,11 +1450,14 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
                     {/* Pasta Dishes (Blue Box Area) */}
                     <div
+                      id="booking-pasta-dishes-section"
+                      className={`dish-section-box ${shakeSection === 'pasta' ? 'shake-vibrate' : ''}`}
                       style={{
-                        border: '1.5px solid #93C5FD',
-                        background: '#F0F7FF',
+                        border: (attemptedStep1Next && selectedPastaDishes.length !== 1) ? '2.5px solid #EF4444' : '1.5px solid #93C5FD',
+                        background: (attemptedStep1Next && selectedPastaDishes.length !== 1) ? '#FEF2F2' : '#F0F7FF',
                         borderRadius: '12px',
                         padding: '18px 20px',
+                        transition: 'all 0.3s ease',
                       }}
                     >
                       <div
@@ -1282,12 +1485,20 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                             fontWeight: 700,
                             background: selectedPastaDishes.length === 1 ? '#ECFDF5' : '#DBEAFE',
                             color: selectedPastaDishes.length === 1 ? '#065F46' : '#1E40AF',
-                            border: `1px solid ${selectedPastaDishes.length === 1 ? '#A7F3D0' : '#93C5FD'}`,
+                            border: `1.5px solid ${selectedPastaDishes.length === 1 ? '#A7F3D0' : '#EF4444'}`,
                           }}
                         >
                           [ {selectedPastaDishes.length} / 1 Selected ]
                         </div>
                       </div>
+
+                      {/* Red indicator banner when needed to be filled */}
+                      {attemptedStep1Next && selectedPastaDishes.length !== 1 && (
+                        <div style={{ background: '#FEE2E2', border: '1.5px solid #EF4444', color: '#991B1B', padding: '10px 14px', borderRadius: '8px', fontSize: '0.82rem', fontWeight: 700, marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <AlertCircle size={16} style={{ color: '#DC2626', flexShrink: 0 }} />
+                          <span>Action Required: Please select 1 pasta dish ({selectedPastaDishes.length}/1 selected).</span>
+                        </div>
+                      )}
 
                       {!isPastaDishesCollapsed && (
                         <div className="dish-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
@@ -1450,6 +1661,260 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 )}
               </div>
 
+              {/* Checklist / Requirement: Included Drink Flavor Customization (Blue Lemonade, Iced Tea, Cucumber) */}
+              <div
+                id="booking-drinks-section"
+                className={`dish-swap-box ${shakeSection === 'drinks' ? 'shake-vibrate' : ''}`}
+                style={{
+                  background: (attemptedStep1Next && selectedDrinks.length !== 1) ? '#FEF2F2' : 'linear-gradient(180deg, #FFFFFF 0%, #F0FDF4 100%)',
+                  border: (attemptedStep1Next && selectedDrinks.length !== 1) ? '2.5px solid #EF4444' : '1.5px solid #10B981',
+                  borderRadius: '16px',
+                  padding: '24px 20px',
+                  marginBottom: '28px',
+                  boxShadow: (attemptedStep1Next && selectedDrinks.length !== 1) ? '0 0 0 4px rgba(239, 68, 68, 0.2)' : '0 4px 18px rgba(16, 185, 129, 0.08)',
+                  transition: 'all 0.3s ease',
+                }}
+              >
+                {/* Header */}
+                <div
+                  onClick={() => setIsDrinksCollapsed(!isDrinksCollapsed)}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: isDrinksCollapsed ? 0 : '20px',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                  }}
+                  title={isDrinksCollapsed ? 'Click to expand drinks selection' : 'Click to fold drinks selection'}
+                >
+                  <div style={{ flex: 1, minWidth: '240px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <CupSoda size={20} style={{ color: '#059669', flexShrink: 0 }} />
+                      <h4 className="dish-swap-title" style={{ margin: 0, fontSize: '1.2rem', color: 'var(--ink)' }}>
+                        Select Your Included Buffet Drink (Choose 1)
+                      </h4>
+                    </div>
+                    <p style={{ fontSize: '0.84rem', color: 'var(--muted)', margin: '5px 0 0', paddingLeft: '28px' }}>
+                      Included with your banquet package under Dessert & Drinks. Select your preferred chilled bottomless beverage.
+                    </p>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    {/* Counter Badge */}
+                    <div
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 14px',
+                        borderRadius: '20px',
+                        fontSize: '0.82rem',
+                        fontWeight: 700,
+                        background: selectedDrinks.length === 1 ? '#ECFDF5' : '#FEE2E2',
+                        color: selectedDrinks.length === 1 ? '#059669' : '#991B1B',
+                        border: `1.5px solid ${selectedDrinks.length === 1 ? '#A7F3D0' : '#EF4444'}`,
+                      }}
+                    >
+                      {selectedDrinks.length === 1 ? (
+                        <>
+                          <Check size={14} /> 1 / 1 Drink Complete
+                        </>
+                      ) : (
+                        <>
+                          {selectedDrinks.length} / 1 Drink Selected
+                        </>
+                      )}
+                    </div>
+
+                    {/* Fold / Unfold Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setIsDrinksCollapsed(!isDrinksCollapsed)
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 14px',
+                        borderRadius: '8px',
+                        fontSize: '0.82rem',
+                        fontWeight: 700,
+                        background: isDrinksCollapsed ? 'var(--obsidian)' : '#FFFFFF',
+                        color: isDrinksCollapsed ? '#FFFFFF' : 'var(--ink)',
+                        border: '1.5px solid var(--line-dark)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                      }}
+                    >
+                      {isDrinksCollapsed ? (
+                        <>
+                          <ChevronDown size={16} /> Unfold Drinks Menu
+                        </>
+                      ) : (
+                        <>
+                          <ChevronUp size={16} /> Fold / Hide Drinks
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Red indicator banner when needed to be filled */}
+                {attemptedStep1Next && selectedDrinks.length !== 1 && (
+                  <div style={{ background: '#FEE2E2', border: '1.5px solid #EF4444', color: '#991B1B', padding: '10px 14px', borderRadius: '8px', fontSize: '0.84rem', fontWeight: 700, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <AlertCircle size={16} style={{ color: '#DC2626', flexShrink: 0 }} />
+                    <span>Action Required: Please choose your 1 included buffet drink (Blue Lemonade, Iced Tea, or Cucumber).</span>
+                  </div>
+                )}
+
+                {/* Collapsed State Summary Card */}
+                {isDrinksCollapsed && (
+                  <div
+                    onClick={() => setIsDrinksCollapsed(false)}
+                    style={{
+                      marginTop: '14px',
+                      padding: '14px 18px',
+                      background: '#FFFFFF',
+                      borderRadius: '10px',
+                      border: '1px dashed #10B981',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      flexWrap: 'wrap',
+                      gap: '12px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                        Selected Buffet Drink Preview:
+                      </span>
+                      <div style={{ fontSize: '0.88rem', color: 'var(--ink)' }}>
+                        {selectedDrinks.length > 0 ? (
+                          <strong style={{ color: '#059669' }}>
+                            🥤 {selectedDrinks[0]}
+                          </strong>
+                        ) : (
+                          <span style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
+                            No drink selected yet. Click to unfold and pick Blue Lemonade, Iced Tea, or Cucumber.
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: '0.8rem', color: '#059669', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      Click to expand & edit <ChevronDown size={14} />
+                    </span>
+                  </div>
+                )}
+
+                {/* Expanded Drink Selection Cards */}
+                {!isDrinksCollapsed && (
+                  <div className="dish-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
+                    {DRINK_OPTIONS.map((drink) => {
+                      const isSelected = selectedDrinks.includes(drink)
+                      const details = DRINK_DETAILS[drink]
+                      return (
+                        <label
+                          key={drink}
+                          style={{
+                            cursor: 'pointer',
+                            background: isSelected ? details.accentColor : '#FFFFFF',
+                            borderColor: isSelected ? details.color : '#E5E7EB',
+                            borderWidth: isSelected ? '2px' : '1px',
+                            borderStyle: 'solid',
+                            borderRadius: '10px',
+                            overflow: 'hidden',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            boxShadow: isSelected ? `0 4px 14px ${details.color}25` : '0 1px 3px rgba(0,0,0,0.05)',
+                            transition: 'all 0.2s ease',
+                            position: 'relative',
+                            userSelect: 'none',
+                          }}
+                        >
+                          {/* Visual Drink Thumbnail */}
+                          <div style={{ width: '100%', height: '125px', position: 'relative', overflow: 'hidden', background: '#F3F4F6' }}>
+                            <img
+                              src={details?.image || ''}
+                              alt={drink}
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'cover',
+                                transition: 'transform 0.3s ease',
+                              }}
+                            />
+                            {isSelected && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  top: '8px',
+                                  right: '8px',
+                                  background: '#059669',
+                                  color: '#FFFFFF',
+                                  borderRadius: '12px',
+                                  padding: '2px 8px',
+                                  fontSize: '0.72rem',
+                                  fontWeight: 700,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                                }}
+                              >
+                                <Check size={12} /> Selected
+                              </div>
+                            )}
+                          </div>
+
+                          <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', flex: 1, justifyContent: 'space-between', gap: '8px' }}>
+                            <div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px' }}>
+                                <span style={{ fontWeight: 700, fontSize: '0.94rem', color: 'var(--ink)', lineHeight: 1.25 }}>
+                                  {drink}
+                                </span>
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleDrink(drink)}
+                                  style={{
+                                    marginTop: '2px',
+                                    accentColor: details.color,
+                                    width: '16px',
+                                    height: '16px',
+                                    cursor: 'pointer',
+                                  }}
+                                />
+                              </div>
+                              {details?.tag && (
+                                <span style={{ fontSize: '0.74rem', color: details.color, fontWeight: 700, display: 'block', marginTop: '3px' }}>
+                                  {details.tag}
+                                </span>
+                              )}
+                              {details?.description && (
+                                <p style={{ fontSize: '0.78rem', color: 'var(--muted)', margin: '4px 0 0', lineHeight: 1.35 }}>
+                                  {details.description}
+                                </p>
+                              )}
+                            </div>
+
+                            <div style={{ paddingTop: '8px', borderTop: '1px dashed #E5E7EB', fontSize: '0.75rem', fontWeight: 600, color: isSelected ? '#059669' : details.color }}>
+                              {isSelected ? '✓ In Buffet Spread' : '+ Select this beverage'}
+                            </div>
+                          </div>
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
               {/* Freebies & Entertainment */}
               <div className="dish-swap-box">
                 <h4 className="dish-swap-title">Freebies & Coordinated Entertainment</h4>
@@ -1478,7 +1943,11 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 </div>
 
                 {/* Sub-section 1: Per-Guest Extra Food Add-ons */}
-                <div style={{ marginBottom: '30px' }}>
+                <div
+                  id="booking-extra-dishes-section"
+                  className={shakeSection === 'extraDishes' ? 'shake-vibrate' : ''}
+                  style={{ marginBottom: '30px', transition: 'all 0.3s ease' }}
+                >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <h5 style={{ fontSize: '0.86rem', fontWeight: 700, color: 'var(--terracotta)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>
@@ -1520,31 +1989,47 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       {/* Dynamically spawned dropdowns for Extra Main Dish */}
                       {extraMain > 0 && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%', borderTop: '1px dashed var(--line)', paddingTop: '12px' }}>
-                          {Array.from({ length: extraMain }).map((_, index) => (
-                            <div key={`extra-main-${index}`}>
-                              <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>
-                                Extra Main Dish #{index + 1} Selection:
-                              </label>
-                              <select
-                                className="input-field"
-                                style={{ padding: '8px 12px', fontSize: '0.85rem' }}
-                                value={extraMainDishes[index] || ''}
-                                onChange={(e) => {
-                                  const val = e.target.value
-                                  setExtraMainDishes((prev) => {
-                                    const next = [...prev]
-                                    next[index] = val
-                                    return next
-                                  })
-                                }}
-                              >
-                                <option value="">-- Choose Extra Main Dish #{index + 1} --</option>
-                                {MAIN_DISHES.map((dish) => (
-                                  <option key={dish} value={dish} disabled={extraMainDishes.some((selected, selectedIndex) => selectedIndex !== index && selected === dish)}>{dish}</option>
-                                ))}
-                              </select>
-                            </div>
-                          ))}
+                          {Array.from({ length: extraMain }).map((_, index) => {
+                            const isMissing = showExtraDishErrors && (!extraMainDishes[index] || !extraMainDishes[index].trim())
+                            return (
+                              <div key={`extra-main-${index}`}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                  <label style={{ fontSize: '0.72rem', fontWeight: 700, color: isMissing ? '#DC2626' : 'var(--muted)', textTransform: 'uppercase' }}>
+                                    Extra Main Dish #{index + 1} Selection:
+                                  </label>
+                                  {isMissing && (
+                                    <span style={{ fontSize: '0.72rem', color: '#DC2626', fontWeight: 700 }}>
+                                      Required: Please choose a viand
+                                    </span>
+                                  )}
+                                </div>
+                                <select
+                                  className="input-field"
+                                  style={{
+                                    padding: '8px 12px',
+                                    fontSize: '0.85rem',
+                                    borderColor: isMissing ? '#EF4444' : undefined,
+                                    backgroundColor: isMissing ? '#FEF2F2' : undefined,
+                                    borderWidth: isMissing ? '2px' : '1px',
+                                  }}
+                                  value={extraMainDishes[index] || ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value
+                                    setExtraMainDishes((prev) => {
+                                      const next = [...prev]
+                                      next[index] = val
+                                      return next
+                                    })
+                                  }}
+                                >
+                                  <option value="">-- Choose Extra Main Dish #{index + 1} --</option>
+                                  {MAIN_DISHES.map((dish) => (
+                                    <option key={dish} value={dish}>{dish}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            )
+                          })}
                         </div>
                       )}
                     </div>
@@ -1575,31 +2060,47 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       {/* Dynamically spawned dropdowns for Extra Pasta Dish */}
                       {extraPasta > 0 && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%', borderTop: '1px dashed var(--line)', paddingTop: '12px' }}>
-                          {Array.from({ length: extraPasta }).map((_, index) => (
-                            <div key={`extra-pasta-${index}`}>
-                              <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>
-                                Extra Pasta Dish #{index + 1} Selection:
-                              </label>
-                              <select
-                                className="input-field"
-                                style={{ padding: '8px 12px', fontSize: '0.85rem' }}
-                                value={extraPastaDishes[index] || ''}
-                                onChange={(e) => {
-                                  const val = e.target.value
-                                  setExtraPastaDishes((prev) => {
-                                    const next = [...prev]
-                                    next[index] = val
-                                    return next
-                                  })
-                                }}
-                              >
-                                <option value="">-- Choose Extra Pasta Dish #{index + 1} --</option>
-                                {PASTA_DISHES.map((dish) => (
-                                  <option key={dish} value={dish} disabled={extraPastaDishes.some((selected, selectedIndex) => selectedIndex !== index && selected === dish)}>{dish}</option>
-                                ))}
-                              </select>
-                            </div>
-                          ))}
+                          {Array.from({ length: extraPasta }).map((_, index) => {
+                            const isMissing = showExtraDishErrors && (!extraPastaDishes[index] || !extraPastaDishes[index].trim())
+                            return (
+                              <div key={`extra-pasta-${index}`}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                  <label style={{ fontSize: '0.72rem', fontWeight: 700, color: isMissing ? '#DC2626' : 'var(--muted)', textTransform: 'uppercase' }}>
+                                    Extra Pasta Dish #{index + 1} Selection:
+                                  </label>
+                                  {isMissing && (
+                                    <span style={{ fontSize: '0.72rem', color: '#DC2626', fontWeight: 700 }}>
+                                      Required: Please choose a viand
+                                    </span>
+                                  )}
+                                </div>
+                                <select
+                                  className="input-field"
+                                  style={{
+                                    padding: '8px 12px',
+                                    fontSize: '0.85rem',
+                                    borderColor: isMissing ? '#EF4444' : undefined,
+                                    backgroundColor: isMissing ? '#FEF2F2' : undefined,
+                                    borderWidth: isMissing ? '2px' : '1px',
+                                  }}
+                                  value={extraPastaDishes[index] || ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value
+                                    setExtraPastaDishes((prev) => {
+                                      const next = [...prev]
+                                      next[index] = val
+                                      return next
+                                    })
+                                  }}
+                                >
+                                  <option value="">-- Choose Extra Pasta Dish #{index + 1} --</option>
+                                  {PASTA_DISHES.map((dish) => (
+                                    <option key={dish} value={dish}>{dish}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            )
+                          })}
                         </div>
                       )}
                     </div>
@@ -1980,12 +2481,102 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
                   <CreditCard size={20} style={{ color: 'var(--terracotta)' }} />
                   <h4 style={{ margin: 0, fontFamily: 'var(--font-serif)', fontSize: '1.25rem' }}>
-                    Payment Method & Downpayment Instructions
+                    Payment Options & Settlement Instructions
                   </h4>
                 </div>
 
+                {/* Flexible Payment Term Selector: 50% Downpayment vs. 100% Full Payment Upfront */}
+                <div style={{ marginBottom: '22px' }}>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted)', marginBottom: '8px' }}>
+                    Select Payment Term
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+                    {/* Option 1: 50% Downpayment */}
+                    <div
+                      onClick={() => setPaymentTerm('downpayment')}
+                      style={{
+                        padding: '16px',
+                        borderRadius: 'var(--radius-sm)',
+                        border: paymentTerm === 'downpayment' ? '2px solid var(--terracotta)' : '1px solid var(--line)',
+                        background: paymentTerm === 'downpayment' ? '#FFF9F5' : '#FFFFFF',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        boxShadow: paymentTerm === 'downpayment' ? '0 4px 12px rgba(194, 65, 12, 0.08)' : 'none',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <input
+                            type="radio"
+                            name="paymentTerm"
+                            checked={paymentTerm === 'downpayment'}
+                            onChange={() => setPaymentTerm('downpayment')}
+                            style={{ accentColor: 'var(--terracotta)', cursor: 'pointer' }}
+                          />
+                          <strong style={{ fontSize: '0.95rem', color: 'var(--ink)' }}>50% Downpayment</strong>
+                        </div>
+                        <span style={{ fontSize: '0.7rem', fontWeight: 700, background: '#FFEDD5', color: '#9A3412', padding: '2px 8px', borderRadius: '4px' }}>
+                          STANDARD LOCK-IN
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--terracotta)', margin: '4px 0 2px' }}>
+                        {formatMoney(calculations.downpayment, currentPkg.currency)}
+                      </div>
+                      <span style={{ fontSize: '0.76rem', color: 'var(--muted)', lineHeight: 1.4 }}>
+                        Pay 50% now to lock in your date. Settle the remaining 50% ({formatMoney(calculations.totalPrice - calculations.downpayment, currentPkg.currency)}) on the event day.
+                      </span>
+                    </div>
+
+                    {/* Option 2: 100% Full Payment Upfront */}
+                    <div
+                      onClick={() => setPaymentTerm('full')}
+                      style={{
+                        padding: '16px',
+                        borderRadius: 'var(--radius-sm)',
+                        border: paymentTerm === 'full' ? '2px solid #059669' : '1px solid var(--line)',
+                        background: paymentTerm === 'full' ? '#F0FDF4' : '#FFFFFF',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        boxShadow: paymentTerm === 'full' ? '0 4px 12px rgba(5, 150, 105, 0.08)' : 'none',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <input
+                            type="radio"
+                            name="paymentTerm"
+                            checked={paymentTerm === 'full'}
+                            onChange={() => setPaymentTerm('full')}
+                            style={{ accentColor: '#059669', cursor: 'pointer' }}
+                          />
+                          <strong style={{ fontSize: '0.95rem', color: 'var(--ink)' }}>100% Full Payment Upfront</strong>
+                        </div>
+                        <span style={{ fontSize: '0.7rem', fontWeight: 700, background: '#DCFCE7', color: '#166534', padding: '2px 8px', borderRadius: '4px' }}>
+                          ZERO BALANCE
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#059669', margin: '4px 0 2px' }}>
+                        {formatMoney(calculations.totalPrice, currentPkg.currency)}
+                      </div>
+                      <span style={{ fontSize: '0.76rem', color: 'var(--muted)', lineHeight: 1.4 }}>
+                        Fully settle entire package & add-on bill upfront today. Enjoy peace of mind with ₱0 balance on event day.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
                 <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0 0 16px' }}>
-                  To reserve and lock your celebration date, a required <strong>50% downpayment</strong> ({formatMoney(calculations.downpayment, currentPkg.currency)}) is required. Please transfer via QR Ph / GCash or MariBank and attach your proof below.
+                  To reserve and lock your celebration date, {paymentTerm === 'full' ? (
+                    <>a <strong>100% full upfront payment</strong> of <strong style={{ color: 'var(--ink)' }}>{formatMoney(calculations.totalPrice, currentPkg.currency)}</strong></>
+                  ) : (
+                    <>a required <strong>50% downpayment</strong> of <strong style={{ color: 'var(--ink)' }}>{formatMoney(calculations.downpayment, currentPkg.currency)}</strong></>
+                  )} is required. Please transfer via QR Ph / GCash or MariBank and attach your proof below.
                 </p>
 
                 {/* Streamlined Payment Method Tabs (Action Item 1) */}
@@ -2039,52 +2630,108 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
                 {/* Tab 1: QR Ph / GCash Showcase */}
                 {paymentMethod === 'qrph' && (
-                  <div style={{ background: '#FFFFFF', padding: '18px', borderRadius: 'var(--radius-md)', border: '1.5px solid #005CE6', marginBottom: '18px', boxShadow: '0 4px 14px rgba(0, 92, 230, 0.08)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
-                      <div style={{ background: '#F0F7FF', padding: '10px', borderRadius: '10px', border: '1px solid #BFDBFE', textAlign: 'center', flexShrink: 0 }}>
-                        <img
-                          src="/sinag_gcash_qr.png"
-                          alt="Official Sinag Catering GCash / QR Ph Code"
-                          style={{ width: '130px', height: '130px', display: 'block', borderRadius: '6px', objectFit: 'contain' }}
-                        />
-                        <span style={{ fontSize: '0.66rem', fontWeight: 800, color: '#005CE6', letterSpacing: '0.04em', marginTop: '6px', display: 'block' }}>
-                          SCAN TO PAY (QR PH / GCASH)
+                  <div style={{ background: '#FFFFFF', padding: '24px', borderRadius: 'var(--radius-md)', border: '2px solid #005CE6', marginBottom: '18px', boxShadow: '0 6px 20px rgba(0, 92, 230, 0.12)' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '26px', alignItems: 'center' }}>
+                      <div style={{ background: '#F0F7FF', padding: '16px', borderRadius: '14px', border: '2px solid #BFDBFE', textAlign: 'center' }}>
+                        <div
+                          onClick={() => setQrModalInfo({
+                            isOpen: true,
+                            title: 'GCash / QR Ph Code',
+                            imageSrc: '/sinag_gcash_qr.png',
+                            subtitle: 'Official Sinag GCash InstaPay Standee',
+                            accountName: 'SU*****E C.',
+                            accountNo: '0928 714 4597',
+                          })}
+                          style={{ cursor: 'pointer', position: 'relative', background: '#FFFFFF', borderRadius: '10px', padding: '14px', border: '1.5px solid #CBD5E1', boxShadow: '0 4px 14px rgba(0,0,0,0.06)' }}
+                          title="Click to view full size QR code"
+                        >
+                          <img
+                            src="/sinag_gcash_qr.png"
+                            alt="Official Sinag Catering GCash / QR Ph Standee"
+                            style={{ width: '100%', height: '340px', display: 'block', borderRadius: '8px', objectFit: 'contain' }}
+                          />
+                          <div style={{ position: 'absolute', bottom: '18px', right: '18px', background: 'rgba(0, 92, 230, 0.92)', color: '#FFF', borderRadius: '6px', padding: '5px 10px', fontSize: '0.72rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 2px 6px rgba(0,0,0,0.2)' }}>
+                            <Maximize2 size={12} /> Click to Fullscreen
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setQrModalInfo({
+                            isOpen: true,
+                            title: 'GCash / QR Ph Code',
+                            imageSrc: '/sinag_gcash_qr.png',
+                            subtitle: 'Official Sinag GCash InstaPay Standee',
+                            accountName: 'SU*****E C.',
+                            accountNo: '0928 714 4597',
+                          })}
+                          style={{
+                            marginTop: '12px',
+                            width: '100%',
+                            padding: '9px 14px',
+                            background: '#005CE6',
+                            color: '#FFFFFF',
+                            border: 'none',
+                            borderRadius: '8px',
+                            fontSize: '0.82rem',
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '6px',
+                            boxShadow: '0 2px 8px rgba(0, 92, 230, 0.25)',
+                          }}
+                        >
+                          <Maximize2 size={14} /> Open High-Res Fullscreen View
+                        </button>
+                        <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#005CE6', letterSpacing: '0.05em', marginTop: '8px', display: 'block' }}>
+                          DIRECT SCAN WITH GCASH / ANY QR PH APP
                         </span>
                       </div>
 
-                      <div style={{ flex: 1, minWidth: '220px' }}>
-                        <span style={{ display: 'inline-block', fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#1E40AF', background: '#DBEAFE', padding: '2px 8px', borderRadius: '4px', marginBottom: '6px' }}>
-                          Official Merchant QR Code
-                        </span>
-                        <strong style={{ display: 'block', fontSize: '1.1rem', color: 'var(--ink)' }}>
-                          Sinag's Catering Services (Sunshine C.)
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                          <span style={{ display: 'inline-block', fontSize: '0.75rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#1E40AF', background: '#DBEAFE', padding: '3px 10px', borderRadius: '5px' }}>
+                            Official Merchant QR Code
+                          </span>
+                          <span style={{ display: 'inline-block', fontSize: '0.75rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#047857', background: '#D1FAE5', padding: '3px 10px', borderRadius: '5px' }}>
+                            InstaPay Compatible
+                          </span>
+                        </div>
+                        <strong style={{ display: 'block', fontSize: '1.25rem', color: 'var(--ink)' }}>
+                          Sinag's Catering Services (SU*****E C.)
                         </strong>
-                        <div style={{ fontSize: '0.88rem', color: 'var(--muted)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span>Mobile Hotline: <strong style={{ color: 'var(--ink)' }}>0928 714 4597</strong></span>
+                        <div style={{ fontSize: '0.92rem', color: 'var(--muted)', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                          <span>Mobile / Hotline: <strong style={{ color: 'var(--ink)', fontSize: '1.05rem' }}>0928 714 4597</strong></span>
                           <button
                             type="button"
                             onClick={() => handleCopyAccount('0928 714 4597')}
                             style={{
                               background: '#F1F5F9',
                               border: '1px solid #CBD5E1',
-                              padding: '2px 8px',
-                              borderRadius: '4px',
-                              fontSize: '0.72rem',
+                              padding: '4px 10px',
+                              borderRadius: '5px',
+                              fontSize: '0.78rem',
                               cursor: 'pointer',
                               display: 'inline-flex',
                               alignItems: 'center',
-                              gap: '4px',
+                              gap: '5px',
                               color: 'var(--ink)',
+                              fontWeight: 700,
                             }}
                           >
-                            <Copy size={12} /> {copiedAccount ? 'Copied!' : 'Copy'}
+                            <Copy size={13} /> {copiedAccount ? 'Copied!' : 'Copy'}
                           </button>
                         </div>
-                        <div style={{ fontSize: '0.85rem', color: 'var(--ink-light)', marginTop: '6px' }}>
-                          Required 50% Downpayment: <strong style={{ color: 'var(--terracotta)', fontSize: '1.05rem' }}>{formatMoney(calculations.downpayment, currentPkg.currency)}</strong>
+                        <div style={{ fontSize: '0.92rem', color: 'var(--ink-light)', marginTop: '12px', padding: '12px 16px', background: '#F8FAFC', borderRadius: '8px', border: '1.5px solid #E2E8F0' }}>
+                          {paymentTerm === 'full' ? 'Required Full Upfront Payment' : 'Required 50% Downpayment'}:{' '}
+                          <strong style={{ color: paymentTerm === 'full' ? '#059669' : 'var(--terracotta)', fontSize: '1.35rem', display: 'block', marginTop: '4px' }}>
+                            {formatMoney(payableAmount, currentPkg.currency)}
+                          </strong>
                         </div>
-                        <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: 'var(--muted)', lineHeight: 1.4 }}>
-                          Open your GCash or any QR Ph banking app (BDO, BPI, Maya, UnionBank, etc.), scan this code, and confirm transfer to <strong>Sunshine C. (0928 714 4597)</strong>.
+                        <p style={{ margin: '14px 0 0', fontSize: '0.85rem', color: 'var(--muted)', lineHeight: 1.55 }}>
+                          Point your phone camera or open <strong>GCash</strong>, <strong>Maya</strong>, <strong>BDO</strong>, <strong>BPI</strong>, <strong>MariBank</strong>, or any QR Ph app. Scan the large QR code on the left, confirm transfer of <strong>{formatMoney(payableAmount, currentPkg.currency)}</strong> to <strong>SU*****E C.</strong>, and attach your screenshot receipt below.
                         </p>
                       </div>
                     </div>
@@ -2093,57 +2740,154 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
                 {/* Tab 2: MariBank / Bank Transfer Showcase */}
                 {paymentMethod === 'bank_transfer' && (
-                  <div style={{ background: '#FFFFFF', padding: '18px', borderRadius: 'var(--radius-md)', border: '1.5px solid var(--gold-dark)', marginBottom: '18px', boxShadow: '0 4px 14px rgba(184, 134, 11, 0.1)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-                      <div style={{ background: '#FFFBEB', padding: '16px', borderRadius: '10px', border: '1px solid #FDE68A', textAlign: 'center', flexShrink: 0, minWidth: '120px' }}>
-                        <Building size={36} style={{ color: 'var(--gold-dark)', margin: '0 auto 8px', display: 'block' }} />
-                        <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--gold-dark)', letterSpacing: '0.04em', display: 'block' }}>
-                          MARIBANK
+                  <div style={{ background: '#FFFFFF', padding: '24px', borderRadius: 'var(--radius-md)', border: '2px solid #EA580C', marginBottom: '18px', boxShadow: '0 6px 20px rgba(234, 88, 12, 0.12)' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '26px', alignItems: 'center' }}>
+                      <div style={{ background: '#FFF7ED', padding: '16px', borderRadius: '14px', border: '2px solid #FED7AA', textAlign: 'center' }}>
+                        <div
+                          onClick={() => setQrModalInfo({
+                            isOpen: true,
+                            title: 'MariBank / InstaPay QR Code',
+                            imageSrc: '/sinag_maribank_qr.png',
+                            subtitle: 'Official Sinag MariBank InstaPay Standee',
+                            accountName: 'SUNSHINE CRUZ (MariBank ****2765)',
+                            accountNo: '0928 714 4597',
+                          })}
+                          style={{ cursor: 'pointer', position: 'relative', background: '#FFFFFF', borderRadius: '10px', padding: '14px', border: '1.5px solid #CBD5E1', boxShadow: '0 4px 14px rgba(0,0,0,0.06)' }}
+                          title="Click to view full size MariBank QR code"
+                        >
+                          <img
+                            src="/sinag_maribank_qr.png"
+                            alt="Official Sinag Catering MariBank / InstaPay QR Code"
+                            style={{ width: '100%', height: '340px', display: 'block', borderRadius: '8px', objectFit: 'contain' }}
+                          />
+                          <div style={{ position: 'absolute', bottom: '18px', right: '18px', background: 'rgba(234, 88, 12, 0.92)', color: '#FFF', borderRadius: '6px', padding: '5px 10px', fontSize: '0.72rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 2px 6px rgba(0,0,0,0.2)' }}>
+                            <Maximize2 size={12} /> Click to Fullscreen
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setQrModalInfo({
+                            isOpen: true,
+                            title: 'MariBank / InstaPay QR Code',
+                            imageSrc: '/sinag_maribank_qr.png',
+                            subtitle: 'Official Sinag MariBank InstaPay Standee',
+                            accountName: 'SUNSHINE CRUZ (MariBank ****2765)',
+                            accountNo: '0928 714 4597',
+                          })}
+                          style={{
+                            marginTop: '12px',
+                            width: '100%',
+                            padding: '9px 14px',
+                            background: '#EA580C',
+                            color: '#FFFFFF',
+                            border: 'none',
+                            borderRadius: '8px',
+                            fontSize: '0.82rem',
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '6px',
+                            boxShadow: '0 2px 8px rgba(234, 88, 12, 0.25)',
+                          }}
+                        >
+                          <Maximize2 size={14} /> Open High-Res Fullscreen View
+                        </button>
+                        <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#C2410C', letterSpacing: '0.05em', marginTop: '8px', display: 'block' }}>
+                          DIRECT SCAN WITH MARIBANK / ANY INSTAPAY APP
                         </span>
-                        <span style={{ fontSize: '0.68rem', color: 'var(--muted)' }}>Direct Transfer</span>
                       </div>
 
-                      <div style={{ flex: 1, minWidth: '220px' }}>
-                        <span style={{ display: 'inline-block', fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#92400E', background: '#FEF3C7', padding: '2px 8px', borderRadius: '4px', marginBottom: '6px' }}>
-                          Direct Bank Account
-                        </span>
-                        <strong style={{ display: 'block', fontSize: '1.1rem', color: 'var(--ink)' }}>
-                          MariBank Philippines
-                        </strong>
-                        <div style={{ fontSize: '0.88rem', color: 'var(--muted)', marginTop: '4px' }}>
-                          Account Name: <strong style={{ color: 'var(--ink)' }}>Sinag Catering Services / Sunshine C.</strong>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                          <span style={{ display: 'inline-block', fontSize: '0.75rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#9A3412', background: '#FFEDD5', padding: '3px 10px', borderRadius: '5px' }}>
+                            Official MariBank Account
+                          </span>
+                          <span style={{ display: 'inline-block', fontSize: '0.75rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#047857', background: '#D1FAE5', padding: '3px 10px', borderRadius: '5px' }}>
+                            InstaPay Compatible
+                          </span>
                         </div>
-                        <div style={{ fontSize: '0.88rem', color: 'var(--muted)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span>Account / Mobile No: <strong style={{ color: 'var(--ink)' }}>0928 714 4597</strong></span>
+                        <strong style={{ display: 'block', fontSize: '1.25rem', color: 'var(--ink)' }}>
+                          MariBank Philippines — SUNSHINE CRUZ
+                        </strong>
+                        <div style={{ fontSize: '0.92rem', color: 'var(--muted)', marginTop: '8px' }}>
+                          Account Tag: <strong style={{ color: 'var(--ink)', fontSize: '1.05rem' }}>MariBank(****2765)</strong>
+                        </div>
+                        <div style={{ fontSize: '0.92rem', color: 'var(--muted)', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                          <span>Account / Mobile No: <strong style={{ color: 'var(--ink)', fontSize: '1.05rem' }}>0928 714 4597</strong></span>
                           <button
                             type="button"
                             onClick={() => handleCopyAccount('0928 714 4597')}
                             style={{
                               background: '#F1F5F9',
                               border: '1px solid #CBD5E1',
-                              padding: '2px 8px',
-                              borderRadius: '4px',
-                              fontSize: '0.72rem',
+                              padding: '4px 10px',
+                              borderRadius: '5px',
+                              fontSize: '0.78rem',
                               cursor: 'pointer',
                               display: 'inline-flex',
                               alignItems: 'center',
-                              gap: '4px',
+                              gap: '5px',
                               color: 'var(--ink)',
+                              fontWeight: 700,
                             }}
                           >
-                            <Copy size={12} /> {copiedAccount ? 'Copied!' : 'Copy'}
+                            <Copy size={13} /> {copiedAccount ? 'Copied!' : 'Copy'}
                           </button>
                         </div>
-                        <div style={{ fontSize: '0.85rem', color: 'var(--ink-light)', marginTop: '6px' }}>
-                          Required 50% Downpayment: <strong style={{ color: 'var(--terracotta)', fontSize: '1.05rem' }}>{formatMoney(calculations.downpayment, currentPkg.currency)}</strong>
+                        <div style={{ fontSize: '0.92rem', color: 'var(--ink-light)', marginTop: '12px', padding: '12px 16px', background: '#F8FAFC', borderRadius: '8px', border: '1.5px solid #E2E8F0' }}>
+                          {paymentTerm === 'full' ? 'Required Full Upfront Payment' : 'Required 50% Downpayment'}:{' '}
+                          <strong style={{ color: paymentTerm === 'full' ? '#059669' : 'var(--terracotta)', fontSize: '1.35rem', display: 'block', marginTop: '4px' }}>
+                            {formatMoney(payableAmount, currentPkg.currency)}
+                          </strong>
                         </div>
-                        <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: 'var(--muted)', lineHeight: 1.4 }}>
-                          Transfer via MariBank app or InstaPay / PESONet from any bank. Enter account number <strong>0928 714 4597</strong> under <strong>Sunshine C.</strong>
+                        <p style={{ margin: '14px 0 0', fontSize: '0.85rem', color: 'var(--muted)', lineHeight: 1.55 }}>
+                          Point your phone camera or open <strong>MariBank</strong> or any bank via InstaPay. Scan the large QR code on the left, confirm transfer of <strong>{formatMoney(payableAmount, currentPkg.currency)}</strong> to <strong>SUNSHINE CRUZ</strong>, and attach your screenshot receipt below.
                         </p>
                       </div>
                     </div>
                   </div>
                 )}
+
+                {/* PayMongo Live Automated QR Ph / Card Option Banner */}
+                <div style={{ background: '#F0FDF4', border: '1.5px solid #86EFAC', borderRadius: 'var(--radius-md)', padding: '14px 18px', marginBottom: '18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ background: '#DCFCE7', color: '#166534', width: '38px', height: '38px', borderRadius: '10px', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                      <Sparkles size={20} />
+                    </div>
+                    <div>
+                      <strong style={{ display: 'block', fontSize: '0.92rem', color: '#166534' }}>
+                        Prefer Automated Online Checkout?
+                      </strong>
+                      <span style={{ fontSize: '0.78rem', color: '#15803D', lineHeight: 1.4 }}>
+                        Pay live via PayMongo (Dynamic QR Ph / Card) — automatically confirms without manually submitting reference receipts.
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsPayMongoModalOpen(true)}
+                    style={{
+                      background: '#059669',
+                      color: '#FFFFFF',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '10px 18px',
+                      fontWeight: 700,
+                      fontSize: '0.85rem',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      boxShadow: '0 2px 6px rgba(5, 150, 105, 0.25)',
+                    }}
+                  >
+                    <CreditCard size={15} />
+                    <span>Pay Online with PayMongo</span>
+                  </button>
+                </div>
 
                 {/* Action Item 2: Integrated Mandatory Proof Upload Panel (PHOTO 4B) */}
                 <div style={{ background: '#FAF8F5', border: '1.5px solid var(--line)', borderRadius: 'var(--radius-md)', padding: '20px', marginTop: '16px' }}>
@@ -2535,14 +3279,15 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                           {currentPkg.description}
                         </span>
 
-                        {/* Selected 4 Included Dishes */}
+                        {/* Selected 4 Included Dishes + Beverage */}
                         <div style={{ marginTop: '8px', padding: '8px 10px', background: '#FFFDF9', border: '1px solid #FED7AA', borderRadius: '6px' }}>
                           <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#9A3412', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>
-                            Included 4 Courses (3 Mains + 1 Pasta):
+                            Included 4 Courses + Buffet Drink:
                           </div>
                           <div style={{ fontSize: '0.79rem', color: 'var(--ink-light)', lineHeight: 1.45 }}>
                             <span style={{ color: '#991B1B', fontWeight: 600 }}>• 3 Mains:</span> {selectedMainDishes.join(', ') || '3 main dishes selected'}<br />
-                            <span style={{ color: '#1E40AF', fontWeight: 600 }}>• 1 Pasta:</span> {selectedPastaDishes.join(', ') || '1 pasta dish selected'}
+                            <span style={{ color: '#1E40AF', fontWeight: 600 }}>• 1 Pasta:</span> {selectedPastaDishes.join(', ') || '1 pasta dish selected'}<br />
+                            <span style={{ color: '#059669', fontWeight: 600 }}>• Buffet Drink:</span> {selectedDrinks.join(', ') || 'Standard House Drink'}
                           </div>
                         </div>
                       </td>
@@ -2676,12 +3421,12 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   </div>
                 </div>
 
-                {/* Highlighted 50% Downpayment Banner */}
+                {/* Highlighted Payment Term Banner */}
                 <div
                   style={{
                     marginTop: '18px',
-                    background: '#FFF7ED',
-                    border: '1.5px solid #FDBA74',
+                    background: paymentTerm === 'full' ? '#ECFDF5' : '#FFF7ED',
+                    border: paymentTerm === 'full' ? '1.5px solid #6EE7B7' : '1.5px solid #FDBA74',
                     borderRadius: '10px',
                     padding: '14px 18px',
                     display: 'flex',
@@ -2692,22 +3437,24 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   }}
                 >
                   <div>
-                    <span style={{ display: 'block', fontSize: '0.7rem', fontWeight: 800, color: '#9A3412', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      Lock-In Requirement
+                    <span style={{ display: 'block', fontSize: '0.7rem', fontWeight: 800, color: paymentTerm === 'full' ? '#065F46' : '#9A3412', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      {paymentTerm === 'full' ? 'Full Settlement Term' : 'Lock-In Requirement'}
                     </span>
-                    <strong style={{ fontSize: '1.1rem', color: '#9A3412', display: 'block' }}>
-                      Required 50% Downpayment: {formatMoney(calculations.downpayment, currentPkg.currency)}
+                    <strong style={{ fontSize: '1.1rem', color: paymentTerm === 'full' ? '#065F46' : '#9A3412', display: 'block' }}>
+                      {paymentTerm === 'full' ? '100% Full Payment Upfront' : `Required 50% Downpayment: ${formatMoney(calculations.downpayment, currentPkg.currency)}`}
                     </strong>
-                    <span style={{ fontSize: '0.76rem', color: '#B45309' }}>
-                      Remaining 50% balance ({formatMoney(calculations.totalPrice - calculations.downpayment, currentPkg.currency)}) payable on event day.
+                    <span style={{ fontSize: '0.76rem', color: paymentTerm === 'full' ? '#047857' : '#B45309' }}>
+                      {paymentTerm === 'full'
+                        ? 'Event bill fully settled upfront. Zero (₱0) balance remaining on event day.'
+                        : `Remaining 50% balance (${formatMoney(calculations.totalPrice - calculations.downpayment, currentPkg.currency)}) payable on event day.`}
                     </span>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '1.45rem', fontWeight: 800, color: 'var(--terracotta)' }}>
-                      {formatMoney(calculations.downpayment, currentPkg.currency)}
+                    <div style={{ fontSize: '1.45rem', fontWeight: 800, color: paymentTerm === 'full' ? '#059669' : 'var(--terracotta)' }}>
+                      {formatMoney(payableAmount, currentPkg.currency)}
                     </div>
-                    <span style={{ fontSize: '0.68rem', fontWeight: 700, background: '#EA580C', color: '#FFF', padding: '2px 8px', borderRadius: '4px' }}>
-                      DUE UPON RESERVATION
+                    <span style={{ fontSize: '0.68rem', fontWeight: 700, background: paymentTerm === 'full' ? '#059669' : '#EA580C', color: '#FFF', padding: '2px 8px', borderRadius: '4px' }}>
+                      {paymentTerm === 'full' ? 'PAID IN FULL' : 'DUE UPON RESERVATION'}
                     </span>
                   </div>
                 </div>
@@ -2720,7 +3467,15 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 </h4>
 
                 <div style={{ background: '#F0FDF4', border: '1.5px solid #86EFAC', borderRadius: '10px', padding: '16px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: proofOfPaymentUrl ? '12px' : '0' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: proofOfPaymentUrl ? '12px' : '0' }}>
+                    <div>
+                      <span style={{ display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', color: '#166534', fontWeight: 700, letterSpacing: '0.05em' }}>
+                        Selected Payment Term
+                      </span>
+                      <strong style={{ fontSize: '0.92rem', color: '#14532D' }}>
+                        {paymentTerm === 'full' ? '100% Full Payment Upfront' : '50% Downpayment'}
+                      </strong>
+                    </div>
                     <div>
                       <span style={{ display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', color: '#166534', fontWeight: 700, letterSpacing: '0.05em' }}>
                         Selected Payment Method
@@ -2754,7 +3509,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                           </strong>
                         </div>
                         <span style={{ fontSize: '0.74rem', color: '#15803D', display: 'block', marginTop: '2px' }}>
-                          Screenshot File Attached · Ready for Admin Downpayment Verification
+                          Screenshot File Attached · Ready for Admin Verification
                         </span>
                       </div>
                     </div>
@@ -2788,7 +3543,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 type="button"
                 className="btn-hero-primary wizard-next-btn"
                 onClick={goNext}
-                disabled={!canGoNext() || isSubmitting}
+                disabled={isSubmitting}
                 title={!canGoNext() ? validateStep(currentStep).error : 'Proceed to next step'}
               >
                 Next Step <ArrowRight size={16} />
@@ -2823,6 +3578,128 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
         <p style={{ color: 'var(--muted)', fontSize: '0.82rem', textAlign: 'center', marginTop: '14px' }}>
           Your reservation will be saved, and confirmation notifications will trigger via SMS and email.
         </p>
+      )}
+
+      {/* Fullscreen QR Code Inspection Modal */}
+      {qrModalInfo?.isOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setQrModalInfo(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            background: 'rgba(15, 23, 42, 0.78)',
+            backdropFilter: 'blur(6px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#FFFFFF',
+              borderRadius: '16px',
+              maxWidth: '540px',
+              width: '100%',
+              padding: '28px',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
+              border: '1px solid #E2E8F0',
+              textAlign: 'center',
+              position: 'relative',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setQrModalInfo(null)}
+              style={{
+                position: 'absolute',
+                top: '16px',
+                right: '16px',
+                background: '#F1F5F9',
+                border: 'none',
+                borderRadius: '50%',
+                width: '32px',
+                height: '32px',
+                display: 'grid',
+                placeItems: 'center',
+                cursor: 'pointer',
+                color: '#64748B',
+              }}
+              title="Close Fullscreen QR"
+            >
+              <X size={18} />
+            </button>
+
+            <span style={{ display: 'inline-block', fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#005CE6', background: '#DBEAFE', padding: '3px 10px', borderRadius: '4px', marginBottom: '8px' }}>
+              {qrModalInfo.subtitle}
+            </span>
+            <h3 style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--ink)', margin: '0 0 6px' }}>
+              {qrModalInfo.title}
+            </h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0 0 16px' }}>
+              Scan directly with your phone camera, GCash, MariBank, Maya, or any bank app via QR Ph / InstaPay.
+            </p>
+
+            <div style={{ background: '#FFFFFF', padding: '16px', borderRadius: '14px', border: '2px solid #CBD5E1', display: 'inline-block', margin: '0 auto 16px', boxShadow: '0 8px 24px rgba(0,0,0,0.08)' }}>
+              <img
+                src={qrModalInfo.imageSrc}
+                alt={qrModalInfo.title}
+                style={{ width: '380px', maxWidth: '100%', height: '380px', objectFit: 'contain', display: 'block', borderRadius: '8px' }}
+              />
+            </div>
+
+            <div style={{ background: '#F8FAFC', padding: '12px', borderRadius: '8px', border: '1px solid #E2E8F0', marginBottom: '16px', textAlign: 'left', fontSize: '0.85rem' }}>
+              <div style={{ color: 'var(--muted)', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.05em' }}>ACCOUNT DETAILS</div>
+              <strong style={{ color: 'var(--ink)', fontSize: '0.95rem' }}>{qrModalInfo.accountName}</strong>
+              <div style={{ marginTop: '4px', color: 'var(--ink-light)', fontSize: '0.82rem' }}>
+                Account / Hotline: <strong style={{ color: 'var(--ink)' }}>{qrModalInfo.accountNo}</strong>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <a
+                href={qrModalInfo.imageSrc}
+                download
+                className="btn-hero-primary"
+                style={{ flex: 1, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px', fontSize: '0.88rem' }}
+              >
+                Save / Download QR
+              </a>
+              <button
+                type="button"
+                onClick={() => setQrModalInfo(null)}
+                style={{ flex: 1, padding: '10px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '8px', fontWeight: 700, fontSize: '0.88rem', cursor: 'pointer', color: 'var(--ink)' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Embedded Checkout Modal for PayMongo dynamic QR Ph */}
+      {isPayMongoModalOpen && (
+        <EmbeddedCheckoutModal
+          isOpen={isPayMongoModalOpen}
+          onClose={() => setIsPayMongoModalOpen(false)}
+          bookingId={tempBookingRef}
+          packageName={currentPkg.name}
+          amount={payableAmount}
+          customerName={clientName || 'Valued Client'}
+          customerEmail={clientEmail || ''}
+          customerPhone={clientPhone || ''}
+          onPaymentSuccess={(ref) => {
+            setIsPayMongoModalOpen(false)
+            setGcashRefNumber(ref)
+            setProofFileName(`PayMongo Live Transaction #${ref}`)
+            setProofOfPaymentUrl('/sinag_gcash_qr.png')
+            setSuccessMsg('PayMongo online payment confirmed! Proceed to final step.')
+          }}
+        />
       )}
     </div>
   )
