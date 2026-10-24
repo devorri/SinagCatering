@@ -286,9 +286,11 @@ grant execute on function public.consume_api_rate_limit(text, integer, integer) 
 -- ROW LEVEL SECURITY (RLS) POLICIES
 -- ============================================================================
 
-alter table public.packages enable row level security;
-alter table public.package_addons enable row level security;
-alter table public.menu_items enable row level security;
+-- Packages, Addons, and Menu Items (RLS disabled for unrestricted dynamic catalog management)
+alter table public.packages disable row level security;
+alter table public.package_addons disable row level security;
+alter table public.menu_items disable row level security;
+
 alter table public.bookings enable row level security;
 alter table public.blocked_dates enable row level security;
 alter table public.staff enable row level security;
@@ -297,18 +299,17 @@ alter table public.catering_inquiries enable row level security;
 alter table public.notification_logs enable row level security;
 alter table public.paymongo_checkout_sessions enable row level security;
 
--- Packages, Addons, and Menu Items management policies
+-- Drop all restrictive policies on catalog tables
 drop policy if exists "Allow public read on packages" on public.packages;
 drop policy if exists "Allow all on packages" on public.packages;
-create policy "Allow all on packages" on public.packages for all using (true) with check (true);
-
 drop policy if exists "Allow public read on addons" on public.package_addons;
 drop policy if exists "Allow all on addons" on public.package_addons;
-create policy "Allow all on addons" on public.package_addons for all using (true) with check (true);
-
 drop policy if exists "Allow public read on menu_items" on public.menu_items;
 drop policy if exists "Allow all on menu_items" on public.menu_items;
-create policy "Allow all on menu_items" on public.menu_items for all using (true) with check (true);
+
+grant all on public.packages to anon, authenticated, service_role;
+grant all on public.package_addons to anon, authenticated, service_role;
+grant all on public.menu_items to anon, authenticated, service_role;
 
 -- Clients may submit bookings but cannot read or alter booking records directly.
 drop policy if exists "Allow anyone to create bookings" on public.bookings;

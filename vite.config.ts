@@ -421,13 +421,17 @@ function apiServerPlugin(env: Record<string, string> = {}): Plugin {
               const action = body.action
 
               const dbFetch = async (path: string, options: any = {}) => {
+                const customHeaders = { ...(options.headers || {}) }
+                delete customHeaders['Authorization']
+                delete customHeaders['authorization']
+                delete customHeaders['apikey']
                 return fetch(`${supabaseUrl}/rest/v1/${path}`, {
                   ...options,
                   headers: {
+                    'Content-Type': 'application/json',
+                    ...customHeaders,
                     apikey: serviceKey,
                     Authorization: `Bearer ${serviceKey}`,
-                    'Content-Type': 'application/json',
-                    ...options.headers,
                   },
                 })
               }
@@ -445,9 +449,13 @@ function apiServerPlugin(env: Record<string, string> = {}): Plugin {
                   inclusions: Array.isArray(pkg.inclusions) ? pkg.inclusions : [],
                   entertainment: Array.isArray(pkg.entertainment) ? pkg.entertainment : [],
                   freebies: Array.isArray(pkg.freebies) ? pkg.freebies : [],
+                  image_url: pkg.imageUrl || pkg.details?.image_url || '',
                   service_area: pkg.details?.service_area || 'Within City of Baliwag area',
                   food_buffer_pax: Number(pkg.details?.food_buffer_pax || 10),
+                  ...(pkg.details || {}),
                 }
+                if (pkg.imageUrl) details.image_url = pkg.imageUrl
+
                 const payload = {
                   id: String(pkg.id).trim(),
                   name: String(pkg.name).trim(),

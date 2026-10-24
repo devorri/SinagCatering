@@ -54,6 +54,7 @@ interface BookingWizardProps {
   onBack: () => void
   initialAIFormData?: AIFormData
   initialDate?: string
+  initialPackageId?: string
 }
 
 const STEP_LABELS = ['Select Package', 'Customize', 'Pick Date', 'Your Details', 'Review & Submit']
@@ -63,6 +64,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   onBack,
   initialAIFormData,
   initialDate,
+  initialPackageId,
 }) => {
   const { blockedDates, bookings, createBooking, currentUser, packages, menuItems, addons } = useApp()
   const { confirm } = useConfirm()
@@ -138,6 +140,10 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const [selectedPkgIndex, setSelectedPkgIndex] = useState(() => {
     if (initialAIFormData?.package_id) {
       const idx = packages.findIndex((p) => p.id === initialAIFormData.package_id)
+      if (idx !== -1) return idx
+    }
+    if (initialPackageId) {
+      const idx = packages.findIndex((p) => p.id === initialPackageId)
       if (idx !== -1) return idx
     }
     return 0

@@ -1322,89 +1322,145 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }
 
   const savePackage = async (pkg: CateringPackage): Promise<{ success: boolean; error?: string }> => {
-    setPackages((prev) => {
-      const idx = prev.findIndex((p) => p.id === pkg.id)
-      if (idx !== -1) {
-        const updated = [...prev]
-        updated[idx] = pkg
-        return updated
+    try {
+      const res = await apiCatalogRequest('save_package', { package: pkg })
+      if (!res.success) {
+        return { success: false, error: res.error || 'Failed to save package to database' }
       }
-      return [...prev, pkg]
-    })
-    void apiCatalogRequest('save_package', { package: pkg })
-    return { success: true }
+      setPackages((prev) => {
+        const idx = prev.findIndex((p) => p.id === pkg.id)
+        if (idx !== -1) {
+          const updated = [...prev]
+          updated[idx] = pkg
+          return updated
+        }
+        return [...prev, pkg]
+      })
+      await refreshCatalog()
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Error saving package' }
+    }
   }
 
   const deletePackage = async (packageId: string): Promise<{ success: boolean; error?: string }> => {
-    setPackages((prev) => prev.filter((p) => p.id !== packageId))
-    void apiCatalogRequest('delete_package', { packageId })
-    return { success: true }
+    try {
+      const res = await apiCatalogRequest('delete_package', { packageId })
+      if (!res.success) {
+        return { success: false, error: res.error || 'Failed to delete package' }
+      }
+      setPackages((prev) => prev.filter((p) => p.id !== packageId))
+      await refreshCatalog()
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Error deleting package' }
+    }
   }
 
   const saveMenuItem = async (item: Partial<MenuItem> & { name: string; category: 'main' | 'pasta' | 'drink' }): Promise<{ success: boolean; error?: string }> => {
-    const fullItem: MenuItem = {
-      id: item.id || `menu-${item.category}-${item.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
-      name: item.name.trim(),
-      category: item.category,
-      description: item.description || '',
-      tag: item.tag,
-      imageUrl: item.imageUrl,
-      color: item.color || '#B45309',
-      accentColor: item.accentColor || '#FEF3C7',
-      active: item.active ?? true,
-      sortOrder: item.sortOrder ?? 0,
-    }
-    setMenuItems((prev) => {
-      const idx = prev.findIndex((m) => m.id === fullItem.id || (m.name.toLowerCase() === fullItem.name.toLowerCase() && m.category === fullItem.category))
-      if (idx !== -1) {
-        const updated = [...prev]
-        updated[idx] = { ...prev[idx], ...fullItem }
-        return updated
+    try {
+      const fullItem: MenuItem = {
+        id: item.id || `menu-${item.category}-${item.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
+        name: item.name.trim(),
+        category: item.category,
+        description: item.description || '',
+        tag: item.tag,
+        imageUrl: item.imageUrl,
+        color: item.color || '#B45309',
+        accentColor: item.accentColor || '#FEF3C7',
+        active: item.active ?? true,
+        sortOrder: item.sortOrder ?? 0,
       }
-      return [...prev, fullItem]
-    })
-    void apiCatalogRequest('save_menu_item', { menuItem: fullItem })
-    return { success: true }
+      const res = await apiCatalogRequest('save_menu_item', { menuItem: fullItem })
+      if (!res.success) {
+        return { success: false, error: res.error || 'Failed to save menu item to database' }
+      }
+      setMenuItems((prev) => {
+        const idx = prev.findIndex((m) => m.id === fullItem.id || (m.name.toLowerCase() === fullItem.name.toLowerCase() && m.category === fullItem.category))
+        if (idx !== -1) {
+          const updated = [...prev]
+          updated[idx] = { ...prev[idx], ...fullItem }
+          return updated
+        }
+        return [...prev, fullItem]
+      })
+      await refreshCatalog()
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Error saving menu item' }
+    }
   }
 
   const toggleMenuItemActive = async (itemId: string, active: boolean): Promise<{ success: boolean; error?: string }> => {
-    setMenuItems((prev) => prev.map((m) => (m.id === itemId ? { ...m, active } : m)))
-    void apiCatalogRequest('toggle_menu_item_active', { itemId, active })
-    return { success: true }
+    try {
+      const res = await apiCatalogRequest('toggle_menu_item_active', { itemId, active })
+      if (!res.success) {
+        return { success: false, error: res.error || 'Failed to update item availability' }
+      }
+      setMenuItems((prev) => prev.map((m) => (m.id === itemId ? { ...m, active } : m)))
+      await refreshCatalog()
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Error toggling menu item' }
+    }
   }
 
   const deleteMenuItem = async (itemId: string): Promise<{ success: boolean; error?: string }> => {
-    setMenuItems((prev) => prev.filter((m) => m.id !== itemId))
-    void apiCatalogRequest('delete_menu_item', { itemId })
-    return { success: true }
+    try {
+      const res = await apiCatalogRequest('delete_menu_item', { itemId })
+      if (!res.success) {
+        return { success: false, error: res.error || 'Failed to delete menu item' }
+      }
+      setMenuItems((prev) => prev.filter((m) => m.id !== itemId))
+      await refreshCatalog()
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Error deleting menu item' }
+    }
   }
 
   const saveAddon = async (addon: Partial<CateringAddon> & { name: string; price: number }): Promise<{ success: boolean; error?: string }> => {
-    const fullAddon: CateringAddon = {
-      id: addon.id || `addon-${Date.now().toString().slice(-4)}`,
-      name: addon.name.trim(),
-      price: Number(addon.price),
-      currency: 'PHP',
-      rateType: addon.rateType || 'flat',
-      description: addon.description || '',
-    }
-    setAddons((prev) => {
-      const idx = prev.findIndex((a) => a.id === fullAddon.id)
-      if (idx !== -1) {
-        const updated = [...prev]
-        updated[idx] = { ...prev[idx], ...fullAddon }
-        return updated
+    try {
+      const fullAddon: CateringAddon = {
+        id: addon.id || `addon-${Date.now().toString().slice(-4)}`,
+        name: addon.name.trim(),
+        price: Number(addon.price),
+        currency: 'PHP',
+        rateType: addon.rateType || 'flat',
+        description: addon.description || '',
       }
-      return [...prev, fullAddon]
-    })
-    void apiCatalogRequest('save_addon', { addon: fullAddon })
-    return { success: true }
+      const res = await apiCatalogRequest('save_addon', { addon: fullAddon })
+      if (!res.success) {
+        return { success: false, error: res.error || 'Failed to save add-on' }
+      }
+      setAddons((prev) => {
+        const idx = prev.findIndex((a) => a.id === fullAddon.id)
+        if (idx !== -1) {
+          const updated = [...prev]
+          updated[idx] = { ...prev[idx], ...fullAddon }
+          return updated
+        }
+        return [...prev, fullAddon]
+      })
+      await refreshCatalog()
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Error saving addon' }
+    }
   }
 
   const deleteAddon = async (addonId: string): Promise<{ success: boolean; error?: string }> => {
-    setAddons((prev) => prev.filter((a) => a.id !== addonId))
-    void apiCatalogRequest('delete_addon', { addonId })
-    return { success: true }
+    try {
+      const res = await apiCatalogRequest('delete_addon', { addonId })
+      if (!res.success) {
+        return { success: false, error: res.error || 'Failed to delete add-on' }
+      }
+      setAddons((prev) => prev.filter((a) => a.id !== addonId))
+      await refreshCatalog()
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Error deleting addon' }
+    }
   }
 
   return (

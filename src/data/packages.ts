@@ -312,7 +312,10 @@ export const findTierForGuestCount = (pkg: CateringPackage, guestCount: number) 
   if (pkg.pricePerHead !== undefined) {
     return { pax: guestCount, price: guestCount * pkg.pricePerHead }
   }
-  return pkg.tiers.find((tier) => guestCount <= tier.pax + FOOD_BUFFER_PAX) || pkg.tiers[pkg.tiers.length - 1]
+  const tiers = Array.isArray(pkg.tiers) && pkg.tiers.length > 0
+    ? pkg.tiers
+    : [{ pax: pkg.defaultPax || 50, price: (pkg.details as any)?.base_price || 35000 }]
+  return tiers.find((tier) => guestCount <= tier.pax + FOOD_BUFFER_PAX) || tiers[tiers.length - 1]
 }
 
 export interface RecommendedPackageResult {

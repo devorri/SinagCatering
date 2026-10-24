@@ -4166,6 +4166,228 @@ section[id], div[id] {
 }
 
 /* ========================================================
+   LANDING: SIGNATURE MENUS & DISHES SHOWCASE
+   ======================================================== */
+.landing-menu-showcase {
+  margin-top: 64px;
+  padding-top: 48px;
+  border-top: 1px dashed var(--line);
+  width: 100%;
+}
+
+.landing-menu-tabs {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 auto 36px;
+}
+
+.landing-menu-tab {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  color: #4B5563;
+  padding: 10px 20px;
+  border-radius: 999px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.landing-menu-tab:hover {
+  border-color: var(--gold);
+  color: #1F2937;
+  transform: translateY(-1px);
+}
+
+.landing-menu-tab.active {
+  background: #2C1A00;
+  color: #FFFFFF;
+  border-color: #2C1A00;
+  box-shadow: 0 4px 14px rgba(44, 26, 0, 0.18);
+}
+
+.landing-dishes-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 22px;
+  width: 100%;
+  margin-bottom: 40px;
+}
+
+.landing-dish-card {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+}
+
+.landing-dish-card:hover {
+  transform: translateY(-4px);
+  border-color: #D1D5DB;
+  box-shadow: 0 12px 28px rgba(44, 26, 0, 0.08);
+}
+
+.landing-dish-thumb-wrap {
+  position: relative;
+  width: 100%;
+  height: 180px;
+  background: #F3F4F6;
+  overflow: hidden;
+}
+
+.landing-dish-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.35s ease;
+}
+
+.landing-dish-card:hover .landing-dish-thumb {
+  transform: scale(1.06);
+}
+
+.landing-dish-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9CA3AF;
+  background: linear-gradient(135deg, #F3F4F6 0%, #E5E7EB 100%);
+}
+
+.landing-dish-cat-pill {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(31, 41, 55, 0.88);
+  backdrop-filter: blur(4px);
+  color: #FFFFFF;
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+.landing-dish-tag-pill {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  background: rgba(254, 243, 199, 0.95);
+  backdrop-filter: blur(4px);
+  color: #92400E;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.landing-dish-content {
+  padding: 16px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.landing-dish-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.landing-dish-name {
+  font-family: var(--font-display);
+  font-size: 1.12rem;
+  font-weight: 700;
+  color: #1F2937;
+  margin: 0;
+  line-height: 1.3;
+}
+
+.landing-dish-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #059669;
+  background: #ECFDF5;
+  padding: 2px 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.dish-status-dot {
+  width: 6px;
+  height: 6px;
+  background: #10B981;
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+}
+
+.landing-dish-desc {
+  font-size: 0.84rem;
+  color: #6B7280;
+  line-height: 1.5;
+  margin: 0;
+  flex: 1;
+}
+
+.landing-menu-cta-bar {
+  background: linear-gradient(135deg, #FFFDF9 0%, #FEF3C7 100%);
+  border: 1.5px solid #FDE68A;
+  border-radius: 16px;
+  padding: 24px 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  box-shadow: 0 4px 16px rgba(184, 137, 66, 0.08);
+}
+
+@media (max-width: 1024px) {
+  .landing-dishes-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .landing-dishes-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+  }
+  .landing-dish-thumb-wrap {
+    height: 140px;
+  }
+  .landing-menu-cta-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 20px;
+  }
+}
+
+@media (max-width: 480px) {
+  .landing-dishes-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ========================================================
    SECTION 03: GALLERY — 3-COLUMN EDITORIAL SHOWCASE
    ======================================================== */
 .simple-gallery-grid {

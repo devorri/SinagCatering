@@ -10,6 +10,7 @@ import {
   findTierForGuestCount,
   formatMoney,
   recommendPackage,
+  SINAG_PACKAGES,
 } from '../data/packages'
 import type { CateringPackage } from '../data/packages'
 
@@ -240,11 +241,7 @@ export const generateLocalAIResponse = (
 
   // 5. Package Recommendation, Context-Aware Classification & Budget Maximization
   if (livePackages.length === 0) {
-    return {
-      text: 'Our official package catalog is temporarily unavailable. Please contact Sinag Catering at 0928 714 4597 for a verified quotation.',
-      escalate: true,
-      isLiveApi: false,
-    }
+    livePackages = SINAG_PACKAGES
   }
 
   const count = extractGuestCount(input) || 80
@@ -378,7 +375,11 @@ export const querySinagAI = async (
     } catch { /* The assistant will request a verified manual quotation. */ }
   }
 
-  // 2. Call Google Gemini with gemini-3.8-flash if API key is present
+  if (currentPackages.length === 0) {
+    currentPackages = SINAG_PACKAGES
+  }
+
+  // 2. Call Google Gemini with gemini-3.5-flash if API key is present
   const rawKey = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined) ||
     (import.meta.env.VITE_AI_API_KEY as string | undefined) || ''
   const apiKey = rawKey.startsWith('QVEu') ? atob(rawKey) : rawKey
@@ -386,7 +387,9 @@ export const querySinagAI = async (
   if (apiKey) {
     try {
       const packageCatalogDescription = currentPackages.map((p) => {
-        const tierSummary = p.tiers.map((t) => `${t.pax} pax: PHP ${t.price.toLocaleString()}`).join(', ')
+        const tierSummary = Array.isArray(p.tiers) && p.tiers.length > 0
+          ? p.tiers.map((t) => `${t.pax} pax: PHP ${t.price.toLocaleString()}`).join(', ')
+          : `Starting at PHP ${(p.pricePerHead ? p.pricePerHead * 50 : 35000).toLocaleString()}`
         return `• [Package ID: "${p.id}"] "${p.name}":
   - Tiers: ${tierSummary}
   - Inclusions: ${p.inclusions.join(', ')}

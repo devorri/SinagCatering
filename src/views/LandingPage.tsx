@@ -30,7 +30,7 @@ import { ALL_GALLERY_ITEMS, CLIENT_REACTION_SCREENSHOTS } from '../data/galleryD
 
 interface LandingPageProps {
   onNavigateToClient: () => void
-  onStartBooking: () => void
+  onStartBooking: (initialDate?: string, packageId?: string) => void
   onNavigateToGallery?: () => void
   onNavigateToTestimonials?: () => void
 }
@@ -40,15 +40,21 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onNavigateToGallery,
   onNavigateToTestimonials,
 }) => {
-  const { createInquiryDirect, packages } = useApp()
+  const { createInquiryDirect, packages, menuItems, refreshCatalog } = useApp()
 
   const [inquiryName, setInquiryName] = useState('')
   const [inquiryEmail, setInquiryEmail] = useState('')
   const [inquiryMessage, setInquiryMessage] = useState('')
   const [inquirySuccess, setInquirySuccess] = useState(false)
   const [heroImageIndex, setHeroImageIndex] = useState(0)
+  const [activeMenuCategory, setActiveMenuCategory] = useState<'all' | 'main' | 'pasta' | 'drink'>('all')
 
   const heroImages = useMemo(() => [bg1, bg2, bg3, bg4, bg5, bg6, bg7, bg8, bg9, bg10], [])
+
+  // Auto-refresh catalog from DB on mount so updates reflect live
+  useEffect(() => {
+    void refreshCatalog()
+  }, [refreshCatalog])
 
   useEffect(() => {
     const timer = window.setInterval(
@@ -63,6 +69,22 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     const previewIds = ['wed-1', 'bday-1', 'food-1', 'setup-1']
     return ALL_GALLERY_ITEMS.filter((item) => previewIds.includes(item.id))
   }, [])
+
+  const filteredMenuItems = useMemo(() => {
+    const activeItems = menuItems.filter((item) => item.active)
+    if (activeMenuCategory === 'all') return activeItems
+    return activeItems.filter((item) => item.category === activeMenuCategory)
+  }, [menuItems, activeMenuCategory])
+
+  const menuCounts = useMemo(() => {
+    const activeItems = menuItems.filter((item) => item.active)
+    return {
+      all: activeItems.length,
+      main: activeItems.filter((item) => item.category === 'main').length,
+      pasta: activeItems.filter((item) => item.category === 'pasta').length,
+      drink: activeItems.filter((item) => item.category === 'drink').length,
+    }
+  }, [menuItems])
 
   return (
     <div className="landing-simple-wrapper">
@@ -97,7 +119,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </p>
 
             <div className="hero-actions-row">
-              <button type="button" onClick={onStartBooking} className="btn-hero-primary">
+              <button type="button" onClick={() => onStartBooking()} className="btn-hero-primary">
                 Start Booking <ChevronRight size={16} />
               </button>
               <a href="tel:09287144597" className="btn-hero-outline">
@@ -279,7 +301,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
                   <button
                     type="button"
-                    onClick={onStartBooking}
+                    onClick={() => onStartBooking(undefined, pkg.id)}
                     className={`simple-book-btn ${isFeatured ? 'primary' : 'outline'}`}
                   >
                     Select {pkg.shortName} <ChevronRight size={16} />
@@ -290,6 +312,124 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             {packages.length === 0 && (
               <p className="simple-subtitle">Packages are being loaded from the official catalog. Please check back shortly.</p>
             )}
+          </div>
+
+          {/* SIGNATURE DISHES & MENU SHOWCASE */}
+          <div className="landing-menu-showcase">
+            <div className="section-header-center" style={{ marginBottom: '28px' }}>
+              <span className="stats-label" style={{ background: '#FFFBEB', color: '#B45309', border: '1px solid #FDE68A' }}>
+                Handcrafted Food & Refreshments
+              </span>
+              <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', color: '#2C1A00', fontWeight: 800, margin: '8px 0 10px' }}>
+                Signature Dishes & <span className="serif-italic">Feast Menus.</span>
+              </h3>
+              <p className="simple-subtitle" style={{ maxWidth: '640px', margin: '0 auto' }}>
+                Freshly prepared feast staples and refreshing drinks available across our catering packages. Synced live with our master kitchen catalog.
+              </p>
+            </div>
+
+            {/* Category Filter Tabs */}
+            <div className="landing-menu-tabs">
+              <button
+                type="button"
+                className={`landing-menu-tab ${activeMenuCategory === 'all' ? 'active' : ''}`}
+                onClick={() => setActiveMenuCategory('all')}
+              >
+                All Dishes ({menuCounts.all})
+              </button>
+              <button
+                type="button"
+                className={`landing-menu-tab ${activeMenuCategory === 'main' ? 'active' : ''}`}
+                onClick={() => setActiveMenuCategory('main')}
+              >
+                Main Courses ({menuCounts.main})
+              </button>
+              <button
+                type="button"
+                className={`landing-menu-tab ${activeMenuCategory === 'pasta' ? 'active' : ''}`}
+                onClick={() => setActiveMenuCategory('pasta')}
+              >
+                Pasta Specialties ({menuCounts.pasta})
+              </button>
+              <button
+                type="button"
+                className={`landing-menu-tab ${activeMenuCategory === 'drink' ? 'active' : ''}`}
+                onClick={() => setActiveMenuCategory('drink')}
+              >
+                Drinks & Coolers ({menuCounts.drink})
+              </button>
+            </div>
+
+            {/* Live Dishes Grid */}
+            <div className="landing-dishes-grid">
+              {filteredMenuItems.map((item) => (
+                <div key={item.id} className="landing-dish-card reveal">
+                  <div className="landing-dish-thumb-wrap">
+                    {item.imageUrl ? (
+                      <img
+                        src={item.imageUrl}
+                        alt={item.name}
+                        className="landing-dish-thumb"
+                        loading="lazy"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLElement).style.display = 'none'
+                        }}
+                      />
+                    ) : (
+                      <div className="landing-dish-placeholder">
+                        <UtensilsCrossed size={32} />
+                      </div>
+                    )}
+                    <span className="landing-dish-cat-pill">
+                      {item.category === 'main' ? 'Main' : item.category === 'pasta' ? 'Pasta' : 'Drink'}
+                    </span>
+                    {item.tag && (
+                      <span className="landing-dish-tag-pill">
+                        {item.tag}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="landing-dish-content">
+                    <div className="landing-dish-header">
+                      <h4 className="landing-dish-name">{item.name}</h4>
+                      <div className="landing-dish-status" title="Active on kitchen menu">
+                        <span className="dish-status-dot" />
+                        <span>Available</span>
+                      </div>
+                    </div>
+                    {item.description && (
+                      <p className="landing-dish-desc">{item.description}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {filteredMenuItems.length === 0 && (
+                <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '40px', color: '#6B7280' }}>
+                  No items in this category currently.
+                </div>
+              )}
+            </div>
+
+            {/* Menu CTA Bar */}
+            <div className="landing-menu-cta-bar">
+              <div>
+                <h4 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#2C1A00' }}>
+                  Ready to curate your celebration menu?
+                </h4>
+                <p style={{ margin: '4px 0 0', fontSize: '0.9rem', color: '#6B7280' }}>
+                  Choose your favorite mains, pasta, and coolers as part of your custom banquet setup.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onStartBooking()}
+                className="btn-hero-primary"
+                style={{ padding: '12px 28px', whiteSpace: 'nowrap' }}
+              >
+                Customize Your Menu in Booking <ChevronRight size={16} />
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -312,7 +452,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <div
                 key={photo.id}
                 className="landing-preview-card reveal"
-                onClick={onNavigateToGallery || onStartBooking}
+                onClick={() => (onNavigateToGallery ? onNavigateToGallery() : onStartBooking())}
                 role="button"
                 tabIndex={0}
                 aria-label={`View ${photo.title} in gallery`}
@@ -329,7 +469,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="gallery-action-wrap">
             <button
               type="button"
-              onClick={onNavigateToGallery || onStartBooking}
+              onClick={() => (onNavigateToGallery ? onNavigateToGallery() : onStartBooking())}
               className="btn-hero-primary"
             >
               Explore Full Gallery (30+ Photos) <ChevronRight size={16} />
@@ -359,7 +499,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <div
                 key={reax.id}
                 className="reaction-interactive-card"
-                onClick={onNavigateToTestimonials || onStartBooking}
+                onClick={() => (onNavigateToTestimonials ? onNavigateToTestimonials() : onStartBooking())}
                 role="button"
                 tabIndex={0}
                 aria-label={`View feedback from ${reax.title}`}
@@ -378,7 +518,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="gallery-action-wrap" style={{ marginTop: '36px' }}>
             <button
               type="button"
-              onClick={onNavigateToTestimonials || onStartBooking}
+              onClick={() => (onNavigateToTestimonials ? onNavigateToTestimonials() : onStartBooking())}
               className="btn-hero-primary"
             >
               View All 9 Client Reactions & Feedback <ChevronRight size={16} />

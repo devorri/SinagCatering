@@ -38,6 +38,7 @@ function AppContent() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
   const [isAvailabilityModalOpen, setIsAvailabilityModalOpen] = useState(false)
   const [preselectedBookingDate, setPreselectedBookingDate] = useState<string | null>(null)
+  const [preselectedPackageId, setPreselectedPackageId] = useState<string | null>(null)
   const [aiBookingPreset, setAiBookingPreset] = useState<AIFormData | null>(null)
   const [paymongoNotice, setPaymongoNotice] = useState(() =>
     new URLSearchParams(window.location.search).get('paymongo') === 'cancelled'
@@ -257,9 +258,12 @@ function AppContent() {
     }
   }
 
-  const handleStartBooking = (initialDate?: string) => {
+  const handleStartBooking = (initialDate?: string, packageId?: string) => {
     if (initialDate && typeof initialDate === 'string') {
       setPreselectedBookingDate(initialDate)
+    }
+    if (packageId && typeof packageId === 'string') {
+      setPreselectedPackageId(packageId)
     }
     if (!currentUser) {
       setIsAuthModalOpen(true)
@@ -615,14 +619,17 @@ function AppContent() {
             <BookingWizard
               onComplete={() => {
                 setPreselectedBookingDate(null)
+                setPreselectedPackageId(null)
                 navigateTo('client', { bypassConfirm: true })
               }}
               onBack={() => {
                 setPreselectedBookingDate(null)
+                setPreselectedPackageId(null)
                 navigateTo('landing')
               }}
               initialAIFormData={aiBookingPreset ?? undefined}
               initialDate={preselectedBookingDate ?? undefined}
+              initialPackageId={preselectedPackageId ?? undefined}
             />
           )}
         </div>
