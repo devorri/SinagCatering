@@ -1,9 +1,15 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react'
 import type { ReactNode } from 'react'
-import type { User, Booking, Review, Staff, Inquiry, AdminNotification } from '../types'
+import type { User, Booking, Review, Staff, Inquiry, AdminNotification, MenuItem, CateringAddon } from '../types'
 import { supabase } from '../lib/supabase'
-import { mapDatabasePackage, SINAG_PACKAGES, formatMoney } from '../data/packages'
+import { mapDatabasePackage, SINAG_PACKAGES, AI_CATALOG_ADDONS, formatMoney, STORAGE_FILES_BASE } from '../data/packages'
 import type { CateringPackage } from '../data/packages'
+import {
+  FALLBACK_MENU_ITEMS,
+  mapDbMenuItem,
+  mapDbAddon,
+  apiCatalogRequest,
+} from '../lib/catalog'
 import {
   sendBookingSubmissionNotifications,
   sendPaymentVerificationNotifications,
@@ -40,6 +46,8 @@ export const maskPhone = (phone: string): string => {
 interface AppContextType {
   currentUser: User | null
   packages: CateringPackage[]
+  menuItems: MenuItem[]
+  addons: CateringAddon[]
   bookings: Booking[]
   reviews: Review[]
   staff: Staff[]
@@ -76,6 +84,14 @@ interface AppContextType {
   clearAdminNotifications: () => void
   addAdminNotification: (notif: Omit<AdminNotification, 'id' | 'timestamp' | 'read'>) => void
   playNotificationSound: () => void
+  savePackage: (pkg: CateringPackage) => Promise<{ success: boolean; error?: string }>
+  deletePackage: (packageId: string) => Promise<{ success: boolean; error?: string }>
+  saveMenuItem: (item: Partial<MenuItem> & { name: string; category: 'main' | 'pasta' | 'drink' }) => Promise<{ success: boolean; error?: string }>
+  toggleMenuItemActive: (itemId: string, active: boolean) => Promise<{ success: boolean; error?: string }>
+  deleteMenuItem: (itemId: string) => Promise<{ success: boolean; error?: string }>
+  saveAddon: (addon: Partial<CateringAddon> & { name: string; price: number }) => Promise<{ success: boolean; error?: string }>
+  deleteAddon: (addonId: string) => Promise<{ success: boolean; error?: string }>
+  refreshCatalog: () => Promise<void>
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined)
@@ -184,13 +200,86 @@ export const DEFAULT_STAFF: Staff[] = [
 ]
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const PACKAGES_STORAGE_KEY = 'sinag_catalog_packages'
+  const MENU_ITEMS_STORAGE_KEY = 'sinag_catalog_menu_items'
+  const ADDONS_STORAGE_KEY = 'sinag_catalog_addons'
+
   const [currentUser, setCurrentUser] = useState<User | null>(null)
-  const [packages, setPackages] = useState<CateringPackage[]>(SINAG_PACKAGES)
+  const [packages, setPackages] = useState<CateringPackage[]>(() => {
+    try {
+      const stored = localStorage.getItem(PACKAGES_STORAGE_KEY)
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((p: any) => {
+            if (!p.imageUrl && p.id === 'budget-basic') {
+              return { ...p, imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_budget_basic.jpg` }
+            }
+            if (!p.imageUrl && p.id === 'budget-entertainment') {
+              return { ...p, imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_budget_entertainment.jpg` }
+            }
+            if (!p.imageUrl && p.id === 'full-blast') {
+              return { ...p, imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_full_blast.jpg` }
+            }
+            return p
+          })
+        }
+      }
+    } catch {}
+    return SINAG_PACKAGES
+  })
+  const [menuItems, setMenuItems] = useState<MenuItem[]>(() => {
+    try {
+      const stored = localStorage.getItem(MENU_ITEMS_STORAGE_KEY)
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((m: any) => {
+            if (m.imageUrl && m.imageUrl.startsWith('/gallery/')) {
+              const filename = m.imageUrl.split('/').pop()
+              return { ...m, imageUrl: `${STORAGE_FILES_BASE}/menu/${filename}` }
+            }
+            return m
+          })
+        }
+      }
+    } catch {}
+    return FALLBACK_MENU_ITEMS
+  })
+  const [addons, setAddons] = useState<CateringAddon[]>(() => {
+    try {
+      const stored = localStorage.getItem(ADDONS_STORAGE_KEY)
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      }
+    } catch {}
+    return AI_CATALOG_ADDONS
+  })
   const [bookings, setBookings] = useState<Booking[]>([])
   const [reviews, setReviews] = useState<Review[]>([])
   const [baseStaff, setBaseStaff] = useState<Staff[]>(DEFAULT_STAFF)
   const [blockedDates, setBlockedDates] = useState<string[]>([])
   const [inquiries, setInquiries] = useState<Inquiry[]>([])
+
+  // Persist catalog changes to localStorage
+  useEffect(() => {
+    try {
+      if (packages.length > 0) localStorage.setItem(PACKAGES_STORAGE_KEY, JSON.stringify(packages))
+    } catch {}
+  }, [packages])
+
+  useEffect(() => {
+    try {
+      if (menuItems.length > 0) localStorage.setItem(MENU_ITEMS_STORAGE_KEY, JSON.stringify(menuItems))
+    } catch {}
+  }, [menuItems])
+
+  useEffect(() => {
+    try {
+      if (addons.length > 0) localStorage.setItem(ADDONS_STORAGE_KEY, JSON.stringify(addons))
+    } catch {}
+  }, [addons])
 
   const ADMIN_NOTIF_STORAGE_KEY = 'sinag_admin_notifications'
   const [adminNotifications, setAdminNotifications] = useState<AdminNotification[]>(() => {
@@ -291,7 +380,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
     if (!supabase) return
     const client = supabase
-    const channel = client.channel('sinag-live-bookings')
+    const channel = client.channel('sinag-live-catalog')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
         playNotificationSound()
         client.from('bookings').select('*').order('created_at', { ascending: false }).then(({ data }) => {
@@ -302,7 +391,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         client.from('blocked_dates').select('date').then(({ data }) => {
           if (data) setBlockedDates(data.map((d: any) => d.date))
         })
-      }).subscribe()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'packages' }, () => {
+        client.from('packages').select('*').order('base_price', { ascending: true }).then(({ data }) => {
+          if (data) setPackages(data.map(mapDatabasePackage))
+        })
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items' }, () => {
+        client.from('menu_items').select('*').order('sort_order', { ascending: true }).then(({ data }) => {
+          if (data) setMenuItems(data.map(mapDbMenuItem))
+        })
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'package_addons' }, () => {
+        client.from('package_addons').select('*').order('price', { ascending: true }).then(({ data }) => {
+          if (data) setAddons(data.map(mapDbAddon))
+        })
+      })
+      .subscribe()
     return () => { client.removeChannel(channel) }
   }, [])
 
@@ -328,6 +433,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       .order('base_price', { ascending: true })
       .then(({ data, error }) => {
         if (!error && data) setPackages(data.map(mapDatabasePackage))
+      })
+
+    // Fetch Managed Menu Items
+    supabase
+      .from('menu_items')
+      .select('*')
+      .order('sort_order', { ascending: true })
+      .then(({ data, error }) => {
+        if (!error && data && data.length > 0) {
+          setMenuItems(data.map(mapDbMenuItem))
+        }
+      })
+
+    // Fetch Managed Package Addons
+    supabase
+      .from('package_addons')
+      .select('*')
+      .order('price', { ascending: true })
+      .then(({ data, error }) => {
+        if (!error && data && data.length > 0) {
+          setAddons(data.map(mapDbAddon))
+        }
       })
 
     // Fetch Reviews
@@ -400,36 +527,54 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }))
   }, [baseStaff, bookings])
 
-  const signIn = async (email: string, password: string): Promise<{ user: User | null; error: string | null }> => {
-    const normEmail = email.trim().toLowerCase()
+  const signIn = async (identifier: string, password: string): Promise<{ user: User | null; error: string | null }> => {
+    const rawInput = identifier.trim()
+    const normInput = rawInput.toLowerCase()
 
     if (supabase) {
       try {
-        let { data, error } = await supabase
+        let query = supabase
           .from('users')
           .select('id, full_name, email, phone, role')
-          .eq('email', normEmail)
-          .eq('password', password) // Plaintext match as requested
-          .maybeSingle()
+          .eq('password', password)
 
-        if (!data && normEmail === 'admin@sinagcatering.ph' && (password === 'admin' || password === 'admin123')) {
-          const { data: adminData } = await supabase
-            .from('users')
-            .select('id, full_name, email, phone, role')
-            .eq('email', normEmail)
-            .maybeSingle()
-          if (adminData) {
-            data = adminData
+        if (normInput.includes('@')) {
+          query = query.eq('email', normInput)
+        } else {
+          query = query.or(`email.ilike.${normInput},email.ilike.${normInput}@example.com,full_name.ilike.${normInput}`)
+        }
+
+        let { data, error } = await query.limit(1).maybeSingle()
+
+        if (!data) {
+          if (normInput === 'admin' || normInput === 'admin@sinagcatering.ph' || normInput === 'admin@example.com') {
+            const { data: adminData } = await supabase
+              .from('users')
+              .select('id, full_name, email, phone, role')
+              .eq('password', password)
+              .eq('role', 'admin')
+              .limit(1)
+              .maybeSingle()
+            if (adminData) data = adminData
+          } else if (normInput === 'ama' || normInput === 'ama@example.com') {
+            const { data: amaData } = await supabase
+              .from('users')
+              .select('id, full_name, email, phone, role')
+              .eq('password', password)
+              .or('email.eq.ama@example.com,full_name.eq.Ama')
+              .limit(1)
+              .maybeSingle()
+            if (amaData) data = amaData
           }
         }
 
         if (data) {
           const user: User = {
             id: data.id,
-            name: data.full_name || normEmail.split('@')[0],
+            name: data.full_name || rawInput.split('@')[0],
             email: data.email,
             phone: data.phone || undefined,
-            role: data.role || (normEmail.includes('admin') ? 'admin' : 'client'),
+            role: data.role || (data.email?.toLowerCase().includes('admin') ? 'admin' : 'client'),
           }
           sessionStorage.setItem(SESSION_TOKEN_KEY, `user-session-${user.id}`)
           sessionStorage.setItem(LOCAL_USER_BACKUP_KEY, JSON.stringify(user))
@@ -1154,11 +1299,121 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }
 
+  const refreshCatalog = async () => {
+    if (!supabase) return
+    try {
+      const [pkgRes, menuRes, addonRes] = await Promise.all([
+        supabase.from('packages').select('*').order('base_price', { ascending: true }),
+        supabase.from('menu_items').select('*').order('sort_order', { ascending: true }),
+        supabase.from('package_addons').select('*').order('price', { ascending: true }),
+      ])
+      if (!pkgRes.error && pkgRes.data) {
+        setPackages(pkgRes.data.map(mapDatabasePackage))
+      }
+      if (!menuRes.error && menuRes.data && menuRes.data.length > 0) {
+        setMenuItems(menuRes.data.map(mapDbMenuItem))
+      }
+      if (!addonRes.error && addonRes.data && addonRes.data.length > 0) {
+        setAddons(addonRes.data.map(mapDbAddon))
+      }
+    } catch (err) {
+      console.error('Error refreshing catalog:', err)
+    }
+  }
+
+  const savePackage = async (pkg: CateringPackage): Promise<{ success: boolean; error?: string }> => {
+    setPackages((prev) => {
+      const idx = prev.findIndex((p) => p.id === pkg.id)
+      if (idx !== -1) {
+        const updated = [...prev]
+        updated[idx] = pkg
+        return updated
+      }
+      return [...prev, pkg]
+    })
+    void apiCatalogRequest('save_package', { package: pkg })
+    return { success: true }
+  }
+
+  const deletePackage = async (packageId: string): Promise<{ success: boolean; error?: string }> => {
+    setPackages((prev) => prev.filter((p) => p.id !== packageId))
+    void apiCatalogRequest('delete_package', { packageId })
+    return { success: true }
+  }
+
+  const saveMenuItem = async (item: Partial<MenuItem> & { name: string; category: 'main' | 'pasta' | 'drink' }): Promise<{ success: boolean; error?: string }> => {
+    const fullItem: MenuItem = {
+      id: item.id || `menu-${item.category}-${item.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
+      name: item.name.trim(),
+      category: item.category,
+      description: item.description || '',
+      tag: item.tag,
+      imageUrl: item.imageUrl,
+      color: item.color || '#B45309',
+      accentColor: item.accentColor || '#FEF3C7',
+      active: item.active ?? true,
+      sortOrder: item.sortOrder ?? 0,
+    }
+    setMenuItems((prev) => {
+      const idx = prev.findIndex((m) => m.id === fullItem.id || (m.name.toLowerCase() === fullItem.name.toLowerCase() && m.category === fullItem.category))
+      if (idx !== -1) {
+        const updated = [...prev]
+        updated[idx] = { ...prev[idx], ...fullItem }
+        return updated
+      }
+      return [...prev, fullItem]
+    })
+    void apiCatalogRequest('save_menu_item', { menuItem: fullItem })
+    return { success: true }
+  }
+
+  const toggleMenuItemActive = async (itemId: string, active: boolean): Promise<{ success: boolean; error?: string }> => {
+    setMenuItems((prev) => prev.map((m) => (m.id === itemId ? { ...m, active } : m)))
+    void apiCatalogRequest('toggle_menu_item_active', { itemId, active })
+    return { success: true }
+  }
+
+  const deleteMenuItem = async (itemId: string): Promise<{ success: boolean; error?: string }> => {
+    setMenuItems((prev) => prev.filter((m) => m.id !== itemId))
+    void apiCatalogRequest('delete_menu_item', { itemId })
+    return { success: true }
+  }
+
+  const saveAddon = async (addon: Partial<CateringAddon> & { name: string; price: number }): Promise<{ success: boolean; error?: string }> => {
+    const fullAddon: CateringAddon = {
+      id: addon.id || `addon-${Date.now().toString().slice(-4)}`,
+      name: addon.name.trim(),
+      price: Number(addon.price),
+      currency: 'PHP',
+      rateType: addon.rateType || 'flat',
+      description: addon.description || '',
+    }
+    setAddons((prev) => {
+      const idx = prev.findIndex((a) => a.id === fullAddon.id)
+      if (idx !== -1) {
+        const updated = [...prev]
+        updated[idx] = { ...prev[idx], ...fullAddon }
+        return updated
+      }
+      return [...prev, fullAddon]
+    })
+    void apiCatalogRequest('save_addon', { addon: fullAddon })
+    return { success: true }
+  }
+
+  const deleteAddon = async (addonId: string): Promise<{ success: boolean; error?: string }> => {
+    setAddons((prev) => prev.filter((a) => a.id !== addonId))
+    void apiCatalogRequest('delete_addon', { addonId })
+    return { success: true }
+  }
+
   return (
     <AppContext.Provider
       value={{
         currentUser,
         packages,
+        menuItems,
+        addons,
         bookings,
         reviews,
         staff,
@@ -1195,6 +1450,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         clearAdminNotifications,
         addAdminNotification,
         playNotificationSound,
+        savePackage,
+        deletePackage,
+        saveMenuItem,
+        toggleMenuItemActive,
+        deleteMenuItem,
+        saveAddon,
+        deleteAddon,
+        refreshCatalog,
       }}
     >
       {children}

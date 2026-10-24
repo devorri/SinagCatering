@@ -24,16 +24,16 @@ interface AIAssistantProps {
 }
 
 const QUICK_REPLIES = [
-  'Plan an 80-guest banquet with ₱150,000 budget (Maximize)',
+  'What main dishes & pasta are on the menu?',
   'Recommend a package for 100 guests',
+  'Plan an 80-guest banquet with ₱150,000 budget (Maximize)',
   'Wedding catering with extra courses, 100 guests',
-  '18th Debut grand celebration package, 70 guests',
   'What is the refund policy?',
   'Do you accept QR Ph, GCash, or MariBank?',
 ]
 
 const parseInlineMarkdown = (text: string): string => {
-  return text
+  let clean = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -41,6 +41,11 @@ const parseInlineMarkdown = (text: string): string => {
     .replace(/'/g, '&#39;')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
+
+  if (/^#{1,4}\s+/.test(clean)) {
+    clean = `<strong style="display:block;margin:6px 0 2px 0;font-size:0.95rem;color:var(--terracotta);">${clean.replace(/^#{1,4}\s+/, '')}</strong>`
+  }
+  return clean
 }
 
 export const AIAssistant: React.FC<AIAssistantProps> = ({ isOpen, onClose, onApplyRecommendation }) => {
@@ -48,7 +53,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ isOpen, onClose, onApp
   const [messages, setMessages] = useState<Message[]>([
     {
       sender: 'bot',
-      text: "Mabuhay! I am Sinag's AI Concierge. I can recommend kids party packages, compute exact prices for your guest count, explain entertainment inclusions, and answer downpayment queries.",
+      text: "Mabuhay! I am Sinag's AI Concierge in Baliwag, Bulacan. I can recommend celebration packages, show live menu options from our kitchen, compute exact estimates for your guest count, and answer reservation questions.",
       timestamp: new Date(),
     },
   ])

@@ -25,9 +25,11 @@ import {
   ChevronUp,
   Maximize2,
   X,
+  Loader2,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useConfirm } from '../context/ConfirmContext'
+import { uploadImageToStorage } from '../lib/storage'
 import {
   EXCESS_PAX_RATE,
   EXTRA_DESSERT_RATE,
@@ -62,8 +64,70 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   initialAIFormData,
   initialDate,
 }) => {
-  const { blockedDates, bookings, createBooking, currentUser, packages } = useApp()
+  const { blockedDates, bookings, createBooking, currentUser, packages, menuItems, addons } = useApp()
   const { confirm } = useConfirm()
+
+  // Dynamically managed catalog with safe fallbacks
+  const availableMainDishes = useMemo(() => {
+    const fromDb = menuItems.filter((m) => m.category === 'main' && m.active).map((m) => m.name)
+    return fromDb.length > 0 ? fromDb : MAIN_DISHES
+  }, [menuItems])
+
+  const availablePastaDishes = useMemo(() => {
+    const fromDb = menuItems.filter((m) => m.category === 'pasta' && m.active).map((m) => m.name)
+    return fromDb.length > 0 ? fromDb : PASTA_DISHES
+  }, [menuItems])
+
+  const availableDrinkOptions = useMemo(() => {
+    const fromDb = menuItems.filter((m) => m.category === 'drink' && m.active).map((m) => m.name)
+    return fromDb.length > 0 ? fromDb : [...DRINK_OPTIONS]
+  }, [menuItems])
+
+  const availableAddons = useMemo(() => {
+    return addons && addons.length > 0 ? addons : AI_CATALOG_ADDONS
+  }, [addons])
+
+  const getDishMeta = (dishName: string) => {
+    const found = menuItems.find((m) => m.name.toLowerCase() === dishName.toLowerCase())
+    if (found) {
+      return {
+        name: found.name,
+        category: found.category as 'main' | 'pasta',
+        tag: found.tag || (found.category === 'main' ? 'Main Dish' : 'Gourmet Pasta'),
+        description: found.description || '',
+        image: found.imageUrl || DISH_DETAILS[dishName]?.image || '',
+      }
+    }
+    return DISH_DETAILS[dishName] || {
+      name: dishName,
+      category: 'main' as const,
+      tag: 'Chef Special',
+      description: 'Handcrafted signature dish prepared fresh for your event.',
+      image: '',
+    }
+  }
+
+  const getDrinkMeta = (drinkName: string) => {
+    const found = menuItems.find((m) => m.name.toLowerCase() === drinkName.toLowerCase() && m.category === 'drink')
+    if (found) {
+      return {
+        name: found.name,
+        tag: found.tag || 'Chilled Beverage',
+        description: found.description || '',
+        image: found.imageUrl || DRINK_DETAILS[drinkName]?.image || '',
+        color: found.color || DRINK_DETAILS[drinkName]?.color || '#0284C7',
+        accentColor: found.accentColor || DRINK_DETAILS[drinkName]?.accentColor || '#F0F9FF',
+      }
+    }
+    return DRINK_DETAILS[drinkName] || {
+      name: drinkName,
+      tag: 'Chilled Beverage',
+      description: 'Refreshing chilled celebration drink.',
+      image: '',
+      color: '#0284C7',
+      accentColor: '#F0F9FF',
+    }
+  }
 
   const [currentStep, setCurrentStep] = useState(0)
   const [maxVisitedStep, setMaxVisitedStep] = useState(initialAIFormData ? 1 : 0)
@@ -228,6 +292,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const [proofError, setProofError] = useState('')
   const [copiedAccount, setCopiedAccount] = useState(false)
   const [isDraggingProof, setIsDraggingProof] = useState(false)
+  const [isUploadingProof, setIsUploadingProof] = useState(false)
   const [qrModalInfo, setQrModalInfo] = useState<{
     isOpen: boolean
     title: string
@@ -272,9 +337,12 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     const extraMainCost = extraMain * EXTRA_MAIN_RATE * guestCount
     const extraPastaCost = extraPasta * EXTRA_PASTA_RATE * guestCount
     const extraDessertCost = extraDessert * EXTRA_DESSERT_RATE * guestCount
-    const flatAddonsCost = AI_CATALOG_ADDONS
+    const flatAddonsCost = availableAddons
       .filter((addon) => selectedAIAddonIds.includes(addon.id))
-      .reduce((sum, addon) => sum + addon.price, 0)
+      .reduce((sum, addon) => {
+        const rate = addon.rateType === 'per_head' ? addon.price * guestCount : addon.price
+        return sum + rate
+      }, 0)
     const addOnCost = extraMainCost + extraPastaCost + extraDessertCost + flatAddonsCost
 
     const totalPrice = baseCost + excessPaxFee + addOnCost
@@ -294,7 +362,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       totalPrice,
       downpayment,
     }
-  }, [currentPkg, guestCount, extraMain, extraPasta, extraDessert, selectedAIAddonIds])
+  }, [currentPkg, guestCount, extraMain, extraPasta, extraDessert, selectedAIAddonIds, availableAddons])
 
   // Dynamic payable amount based on payment term (50% downpayment vs. 100% full payment)
   const payableAmount = useMemo(() => {
@@ -379,7 +447,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     setTimeout(() => setCopiedAccount(false), 2200)
   }
 
-  const handleProofFileChange = (file: File | undefined) => {
+  const handleProofFileChange = async (file: File | undefined) => {
     if (!file) return
     if (!file.type.startsWith('image/')) {
       setProofError('Please upload an image receipt (PNG, JPG, or WEBP).')
@@ -391,11 +459,24 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     }
     setProofError('')
     setProofFileName(file.name)
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      setProofOfPaymentUrl(reader.result as string)
+    setIsUploadingProof(true)
+    try {
+      const res = await uploadImageToStorage(file, 'receipts')
+      if (res.url) {
+        setProofOfPaymentUrl(res.url)
+      } else {
+        setProofError(res.error || 'Failed to upload receipt screenshot.')
+      }
+    } catch {
+      // Graceful fallback to DataURL
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        setProofOfPaymentUrl(reader.result as string)
+      }
+      reader.readAsDataURL(file)
+    } finally {
+      setIsUploadingProof(false)
     }
-    reader.readAsDataURL(file)
   }
 
   const handleDateSelect = (dateStr: string) => {
@@ -904,6 +985,18 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   }}
                 >
                   {idx === 2 && <div className="wizard-pkg-badge">Most Popular</div>}
+                  {pkg.imageUrl && (
+                    <div style={{ width: '100%', height: '140px', borderRadius: '8px', overflow: 'hidden', marginBottom: '14px', background: '#F1F5F9' }}>
+                      <img
+                        src={pkg.imageUrl}
+                        alt={pkg.name}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        onError={(e) => {
+                          ;(e.currentTarget as HTMLElement).style.display = 'none'
+                        }}
+                      />
+                    </div>
+                  )}
                   <h3>{pkg.shortName}</h3>
                   <p className="wizard-pkg-desc">{pkg.description}</p>
 
@@ -1346,10 +1439,10 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
                       {!isMainDishesCollapsed && (
                         <div className="dish-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
-                          {MAIN_DISHES.map((dish) => {
+                          {availableMainDishes.map((dish) => {
                             const isSelected = selectedMainDishes.includes(dish)
                             const isDisabled = !isSelected && selectedMainDishes.length >= 3
-                            const details = DISH_DETAILS[dish]
+                            const details = getDishMeta(dish)
                             return (
                               <label
                                 key={dish}
@@ -1502,10 +1595,10 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
                       {!isPastaDishesCollapsed && (
                         <div className="dish-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
-                          {PASTA_DISHES.map((dish) => {
+                          {availablePastaDishes.map((dish) => {
                             const isSelected = selectedPastaDishes.includes(dish)
                             const isDisabled = !isSelected && selectedPastaDishes.length >= 1
-                            const details = DISH_DETAILS[dish]
+                            const details = getDishMeta(dish)
                             return (
                               <label
                                 key={dish}
@@ -1816,9 +1909,9 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 {/* Expanded Drink Selection Cards */}
                 {!isDrinksCollapsed && (
                   <div className="dish-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
-                    {DRINK_OPTIONS.map((drink) => {
+                    {availableDrinkOptions.map((drink) => {
                       const isSelected = selectedDrinks.includes(drink)
-                      const details = DRINK_DETAILS[drink]
+                      const details = getDrinkMeta(drink)
                       return (
                         <label
                           key={drink}
@@ -2023,7 +2116,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                                   }}
                                 >
                                   <option value="">-- Choose Extra Main Dish #{index + 1} --</option>
-                                  {MAIN_DISHES.map((dish) => (
+                                  {availableMainDishes.map((dish) => (
                                     <option key={dish} value={dish}>{dish}</option>
                                   ))}
                                 </select>
@@ -2094,7 +2187,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                                   }}
                                 >
                                   <option value="">-- Choose Extra Pasta Dish #{index + 1} --</option>
-                                  {PASTA_DISHES.map((dish) => (
+                                  {availablePastaDishes.map((dish) => (
                                     <option key={dish} value={dish}>{dish}</option>
                                   ))}
                                 </select>
@@ -2143,8 +2236,9 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   </div>
 
                   <div className="addon-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
-                    {AI_CATALOG_ADDONS.map((addon) => {
+                    {availableAddons.map((addon) => {
                       const isChecked = selectedAIAddonIds.includes(addon.id)
+                      const isPerHead = addon.rateType === 'per_head'
                       return (
                         <label
                           key={addon.id}
@@ -2163,7 +2257,12 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                           }}
                         >
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-                            <strong style={{ fontSize: '0.92rem', color: 'var(--ink)', lineHeight: 1.3 }}>{addon.name}</strong>
+                            <div>
+                              <strong style={{ fontSize: '0.92rem', color: 'var(--ink)', lineHeight: 1.3, display: 'block' }}>{addon.name}</strong>
+                              {addon.description && (
+                                <p style={{ fontSize: '0.76rem', color: 'var(--muted)', margin: '4px 0 0 0', lineHeight: 1.3 }}>{addon.description}</p>
+                              )}
+                            </div>
                             <input
                               type="checkbox"
                               checked={isChecked}
@@ -2172,15 +2271,15 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                                   ? [...new Set([...current, addon.id])]
                                   : current.filter((id) => id !== addon.id),
                               )}
-                              style={{ accentColor: 'var(--gold)', width: '16px', height: '16px', marginTop: '2px', cursor: 'pointer' }}
+                              style={{ accentColor: 'var(--gold)', width: '16px', height: '16px', marginTop: '2px', cursor: 'pointer', flexShrink: 0 }}
                             />
                           </div>
                           <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <span style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--terracotta)' }}>
-                              +{formatMoney(addon.price, addon.currency)}
+                              +{formatMoney(addon.price, addon.currency)}{isPerHead ? ' / guest' : ''}
                             </span>
                             <span style={{ fontSize: '0.74rem', color: isChecked ? '#059669' : 'var(--muted)', fontWeight: 600 }}>
-                              {isChecked ? '✓ Added' : '+ Add flat'}
+                              {isChecked ? '✓ Added' : isPerHead ? '+ Add/pax' : '+ Add flat'}
                             </span>
                           </div>
                         </label>
@@ -2234,13 +2333,15 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
               )}
 
               {selectedAIAddonIds.map((addonId) => {
-                const addon = AI_CATALOG_ADDONS.find((item) => item.id === addonId)
-                return addon ? (
+                const addon = availableAddons.find((item) => item.id === addonId)
+                if (!addon) return null
+                const cost = addon.rateType === 'per_head' ? addon.price * guestCount : addon.price
+                return (
                   <div key={addon.id} className="quote-line-item">
-                    <span>{addon.name}</span>
-                    <span className="font-number">{formatMoney(addon.price, addon.currency)}</span>
+                    <span>{addon.name}{addon.rateType === 'per_head' ? ` (${guestCount} pax)` : ''}</span>
+                    <span className="font-number">{formatMoney(cost, addon.currency)}</span>
                   </div>
-                ) : null
+                )
               })}
 
               <div className="quote-line-item total-row">
@@ -2984,38 +3085,52 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                         </div>
                       ) : (
                         <div className="portal-dropzone-empty">
-                          <div className="portal-upload-icon-circle">
-                            <UploadCloud size={20} style={{ color: 'var(--terracotta)' }} />
-                          </div>
-                          <div className="portal-dropzone-text">
-                            <strong>Click or drag & drop payment receipt screenshot</strong>
-                            <span>
-                              PNG, JPG, or WEBP up to 10MB (or{' '}
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.preventDefault()
-                                  e.stopPropagation()
-                                  setProofOfPaymentUrl('/sinag_gcash_qr.png')
-                                  setProofFileName('gcash_downpayment_receipt.png')
-                                  setProofError('')
-                                }}
-                                style={{
-                                  background: 'none',
-                                  border: 'none',
-                                  color: 'var(--terracotta)',
-                                  textDecoration: 'underline',
-                                  cursor: 'pointer',
-                                  padding: 0,
-                                  fontSize: '0.74rem',
-                                  fontWeight: 600,
-                                }}
-                              >
-                                use sample receipt
-                              </button>
-                              )
-                            </span>
-                          </div>
+                          {isUploadingProof ? (
+                            <>
+                              <div className="portal-upload-icon-circle" style={{ background: '#FFF7ED' }}>
+                                <Loader2 size={20} style={{ color: 'var(--terracotta)' }} className="animate-spin" />
+                              </div>
+                              <div className="portal-dropzone-text">
+                                <strong style={{ color: 'var(--terracotta)' }}>Uploading receipt to storage...</strong>
+                                <span>Securing screenshot in Supabase storage</span>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="portal-upload-icon-circle">
+                                <UploadCloud size={20} style={{ color: 'var(--terracotta)' }} />
+                              </div>
+                              <div className="portal-dropzone-text">
+                                <strong>Click or drag & drop payment receipt screenshot</strong>
+                                <span>
+                                  PNG, JPG, or WEBP up to 10MB (or{' '}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.preventDefault()
+                                      e.stopPropagation()
+                                      setProofOfPaymentUrl('/sinag_gcash_qr.png')
+                                      setProofFileName('gcash_downpayment_receipt.png')
+                                      setProofError('')
+                                    }}
+                                    style={{
+                                      background: 'none',
+                                      border: 'none',
+                                      color: 'var(--terracotta)',
+                                      textDecoration: 'underline',
+                                      cursor: 'pointer',
+                                      padding: 0,
+                                      fontSize: '0.74rem',
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    use sample receipt
+                                  </button>
+                                  )
+                                </span>
+                              </div>
+                            </>
+                          )}
                         </div>
                       )}
                     </label>
@@ -3377,21 +3492,25 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       </tr>
                     )}
 
-                    {/* Flat-rate Celebrations Add-ons */}
+                    {/* Celebrations Add-ons */}
                     {selectedAIAddonIds.map((id) => {
-                      const addon = AI_CATALOG_ADDONS.find((a) => a.id === id)
+                      const addon = availableAddons.find((a) => a.id === id)
                       if (!addon) return null
+                      const isPerHead = addon.rateType === 'per_head'
+                      const cost = isPerHead ? addon.price * guestCount : addon.price
                       return (
                         <tr key={id} style={{ borderBottom: '1px solid #F1F5F9' }}>
                           <td style={{ padding: '10px 4px' }}>
                             <div style={{ fontWeight: 600, color: 'var(--ink)' }}>{addon.name}</div>
-                            <span style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>Celebration event enhancement</span>
+                            <span style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>
+                              {addon.description || (isPerHead ? 'Per guest celebration enhancement' : 'Celebration event enhancement')}
+                            </span>
                           </td>
                           <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                            1 Flat
+                            {isPerHead ? `${guestCount} Guests` : '1 Flat'}
                           </td>
                           <td style={{ padding: '10px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--ink)' }}>
-                            {formatMoney(addon.price, currentPkg.currency)}
+                            {formatMoney(cost, currentPkg.currency)}
                           </td>
                         </tr>
                       )

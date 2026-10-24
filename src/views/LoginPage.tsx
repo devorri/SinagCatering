@@ -31,11 +31,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     setClientError('')
 
     if (!clientEmail.trim()) {
-      setClientError('Please provide a valid email address.')
+      setClientError('Please enter your email or username.')
       return
     }
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail.trim())) {
+    if (isRegistering && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail.trim())) {
       setClientError('Please enter a valid email format (e.g. name@domain.com).')
       return
     }
@@ -109,26 +109,28 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   }
 
   return (
-    <div className="portal-container">
-      <div className="portal-auth-card" style={{ maxWidth: '520px', textAlign: 'center' }}>
+    <div className="portal-container" style={{ padding: 'clamp(20px, 4vw, 60px) 16px' }}>
+      <div className="portal-auth-card" style={{ maxWidth: '520px', width: '100%', margin: '20px auto 40px', padding: 'clamp(28px, 5vw, 44px)', boxSizing: 'border-box' }}>
         <img
           src="/sinag_logo.png"
           alt="Sinag Catering"
           className="brand-logo-img"
-          style={{ width: '56px', height: '56px', margin: '0 auto 14px', display: 'block' }}
+          style={{ width: '56px', height: '56px', margin: '0 auto 16px', display: 'block', objectFit: 'contain' }}
         />
-        <h2 className="portal-auth-title" style={{ fontFamily: 'var(--font-serif)', fontSize: '2.2rem' }}>
+        <h2 className="portal-auth-title" style={{ fontFamily: 'var(--font-serif)', fontSize: '2.25rem', fontWeight: 400, color: 'var(--ink, #1f1d1a)', margin: '0 0 8px', letterSpacing: '-0.02em', lineHeight: 1.15 }}>
           Sinag Portal Access
         </h2>
-        <p className="portal-auth-sub">Sign in or register to manage your event reservation.</p>
+        <p className="portal-auth-sub" style={{ color: 'var(--muted, #6b7280)', fontSize: '0.95rem', margin: '0 0 28px', lineHeight: 1.45 }}>
+          Sign in or register to manage your event reservation.
+        </p>
 
         {/* Client Login / Register Form */}
         <form onSubmit={handleClientSubmit}>
           {isRegistering && (
             <>
-              <div className="form-group" style={{ textAlign: 'left' }}>
-                <label>
-                  Full Name <span className="required-star">*</span>
+              <div className="form-group" style={{ textAlign: 'left', marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#374151', marginBottom: '8px' }}>
+                  FULL NAME <span className="required-star" style={{ color: '#dc2626' }}>*</span>
                 </label>
                 <input
                   type="text"
@@ -137,12 +139,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   placeholder="e.g. Maria Santos"
                   value={clientName}
                   onChange={(e) => setClientName(e.target.value)}
+                  style={{ width: '100%', padding: '12px 14px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '0.95rem', boxSizing: 'border-box' }}
                 />
               </div>
 
-              <div className="form-group" style={{ textAlign: 'left' }}>
-                <label>
-                  Mobile Number (For SMS & Updates) <span className="required-star">*</span>
+              <div className="form-group" style={{ textAlign: 'left', marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#374151', marginBottom: '8px' }}>
+                  MOBILE NUMBER (FOR SMS & UPDATES) <span className="required-star" style={{ color: '#dc2626' }}>*</span>
                 </label>
                 <input
                   type="tel"
@@ -151,29 +154,30 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   value={clientPhone}
                   onChange={(e) => setClientPhone(e.target.value)}
                   required
+                  style={{ width: '100%', padding: '12px 14px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '0.95rem', boxSizing: 'border-box' }}
                 />
               </div>
             </>
           )}
 
-          <div className="form-group" style={{ textAlign: 'left' }}>
-            <label>
-              Email Address <span className="required-star">*</span>
+          <div className="form-group" style={{ textAlign: 'left', marginBottom: '20px' }}>
+            <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#374151', marginBottom: '8px' }}>
+              EMAIL ADDRESS <span className="required-star" style={{ color: '#dc2626' }}>*</span>
             </label>
             <input
-              type="email"
+              type="text"
               className="input-field"
               required
               placeholder="maria@example.com"
               value={clientEmail}
               onChange={(e) => setClientEmail(e.target.value)}
+              style={{ width: '100%', padding: '12px 14px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '0.95rem', boxSizing: 'border-box' }}
             />
           </div>
 
-          {/* Checklist Item 6: Password Input with Masking & Visibility Toggle */}
-          <div className="form-group" style={{ textAlign: 'left' }}>
-            <label>
-              Password <span className="required-star">*</span>
+          <div className="form-group" style={{ textAlign: 'left', marginBottom: '10px' }}>
+            <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#374151', marginBottom: '8px' }}>
+              PASSWORD <span className="required-star" style={{ color: '#dc2626' }}>*</span>
             </label>
             <div style={{ position: 'relative' }}>
               <input
@@ -183,7 +187,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 placeholder="••••••••"
                 value={clientPassword}
                 onChange={(e) => setClientPassword(e.target.value)}
-                style={{ width: '100%', paddingRight: '44px' }}
+                style={{ width: '100%', padding: '12px 42px 12px 14px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '0.95rem', boxSizing: 'border-box' }}
               />
               <button
                 type="button"
@@ -198,7 +202,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   background: 'none',
                   border: 'none',
                   cursor: 'pointer',
-                  color: showPassword ? 'var(--terracotta)' : 'var(--muted)',
+                  color: 'var(--muted, #6b7280)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -212,8 +216,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             {isRegistering ? (
               <PasswordStrengthIndicator password={clientPassword} showChecklist={true} />
             ) : (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
-                <span style={{ fontSize: '0.74rem', color: 'var(--muted)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--muted, #6b7280)' }}>
                   Enter your account password
                 </span>
                 <button
@@ -222,8 +226,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   style={{
                     background: 'none',
                     border: 'none',
-                    color: 'var(--terracotta)',
-                    fontSize: '0.76rem',
+                    color: 'var(--terracotta, #8c4a2f)',
+                    fontSize: '0.8rem',
                     fontWeight: 600,
                     cursor: 'pointer',
                     textDecoration: 'underline',
@@ -304,13 +308,32 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
           )}
 
           {clientError && (
-            <p style={{ color: 'var(--terracotta)', fontSize: '0.85rem', marginBottom: '16px' }}>
+            <p style={{ color: '#dc2626', fontSize: '0.85rem', marginTop: '12px', marginBottom: '0', textAlign: 'left' }}>
               {clientError}
             </p>
           )}
 
-          <button type="submit" className="btn-hero-primary" style={{ width: '100%', marginTop: '6px' }}>
-            {isRegistering ? 'Register & Access Dashboard' : 'Sign In'} <ArrowRight size={16} />
+          <button
+            type="submit"
+            style={{
+              width: '100%',
+              marginTop: '22px',
+              padding: '13px 18px',
+              background: '#1f1d1a',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.95rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              transition: 'background 0.2s',
+            }}
+          >
+            {isRegistering ? 'Register & Continue' : 'Sign In'} <ArrowRight size={16} />
           </button>
 
           <div style={{ marginTop: '20px', textAlign: 'center' }}>
@@ -320,7 +343,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 setIsRegistering(!isRegistering)
                 setClientError('')
               }}
-              style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '0.85rem', cursor: 'pointer', textDecoration: 'underline' }}
+              style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: '0.85rem', cursor: 'pointer', textDecoration: 'underline' }}
             >
               {isRegistering ? 'Already registered? Sign in instead' : 'New client? Register an account'}
             </button>

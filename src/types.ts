@@ -6,6 +6,35 @@ export interface User {
   role: 'client' | 'admin'
 }
 
+export interface PackageTier {
+  pax: number
+  price: number
+}
+
+export interface CateringAddon {
+  id: string
+  name: string
+  price: number
+  currency: 'PHP'
+  rateType?: 'flat' | 'per_head'
+  description?: string
+}
+
+export interface MenuItem {
+  id: string
+  name: string
+  category: 'main' | 'pasta' | 'drink'
+  description: string
+  imageUrl?: string | null
+  tag?: string | null
+  color?: string | null
+  accentColor?: string | null
+  active: boolean
+  sortOrder: number
+  createdAt?: string
+  updatedAt?: string
+}
+
 export interface AddOnItem {
   extraMainCount: number
   extraPastaCount: number

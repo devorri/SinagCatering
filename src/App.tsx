@@ -665,7 +665,7 @@ function AppContent() {
               <img src="/sinag_logo.png" alt="Sinag Catering" className="brand-logo-img" />
               <span>Sinag Catering</span>
             </a>
-            <p>Kids party catering, event styling, freebies, entertainment coordination, and booking support from Baliwag, Bulacan.</p>
+            <p>Full celebration catering, event styling, freebies, entertainment coordination, and booking support from Baliwag, Bulacan.</p>
           </div>
 
           <div className="footer-contact-col">

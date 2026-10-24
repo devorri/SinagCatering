@@ -1,5 +1,3 @@
-import { getGalleryAssetUrl } from './galleryData'
-
 export interface PackageTier {
   pax: number
   price: number
@@ -18,6 +16,8 @@ export interface CateringPackage {
   inclusions: string[]
   entertainment: string[]
   freebies: string[]
+  imageUrl?: string
+  details?: Record<string, any>
 }
 
 export interface CateringAddon {
@@ -25,15 +25,20 @@ export interface CateringAddon {
   name: string
   price: number
   currency: 'PHP'
+  rateType?: 'flat' | 'per_head'
+  description?: string
 }
+
+export const STORAGE_FILES_BASE = 'https://wldhvmbcvjbnwkgiafpg.supabase.co/storage/v1/object/public/Files'
 
 export const SINAG_PACKAGES: CateringPackage[] = [
   {
     id: 'budget-basic',
-    name: 'Budgetarian Kids Party Package',
+    name: 'Budgetarian Celebration Package',
     shortName: 'Budgetarian Basic',
-    bestFor: 'simple kids birthdays with full food and party setup',
-    description: 'Complete food buffet, table styling, service crew, and party freebies without entertainment add-ons.',
+    bestFor: 'celebrations and gatherings with full food and event setup',
+    imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_budget_basic.jpg`,
+    description: 'Complete food buffet, table styling, service crew, and celebration freebies without entertainment add-ons.',
     tiers: [
       { pax: 50, price: 35000 },
       { pax: 70, price: 40000 },
@@ -67,10 +72,11 @@ export const SINAG_PACKAGES: CateringPackage[] = [
   },
   {
     id: 'budget-entertainment',
-    name: 'Budgetarian Kids Party Package with Freebies',
+    name: 'Budgetarian Package with Freebies and Entertainment',
     shortName: 'Budgetarian Plus',
-    bestFor: 'kids parties that need entertainers and photo coverage',
-    description: 'Budgetarian inclusions plus entertainment options for a livelier children party.',
+    bestFor: 'parties and celebrations that need entertainers and photo coverage',
+    imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_budget_entertainment.jpg`,
+    description: 'Budgetarian inclusions plus entertainment coverage for a lively celebration.',
     tiers: [
       { pax: 50, price: 47000 },
       { pax: 70, price: 52000 },
@@ -104,10 +110,11 @@ export const SINAG_PACKAGES: CateringPackage[] = [
   },
   {
     id: 'full-blast',
-    name: 'Full Blast Kids Party Package with Freebies',
+    name: 'Full Blast Package with Freebies',
     shortName: 'Full Blast',
-    bestFor: 'premium children parties with stage, ceiling, and complete entertainment',
-    description: 'The most complete Sinag kids party setup with premium styling and entertainment coverage.',
+    bestFor: 'premium celebrations with stage styling, balloon ceiling, and complete entertainment',
+    imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_full_blast.jpg`,
+    description: 'The most complete Sinag celebration setup with premium styling and entertainment coverage.',
     tiers: [
       { pax: 50, price: 55000 },
       { pax: 70, price: 60000 },
@@ -164,6 +171,8 @@ export const mapDatabasePackage = (record: any): CateringPackage => {
     inclusions: Array.isArray(details.inclusions) ? details.inclusions : (Array.isArray(record.included_menu) ? record.included_menu : []),
     entertainment: Array.isArray(details.entertainment) ? details.entertainment : [],
     freebies: Array.isArray(details.freebies) ? details.freebies : [],
+    imageUrl: details.image_url || record.image_url || undefined,
+    details,
   }
 }
 
@@ -193,70 +202,70 @@ export const DISH_DETAILS: Record<string, DishMetadata> = {
     category: 'main',
     tag: 'Signature Beef',
     description: 'Tender beef strips simmered in savory garlic soy sauce with crisp broccoli.',
-    image: getGalleryAssetUrl('food/food_beef_broccoli.jpg'),
+    image: `${STORAGE_FILES_BASE}/menu/food_beef_broccoli.jpg`,
   },
   'Cordon Bleu': {
     name: 'Cordon Bleu',
     category: 'main',
     tag: 'Poultry Favorite',
     description: 'Crispy breaded chicken breast stuffed with savory ham and molten cheese.',
-    image: getGalleryAssetUrl('food/food_cordon_bleu.jpg'),
+    image: `${STORAGE_FILES_BASE}/menu/food_cordon_bleu.jpg`,
   },
   'Menudo': {
     name: 'Menudo',
     category: 'main',
     tag: 'Fiesta Classic',
     description: 'Tender pork cubes and liver simmered in spiced tomato stew with vegetables.',
-    image: getGalleryAssetUrl('food/food_menudo.jpg'),
+    image: `${STORAGE_FILES_BASE}/menu/food_menudo.jpg`,
   },
   'Caldereta': {
     name: 'Caldereta',
     category: 'main',
     tag: 'Hearty Braised Beef',
     description: 'Slow-braised beef in a rich liver-infused tomato gravy with bell peppers.',
-    image: getGalleryAssetUrl('food/food_caldereta.jpg'),
+    image: `${STORAGE_FILES_BASE}/menu/food_caldereta.jpg`,
   },
   'Mixed Veggies': {
     name: 'Mixed Veggies',
     category: 'main',
     tag: 'Buttered Medley',
     description: 'Fresh seasonal vegetables sautéed in butter and garlic, paired with quail eggs.',
-    image: getGalleryAssetUrl('food/food_mixed_veggies_quail_egg.jpg'),
+    image: `${STORAGE_FILES_BASE}/menu/food_mixed_veggies_quail_egg.jpg`,
   },
   'Chicken Curry': {
     name: 'Chicken Curry',
     category: 'main',
     tag: 'Aromatic Curry',
     description: 'Tender chicken braised in fragrant yellow coconut curry with tender potatoes.',
-    image: getGalleryAssetUrl('food/food_chicken_curry.jpg'),
+    image: `${STORAGE_FILES_BASE}/menu/food_chicken_curry.jpg`,
   },
   'Fish Fillet': {
     name: 'Fish Fillet',
     category: 'main',
     tag: 'Crispy Seafood',
     description: 'Golden-crusted dory fish fillets served with homemade tartar dipping sauce.',
-    image: getGalleryAssetUrl('food/food_fish_fillet.jpg'),
+    image: `${STORAGE_FILES_BASE}/menu/food_fish_fillet.jpg`,
   },
   'Pancit': {
     name: 'Pancit',
     category: 'pasta',
     tag: 'Traditional Feast',
     description: 'Sautéed bihon and canton noodles tossed with shredded vegetables and meat.',
-    image: getGalleryAssetUrl('food/food_pancit.jpg'),
+    image: `${STORAGE_FILES_BASE}/menu/food_pancit.jpg`,
   },
   'Spaghetti': {
     name: 'Spaghetti',
     category: 'pasta',
     tag: 'Sweet-Style Pinoy',
     description: 'Party-favorite sweet-savory ground meat sauce topped with shredded cheddar.',
-    image: getGalleryAssetUrl('food/food_spag.jpg'),
+    image: `${STORAGE_FILES_BASE}/menu/food_spag.jpg`,
   },
   'Carbonara': {
     name: 'Carbonara',
     category: 'pasta',
     tag: 'Creamy Bacon',
     description: 'Al dente pasta coated in luscious garlic cream with crispy smoked bacon.',
-    image: getGalleryAssetUrl('food/food_carbonara.jpg'),
+    image: `${STORAGE_FILES_BASE}/menu/food_carbonara.jpg`,
   },
 }
 
@@ -277,7 +286,7 @@ export const DRINK_DETAILS: Record<string, DrinkMetadata> = {
     name: 'Blue Lemonade',
     tag: 'Citrus Cooler',
     description: 'Vibrant chilled sweet-tangy blue lemonade garnished with fresh lemon slices and mint leaves.',
-    image: getGalleryAssetUrl('food/drink_blue_lemonade.jpg'),
+    image: `${STORAGE_FILES_BASE}/menu/drink_blue_lemonade.jpg`,
     color: '#0284C7',
     accentColor: '#F0F9FF',
   },
@@ -285,7 +294,7 @@ export const DRINK_DETAILS: Record<string, DrinkMetadata> = {
     name: 'Iced Tea',
     tag: 'Signature House Blend',
     description: 'Crisp and refreshing house-blend sweet iced tea brewed fresh and served ice-chilled.',
-    image: getGalleryAssetUrl('food/drink_iced_tea.jpg'),
+    image: `${STORAGE_FILES_BASE}/menu/drink_iced_tea.jpg`,
     color: '#D97706',
     accentColor: '#FFFBEB',
   },
@@ -293,7 +302,7 @@ export const DRINK_DETAILS: Record<string, DrinkMetadata> = {
     name: 'Cucumber',
     tag: 'Crisp Refresher',
     description: 'Cooling cucumber-infused lemon refreshment with crisp fresh cucumber ribbon slices.',
-    image: getGalleryAssetUrl('food/drink_cucumber.jpg'),
+    image: `${STORAGE_FILES_BASE}/menu/drink_cucumber.jpg`,
     color: '#059669',
     accentColor: '#ECFDF5',
   },

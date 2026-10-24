@@ -7,8 +7,6 @@ import {
   CheckCircle,
   Printer,
   X,
-  Eye,
-  EyeOff,
   CreditCard,
   Copy,
   Check,
@@ -22,22 +20,21 @@ import {
   CalendarDays,
   User as UserIcon,
   Maximize2,
+  Loader2,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import type { Booking } from '../types'
 import { formatMoney } from '../data/packages'
-import { PasswordStrengthIndicator, getPasswordValidationError } from '../components/PasswordStrengthIndicator'
+import { uploadImageToStorage } from '../lib/storage'
 import { EmbeddedCheckoutModal } from '../components/EmbeddedCheckoutModal'
 import { useConfirm } from '../context/ConfirmContext'
-import { ForgotPasswordModal } from '../components/ForgotPasswordModal'
 import { UserProfileModal } from '../components/UserProfileModal'
+import { LoginPage } from './LoginPage'
 
 export const ClientPortal: React.FC = () => {
   const {
     currentUser,
     bookings,
-    signIn,
-    signUp,
     logout,
     uploadPayment,
     cancelBooking,
@@ -46,16 +43,8 @@ export const ClientPortal: React.FC = () => {
 
   const { confirm } = useConfirm()
 
-  // Authentication states
-  const [emailInput, setEmailInput] = useState('')
-  const [nameInput, setNameInput] = useState('')
-  const [passwordInput, setPasswordInput] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
-  const [isRegistering, setIsRegistering] = useState(false)
-  const [errorMsg, setErrorMsg] = useState('')
   const [paymentRefInput, setPaymentRefInput] = useState('')
   const [paymentProofError, setPaymentProofError] = useState('')
-  const [showForgotPassword, setShowForgotPassword] = useState(false)
   const [showProfileModal, setShowProfileModal] = useState(false)
 
   // Action states
@@ -74,6 +63,7 @@ export const ClientPortal: React.FC = () => {
   const [copiedGcash, setCopiedGcash] = useState(false)
   const [copiedMaribank, setCopiedMaribank] = useState(false)
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null)
+  const [isUploadingReceipt, setIsUploadingReceipt] = useState(false)
   const [portalQrMethod, setPortalQrMethod] = useState<'gcash' | 'maribank'>('gcash')
   const [portalQrZoom, setPortalQrZoom] = useState<{ title: string; imageSrc: string; name: string; acc: string } | null>(null)
 
@@ -104,44 +94,7 @@ export const ClientPortal: React.FC = () => {
     clientBookings.find((b) => b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit') ||
     clientBookings[0]
 
-  const handleAuthSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setErrorMsg('')
 
-    if (!emailInput.trim()) return
-
-    if (isRegistering) {
-      if (!nameInput.trim()) {
-        setErrorMsg('Please enter your full name to register.')
-        return
-      }
-      const passwordError = getPasswordValidationError(passwordInput)
-      if (passwordError) {
-        setErrorMsg(passwordError)
-        return
-      }
-    } else {
-      if (!passwordInput) {
-        setErrorMsg('Please enter your password.')
-        return
-      }
-    }
-
-    const result = isRegistering
-      ? await signUp(nameInput, emailInput, '', passwordInput)
-      : await signIn(emailInput, passwordInput)
-    if (result.error) {
-      setErrorMsg(result.error)
-      return
-    }
-    if (result.confirmationRequired) {
-      setErrorMsg('Check your email to confirm your account, then sign in here.')
-      return
-    }
-    setEmailInput('')
-    setNameInput('')
-    setPasswordInput('')
-  }
 
   const [uploadedReceipt, setUploadedReceipt] = useState<string | null>(null)
   const [checkoutBooking, setCheckoutBooking] = useState<Booking | null>(null)
@@ -241,134 +194,7 @@ export const ClientPortal: React.FC = () => {
 
   // Auth Screen
   if (!currentUser) {
-    return (
-      <div className="portal-container">
-        <div className="portal-auth-card">
-          <h2 className="portal-auth-title">Client Portal Login</h2>
-          <p className="portal-auth-sub">Manage your reservations, submit GCash downpayments, and view service contracts.</p>
-
-          <form onSubmit={handleAuthSubmit}>
-            {isRegistering && (
-              <div className="form-group">
-                <label>Full Name</label>
-                <input
-                  type="text"
-                  className="input-field"
-                  required
-                  placeholder="e.g. Maria Santos"
-                  value={nameInput}
-                  onChange={(e) => setNameInput(e.target.value)}
-                />
-              </div>
-            )}
-
-            <div className="form-group">
-              <label>Email Address</label>
-              <input
-                type="email"
-                className="input-field"
-                required
-                placeholder="maria@example.com"
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Password</label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  className="input-field"
-                  required
-                  placeholder="••••••••"
-                  value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
-                  style={{ width: '100%', paddingRight: '44px' }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  title={showPassword ? 'Hide password' : 'Show password'}
-                  style={{
-                    position: 'absolute',
-                    right: '12px',
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    color: showPassword ? 'var(--terracotta)' : 'var(--muted)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: '4px',
-                    zIndex: 2,
-                  }}
-                >
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              </div>
-              {isRegistering ? (
-                <PasswordStrengthIndicator password={passwordInput} showChecklist={true} />
-              ) : (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>
-                    Enter your account password
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowForgotPassword(true)}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: 'var(--terracotta)',
-                      fontSize: '0.74rem',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      textDecoration: 'underline',
-                      padding: 0,
-                    }}
-                  >
-                    Forgot password?
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {errorMsg && (
-              <p style={{ color: 'var(--terracotta)', fontSize: '0.85rem', marginBottom: '16px' }}>
-                {errorMsg}
-              </p>
-            )}
-
-            <button type="submit" className="btn-submit-primary">
-              {isRegistering ? 'Register & Login' : 'Login to Dashboard'}
-            </button>
-          </form>
-
-          <div style={{ marginTop: '20px' }}>
-            <button
-              type="button"
-              onClick={() => setIsRegistering(!isRegistering)}
-              style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '0.85rem', cursor: 'pointer', textDecoration: 'underline' }}
-            >
-              {isRegistering ? 'Already have an account? Login' : 'Need an account? Register as client'}
-            </button>
-          </div>
-
-        </div>
-
-        <ForgotPasswordModal
-          isOpen={showForgotPassword}
-          onClose={() => setShowForgotPassword(false)}
-          initialIdentifier={emailInput}
-          initialMethod="email"
-          onSuccess={() => setShowForgotPassword(false)}
-        />
-      </div>
-    )
+    return <LoginPage onLoginSuccess={() => {}} />
   }
 
   // Dashboard Screen
@@ -831,21 +657,31 @@ export const ClientPortal: React.FC = () => {
                                 type="file"
                                 accept="image/*"
                                 style={{ display: 'none' }}
-                                onChange={(e) => {
+                                onChange={async (e) => {
                                   const file = e.target.files?.[0]
                                   if (file) {
                                     setUploadedFileName(file.name)
-                                    const reader = new FileReader()
-                                    reader.onloadend = () => setUploadedReceipt(reader.result as string)
-                                    reader.readAsDataURL(file)
+                                    setIsUploadingReceipt(true)
+                                    try {
+                                      const res = await uploadImageToStorage(file, 'receipts')
+                                      if (res.url) {
+                                        setUploadedReceipt(res.url)
+                                      }
+                                    } catch {
+                                      const reader = new FileReader()
+                                      reader.onloadend = () => setUploadedReceipt(reader.result as string)
+                                      reader.readAsDataURL(file)
+                                    } finally {
+                                      setIsUploadingReceipt(false)
+                                    }
                                   }
                                 }}
                               />
                               {uploadedReceipt ? (
                                 <div className="portal-dropzone-selected">
-                                  {uploadedReceipt.startsWith('data:image') && (
+                                  {uploadedReceipt.startsWith('data:image') || uploadedReceipt.includes('http') ? (
                                     <img src={uploadedReceipt} alt="Receipt thumbnail" className="portal-receipt-thumbnail" />
-                                  )}
+                                  ) : null}
                                   <div className="portal-dropzone-fileinfo">
                                     <span className="portal-dropzone-filename">{uploadedFileName || 'receipt_screenshot.png'}</span>
                                     <span className="portal-dropzone-change"><CheckCircle size={12} /> Ready to submit · Click to change file</span>
@@ -853,13 +689,27 @@ export const ClientPortal: React.FC = () => {
                                 </div>
                               ) : (
                                 <div className="portal-dropzone-empty">
-                                  <div className="portal-upload-icon-circle">
-                                    <UploadCloud size={18} />
-                                  </div>
-                                  <div className="portal-dropzone-text">
-                                    <strong>Click or tap to upload screenshot proof</strong>
-                                    <span>PNG, JPG, or WEBP up to 10MB</span>
-                                  </div>
+                                  {isUploadingReceipt ? (
+                                    <>
+                                      <div className="portal-upload-icon-circle" style={{ background: '#FFF7ED' }}>
+                                        <Loader2 size={18} style={{ color: 'var(--terracotta)' }} className="animate-spin" />
+                                      </div>
+                                      <div className="portal-dropzone-text">
+                                        <strong style={{ color: 'var(--terracotta)' }}>Uploading receipt to storage...</strong>
+                                        <span>Saving into Files bucket</span>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div className="portal-upload-icon-circle">
+                                        <UploadCloud size={18} />
+                                      </div>
+                                      <div className="portal-dropzone-text">
+                                        <strong>Click or tap to upload screenshot proof</strong>
+                                        <span>PNG, JPG, or WEBP up to 10MB</span>
+                                      </div>
+                                    </>
+                                  )}
                                 </div>
                               )}
                             </label>

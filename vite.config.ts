@@ -380,6 +380,210 @@ function apiServerPlugin(env: Record<string, string> = {}): Plugin {
           }
         }
 
+        // 4. Catalog Admin Management Endpoint
+        if (url === '/api/catalog-admin') {
+          const supabaseUrl = env.VITE_SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wldhvmbcvjbnwkgiafpg.supabase.co'
+          const anonKey = env.VITE_SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || ''
+          const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || anonKey
+
+          if (req.method === 'GET') {
+            try {
+              const [pkgRes, menuRes, addonRes] = await Promise.all([
+                fetch(`${supabaseUrl}/rest/v1/packages?select=*&order=base_price.asc`, {
+                  headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+                }),
+                fetch(`${supabaseUrl}/rest/v1/menu_items?select=*&order=sort_order.asc`, {
+                  headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+                }),
+                fetch(`${supabaseUrl}/rest/v1/package_addons?select=*&order=price.asc`, {
+                  headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+                }),
+              ])
+              const packages = pkgRes.ok ? await pkgRes.json() : []
+              const menuItems = menuRes.ok ? await menuRes.json() : []
+              const addons = addonRes.ok ? await addonRes.json() : []
+
+              res.statusCode = 200
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ success: true, packages, menuItems, addons }))
+              return
+            } catch (err: any) {
+              res.statusCode = 500
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ error: err.message || 'Failed to fetch catalog' }))
+              return
+            }
+          }
+
+          if (req.method === 'POST') {
+            try {
+              const body = await readJsonBody()
+              const action = body.action
+
+              const dbFetch = async (path: string, options: any = {}) => {
+                return fetch(`${supabaseUrl}/rest/v1/${path}`, {
+                  ...options,
+                  headers: {
+                    apikey: serviceKey,
+                    Authorization: `Bearer ${serviceKey}`,
+                    'Content-Type': 'application/json',
+                    ...options.headers,
+                  },
+                })
+              }
+
+              if (action === 'save_package') {
+                const pkg = body.package
+                if (!pkg || !pkg.id || !pkg.name) {
+                  res.statusCode = 400
+                  res.setHeader('Content-Type', 'application/json')
+                  res.end(JSON.stringify({ error: 'Package ID and name are required' }))
+                  return
+                }
+                const tiers = Array.isArray(pkg.tiers) ? pkg.tiers : []
+                const details = {
+                  inclusions: Array.isArray(pkg.inclusions) ? pkg.inclusions : [],
+                  entertainment: Array.isArray(pkg.entertainment) ? pkg.entertainment : [],
+                  freebies: Array.isArray(pkg.freebies) ? pkg.freebies : [],
+                  service_area: pkg.details?.service_area || 'Within City of Baliwag area',
+                  food_buffer_pax: Number(pkg.details?.food_buffer_pax || 10),
+                }
+                const payload = {
+                  id: String(pkg.id).trim(),
+                  name: String(pkg.name).trim(),
+                  ideal_for: String(pkg.bestFor || pkg.description || '').trim(),
+                  included_menu: details.inclusions,
+                  default_pax: Number(pkg.defaultPax ?? tiers[0]?.pax ?? 50),
+                  price_per_head: pkg.pricePerHead !== undefined && pkg.pricePerHead !== null ? Number(pkg.pricePerHead) : null,
+                  currency: 'PHP',
+                  base_price: Number(pkg.basePrice ?? tiers[0]?.price ?? 0),
+                  tier_prices: tiers,
+                  details,
+                }
+                const r = await dbFetch('packages', {
+                  method: 'POST',
+                  headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+                  body: JSON.stringify(payload),
+                })
+                const saved: any = r.ok ? await r.json() : [payload]
+                res.statusCode = 200
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ success: true, package: saved[0] || payload }))
+                return
+              }
+
+              if (action === 'delete_package') {
+                const packageId = body.packageId
+                await dbFetch(`packages?id=eq.${encodeURIComponent(packageId)}`, {
+                  method: 'DELETE',
+                })
+                res.statusCode = 200
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ success: true, deletedId: packageId }))
+                return
+              }
+
+              if (action === 'save_menu_item') {
+                const item = body.menuItem
+                const id = item.id || `menu-${item.category}-${item.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`
+                const payload = {
+                  id: String(id).trim(),
+                  name: String(item.name).trim(),
+                  category: item.category,
+                  description: String(item.description || '').trim(),
+                  image_url: item.imageUrl || item.image_url || null,
+                  tag: item.tag || null,
+                  color: item.color || null,
+                  accent_color: item.accentColor || item.accent_color || null,
+                  active: item.active !== false,
+                  sort_order: Number(item.sortOrder ?? item.sort_order ?? 0),
+                  updated_at: new Date().toISOString(),
+                }
+                const r = await dbFetch('menu_items', {
+                  method: 'POST',
+                  headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+                  body: JSON.stringify(payload),
+                })
+                const saved: any = r.ok ? await r.json() : [payload]
+                res.statusCode = 200
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ success: true, menuItem: saved[0] || payload }))
+                return
+              }
+
+              if (action === 'toggle_menu_item_active') {
+                const itemId = body.itemId
+                const active = Boolean(body.active)
+                const r = await dbFetch(`menu_items?id=eq.${encodeURIComponent(itemId)}`, {
+                  method: 'PATCH',
+                  headers: { Prefer: 'return=representation' },
+                  body: JSON.stringify({ active, updated_at: new Date().toISOString() }),
+                })
+                const updated: any = r.ok ? await r.json() : [{ id: itemId, active }]
+                res.statusCode = 200
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ success: true, menuItem: updated[0] }))
+                return
+              }
+
+              if (action === 'delete_menu_item') {
+                const itemId = body.itemId
+                await dbFetch(`menu_items?id=eq.${encodeURIComponent(itemId)}`, {
+                  method: 'DELETE',
+                })
+                res.statusCode = 200
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ success: true, deletedId: itemId }))
+                return
+              }
+
+              if (action === 'save_addon') {
+                const addon = body.addon
+                const id = addon.id || `ADD-${addon.name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8)}-${Date.now().toString().slice(-2)}`
+                const payload = {
+                  id: String(id).trim(),
+                  name: String(addon.name).trim(),
+                  price: Number(addon.price) || 0,
+                  currency: 'PHP',
+                  rate_type: addon.rateType === 'per_head' ? 'per_head' : 'flat',
+                  description: addon.description ? String(addon.description).trim() : null,
+                }
+                const r = await dbFetch('package_addons', {
+                  method: 'POST',
+                  headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+                  body: JSON.stringify(payload),
+                })
+                const saved: any = r.ok ? await r.json() : [payload]
+                res.statusCode = 200
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ success: true, addon: saved[0] || payload }))
+                return
+              }
+
+              if (action === 'delete_addon') {
+                const addonId = body.addonId
+                await dbFetch(`package_addons?id=eq.${encodeURIComponent(addonId)}`, {
+                  method: 'DELETE',
+                })
+                res.statusCode = 200
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ success: true, deletedId: addonId }))
+                return
+              }
+
+              res.statusCode = 400
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ error: `Unknown action: ${action}` }))
+              return
+            } catch (err: any) {
+              res.statusCode = 500
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ error: err.message || 'Internal catalog error' }))
+              return
+            }
+          }
+        }
+
         next()
       })
     },

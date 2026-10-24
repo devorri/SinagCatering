@@ -90,6 +90,7 @@ export const calculateTotalForPackage = (
   extraMain = 0,
   extraPasta = 0,
   extraDessert = 0,
+  liveAddons: any[] = [],
 ): number => {
   const tier = findTierForGuestCount(pkg, guestCount)
   const isPerHead = pkg.pricePerHead !== undefined
@@ -101,17 +102,93 @@ export const calculateTotalForPackage = (
   const extraMainCost = extraMain * EXTRA_MAIN_RATE * guestCount
   const extraPastaCost = extraPasta * EXTRA_PASTA_RATE * guestCount
   const extraDessertCost = extraDessert * EXTRA_DESSERT_RATE * guestCount
-  const flatAddonsCost = AI_CATALOG_ADDONS
-    .filter((addon) => addonIds.includes(addon.id))
-    .reduce((sum, addon) => sum + addon.price, 0)
 
-  return baseCost + excessPaxFee + extraMainCost + extraPastaCost + extraDessertCost + flatAddonsCost
+  let addonsCost = 0
+  for (const addonId of addonIds) {
+    const liveMatch = liveAddons.find((a) => a.id === addonId)
+    if (liveMatch) {
+      const price = Number(liveMatch.price) || 0
+      addonsCost += liveMatch.rate_type === 'per_head' ? price * guestCount : price
+    } else {
+      const fallback = AI_CATALOG_ADDONS.find((a) => a.id === addonId)
+      if (fallback) addonsCost += fallback.price
+    }
+  }
+
+  return baseCost + excessPaxFee + extraMainCost + extraPastaCost + extraDessertCost + addonsCost
 }
 
-export const generateLocalAIResponse = (input: string, livePackages: CateringPackage[] = []): AIResponse => {
-  const inputLower = input.toLowerCase()
+export const generateLocalAIResponse = (
+  input: string,
+  livePackages: CateringPackage[] = [],
+  liveMenuItems: any[] = [],
+  liveAddons: any[] = [],
+): AIResponse => {
+  const inputLower = input.toLowerCase().trim()
 
-  // 1. FAQ: Refund & Cancellation Policy
+  // 0. Explicit Off-Topic, Nonsense & Non-Catering Guardrail
+  const isExplicitOffTopic =
+    /(?:python|javascript|react|typescript|html|css|sql|script|function|code|compile|programming|algorithm|debug|terminal|syntax)\b/i.test(inputLower) ||
+    /(?:capital of|who wrote|who is the president|who discovered|weather in|crypto|bitcoin|stock market)\b/i.test(inputLower) ||
+    /(?:solve|equation|derivative|integral|geometry|homework|physics|algebra)\b/i.test(inputLower) ||
+    /(?:motorcycle|carburetor|spark plug|engine oil|tuning|exhaust|piston|honda|yamaha|motoshop)\b/i.test(inputLower)
+
+  const isCateringOrEventRelated =
+    /cater|food|menu|dish|dishes|pasta|drink|drinks|beverage|package|packages|add-?ons?|upgrade|station|fountain|emcee|host|inclusion|pax|guest|guests|budget|price|pricing|rate|rates|cost|total|event|party|birthday|wedding|debut|reunion|seminar|banquet|celebration|reserve|reservation|book|booking|sched|date|available|availability|baliwag|bulacan|sinag|refund|cancel|cancellation|downpayment|payment|gcash|maribank|contact|phone|hello|hi|mabuhay|good morning|good evening|good afternoon|help|info|inquire|order|recommend|venue/i.test(inputLower)
+
+  if (isExplicitOffTopic || (!isCateringOrEventRelated && inputLower.length > 0)) {
+    return {
+      text: `Mabuhay! I am Sinag Catering's AI Concierge, specifically dedicated to assisting you with our celebration packages, menu selections, event dates, pricing, and reservations in Baliwag, Bulacan.\n\nHow can I help you plan your upcoming celebration or catering banquet today?`,
+      escalate: false,
+      isLiveApi: false,
+    }
+  }
+
+  // 1. FAQ: Menu Items & Dishes inquiry directly from live database
+  if (/menu|dish|dishes|pasta|drink|drinks|beverage|food options|what.*serve|what.*cook/i.test(inputLower) && !/recommend|package|pax|guest|budget|price of package/i.test(inputLower)) {
+    const mains = liveMenuItems.filter((m) => m.category === 'main')
+    const pastas = liveMenuItems.filter((m) => m.category === 'pasta')
+    const drinks = liveMenuItems.filter((m) => m.category === 'drink')
+
+    const mainsList = mains.length > 0
+      ? mains.map((m) => `• **${m.name}**${m.description ? ` — *${m.description}*` : ''}`).join('\n')
+      : '• Beef Broccoli\n• Chicken Cordon Bleu\n• Lumpiang Shanghai\n• Sweet and Sour Pork\n• Pork Menudo\n• Beef Caldereta\n• Chicken Curry\n• Fish Fillet'
+
+    const pastaList = pastas.length > 0
+      ? pastas.map((m) => `• **${m.name}**${m.description ? ` — *${m.description}*` : ''}`).join('\n')
+      : '• Creamy Carbonara\n• Classic Filipino Sweet Spaghetti\n• Baked Macaroni'
+
+    const drinkList = drinks.length > 0
+      ? drinks.map((m) => `• **${m.name}**${m.description ? ` — *${m.description}*` : ''}`).join('\n')
+      : '• Blue Lemonade\n• Cucumber Lemonade\n• Red Iced Tea'
+
+    return {
+      text: `Mabuhay! Here is our current kitchen menu selection for your celebration banquet:\n\n` +
+        `### 🍖 Signature Main Dishes\n${mainsList}\n\n` +
+        `### 🍝 Gourmet Pasta Courses\n${pastaList}\n\n` +
+        `### 🍹 Refreshing Beverages\n${drinkList}\n\n` +
+        `*All Sinag celebration packages include complete table setup, buffet presentation, and your choice of dishes from this live menu! Let me know your guest count for an instant package recommendation.*`,
+      escalate: false,
+      isLiveApi: false,
+    }
+  }
+
+  // 2. FAQ: Add-ons & Upgrades inquiry directly from live database
+  if (/add-?ons?|upgrade|candy buffet|chocolate fountain|emcee|host|dessert station/i.test(inputLower) && !/recommend|pax|guest|budget/i.test(inputLower)) {
+    const addonsList = liveAddons.length > 0
+      ? liveAddons.map((a) => `• **${a.name}**: ₱${Number(a.price).toLocaleString()} (${a.rate_type === 'per_head' ? 'per head' : 'flat rate'})${a.description ? ` — *${a.description}*` : ''}`).join('\n')
+      : '• Chocolate Fountain & Candy Buffet: ₱1,500 flat\n• Party Emcee & Games Host: ₱2,000 flat\n• Assorted Dessert Station: ₱1,000 flat\n• Extra Main Course: ₱100 / pax\n• Extra Pasta Course: ₱80 / pax\n• Extra Dessert Course: ₱50 / pax'
+
+    return {
+      text: `Mabuhay! Here are our available **Add-ons & Enhancement Stations** to elevate your celebration:\n\n` +
+        `${addonsList}\n\n` +
+        `You can easily bundle any of these stations into your package during booking or ask me to include them in your quote!`,
+      escalate: false,
+      isLiveApi: false,
+    }
+  }
+
+  // 3. FAQ: Refund & Cancellation Policy
   if (/refund|cancell?ation|cancel|rebook|resched/i.test(inputLower)) {
     return {
       text: `Mabuhay! Here is Sinag Catering's official **Cancellation & Refund Policy**:\n\n` +
@@ -125,7 +202,7 @@ export const generateLocalAIResponse = (input: string, livePackages: CateringPac
     }
   }
 
-  // 2. FAQ: Payment Terms, Downpayment
+  // 4. FAQ: Payment Terms, Downpayment
   if (/downpayment|payment|deposit|gcash|maribank|how to pay|terms of payment/i.test(inputLower) && !/recommend|package|pax|guest|budget/i.test(inputLower)) {
     return {
       text: `Mabuhay! Here are our official **Payment & Reservation Terms**:\n\n` +
@@ -138,7 +215,7 @@ export const generateLocalAIResponse = (input: string, livePackages: CateringPac
     }
   }
 
-  // 3. FAQ: Lead Time
+  // 5. FAQ: Lead Time
   if (/lead time|advance|notice|how early|how many days/i.test(inputLower) && !/recommend|package/i.test(inputLower)) {
     return {
       text: `Mabuhay! We require a **minimum of 14 days advance notice** for all catering bookings.\n\n` +
@@ -148,7 +225,7 @@ export const generateLocalAIResponse = (input: string, livePackages: CateringPac
     }
   }
 
-  // 4. FAQ: Location / Contact Info
+  // 6. FAQ: Location / Contact Info
   if (/where|location|address|contact|phone|call|situated|based/i.test(inputLower) && !/recommend|package/i.test(inputLower)) {
     return {
       text: `Mabuhay! We are based in **Baliwag, Bulacan, Philippines** and cater celebrations across Bulacan and adjacent provinces.\n\n` +
@@ -188,7 +265,7 @@ export const generateLocalAIResponse = (input: string, livePackages: CateringPac
 
   // BUDGET MAXIMIZER UPSELL LOGIC:
   // When a user specifies a target budget that exceeds standard base tier, bundle upgrades to reach budget cleanly
-  const baseCost = calculateTotalForPackage(chosenPkg, count, [], 0, 0, 0)
+  const baseCost = calculateTotalForPackage(chosenPkg, count, [], 0, 0, 0, liveAddons)
   const isBudgetMaximizerActive = Boolean(targetBudget && targetBudget > baseCost)
 
   let selectedAddons: string[] = []
@@ -212,7 +289,7 @@ export const generateLocalAIResponse = (input: string, livePackages: CateringPac
     extraPasta = /extra pasta/i.test(inputLower) ? 1 : 0
   }
 
-  const total = calculateTotalForPackage(chosenPkg, count, selectedAddons, extraMain, extraPasta, extraDessert)
+  const total = calculateTotalForPackage(chosenPkg, count, selectedAddons, extraMain, extraPasta, extraDessert, liveAddons)
   const downpayment = Math.round(total * 0.5)
 
   const formData: AIFormData = {
@@ -276,13 +353,27 @@ export const querySinagAI = async (
   userInput: string,
   history: { role: 'user' | 'assistant'; content: string }[] = [],
 ): Promise<AIResponse> => {
-  // 1. Fetch live packages from Supabase DB to ensure chatbot uses current DB data
+  // 1. Fetch live packages, menu items, and add-ons from Supabase DB to ensure chatbot uses current DB data
   let currentPackages: CateringPackage[] = []
+  let liveMenuItems: any[] = []
+  let liveAddons: any[] = []
+
   if (supabase) {
     try {
-      const { data: dbPackages } = await supabase.from('packages').select('*')
-      if (dbPackages && dbPackages.length > 0) {
-        currentPackages = dbPackages.map(mapDatabasePackage)
+      const [pkgsRes, menuRes, addonsRes] = await Promise.all([
+        supabase.from('packages').select('*'),
+        supabase.from('menu_items').select('*').eq('active', true).order('sort_order', { ascending: true }),
+        supabase.from('package_addons').select('*'),
+      ])
+
+      if (pkgsRes.data && pkgsRes.data.length > 0) {
+        currentPackages = pkgsRes.data.map(mapDatabasePackage)
+      }
+      if (menuRes.data && menuRes.data.length > 0) {
+        liveMenuItems = menuRes.data
+      }
+      if (addonsRes.data && addonsRes.data.length > 0) {
+        liveAddons = addonsRes.data
       }
     } catch { /* The assistant will request a verified manual quotation. */ }
   }
@@ -296,11 +387,57 @@ export const querySinagAI = async (
     try {
       const packageCatalogDescription = currentPackages.map((p) => {
         const tierSummary = p.tiers.map((t) => `${t.pax} pax: PHP ${t.price.toLocaleString()}`).join(', ')
-        return `[ID: ${p.id}] "${p.name}": Tiers (${tierSummary}). Excess pax: +PHP 700/pax with 10 buffer pax. Menu: ${p.inclusions.join(', ')}. Entertainment: ${p.entertainment.join(', ') || 'None'}.`
-      }).join('\n')
+        return `• [Package ID: "${p.id}"] "${p.name}":
+  - Tiers: ${tierSummary}
+  - Inclusions: ${p.inclusions.join(', ')}
+  - Entertainment: ${p.entertainment.length > 0 ? p.entertainment.join(', ') : 'None'}
+  - Freebies: ${p.freebies.length > 0 ? p.freebies.join(', ') : 'None'}
+  - Excess Guest Buffer Rate: +PHP 700 per excess guest beyond tier capacity (with 10 buffer pax included).`
+      }).join('\n\n')
 
-      const systemPrompt = `You are Sinag Catering's warm, expert AI Concierge based in Baliwag, Bulacan.
+      const mainDishes = liveMenuItems.filter((m) => m.category === 'main').map((m) => `${m.name}${m.description ? ` (${m.description})` : ''}`).join(', ')
+      const pastaDishes = liveMenuItems.filter((m) => m.category === 'pasta').map((m) => `${m.name}${m.description ? ` (${m.description})` : ''}`).join(', ')
+      const drinkOptions = liveMenuItems.filter((m) => m.category === 'drink').map((m) => `${m.name}${m.description ? ` (${m.description})` : ''}`).join(', ')
+
+      const menuCatalogDescription = `LIVE DATABASE MENU ITEMS (Active in Kitchen):
+- Main Dishes: ${mainDishes || 'Beef Broccoli, Chicken Cordon Bleu, Lumpiang Shanghai, Sweet and Sour Pork'}
+- Pasta Courses: ${pastaDishes || 'Baked Macaroni, Creamy Carbonara, Classic Sweet Filipino Spaghetti'}
+- Beverage Selections: ${drinkOptions || 'Blue Lemonade, Cucumber Lemonade, Classic Red Iced Tea'}`
+
+      const addonsCatalogDescription = liveAddons.length > 0
+        ? liveAddons.map((a) => `• [ID: "${a.id}"] "${a.name}": PHP ${Number(a.price).toLocaleString()} (${a.rate_type === 'per_head' ? 'per head / guest' : 'flat rate'})${a.description ? ` - ${a.description}` : ''}`).join('\n')
+        : `- Extra Main Dish Course: PHP 100 per head (up to 3 extra main dishes)
+- Extra Gourmet Pasta Station: PHP 80 per head (up to 2 extra pasta courses)
+- Extra Sweet Dessert Course: PHP 50 per head (up to 2 extra dessert courses)
+- Chocolate Fountain & Candy Buffet (ADD-CANDY-01): PHP 1,500 flat
+- Party Emcee & Games Host (ADD-HOST-02): PHP 2,000 flat
+- Assorted Dessert Station (ADD-DESSERT-03): PHP 1,000 flat`
+
+      const systemPrompt = `You are Sinag Catering's warm, expert AI Concierge based in Baliwag, Bulacan, Philippines.
 Your role: Provide authentic Filipino hospitality, answer questions accurately according to official policies, and recommend celebration packages when clients inquire about planning or pricing an event.
+
+=======================================================
+STRICT DOMAIN SCOPE & ANTI-NONSENSE GUARDRAIL (CRITICAL):
+=======================================================
+1. SOLE CONVERSATION PURPOSE:
+   You represent Sinag Catering in Baliwag, Bulacan. You must ONLY answer questions strictly regarding:
+   - Sinag Catering packages, tiers, and pricing.
+   - Menu selections (dishes, pasta, drinks from the database).
+   - Event types (birthdays, weddings, debuts, corporate/family banquets).
+   - Booking procedure, 50% downpayment, QR Ph / GCash / MariBank payments.
+   - Lead time (minimum 14 days), location in Baliwag Bulacan, date rescheduling, and cancellation/refund policy.
+2. ABSOLUTE PROHIBITION ON UNRELATED & NONSENSICAL QUERIES:
+   DO NOT answer questions or entertain topics outside of catering and our event services.
+   Examples of off-topic queries to DECLINE:
+   - General knowledge or trivia (e.g. "What is the capital of Japan?", "Who discovered gravity?")
+   - Coding, programming, software, or technical questions (e.g. "Write code in React", "How to write Python")
+   - Mathematics, calculations, homework (unless computing catering guest count or event budget)
+   - Politics, news, religion, philosophy, medical advice, other businesses (e.g. motor shops)
+   - Chit-chat about movies, games, or random nonsensical banter / gibberish
+3. MANDATORY REFUSAL & REDIRECTION FOR UNRELATED TOPICS:
+   Whenever the user asks an unrelated or nonsensical question, DO NOT answer their question. Instead, respond politely:
+   "Mabuhay! I am Sinag Catering's AI Concierge, specifically dedicated to assisting you with our catering packages, menu selections, event dates, pricing, and reservations in Baliwag, Bulacan. How can I help you plan your celebration today?"
+   Always set "form_data": null when refusing off-topic or nonsense queries.
 
 OFFICIAL POLICIES & BUSINESS RULES:
 1. Cancellation & Refund Policy:
@@ -318,18 +455,13 @@ OFFICIAL POLICIES & BUSINESS RULES:
    - Baliwag, Bulacan, Philippines.
    - Hotline & GCash / MariBank: 0928 714 4597.
 
-Official Packages Database:
+LIVE DATABASE PACKAGES:
 ${packageCatalogDescription}
 
-Official Add-ons & Upgrades Catalog:
-- EXTRA MAIN COURSES: +PHP 100 per guest (Cap: up to 3 extra main dishes).
-- EXTRA PASTA COURSES: +PHP 80 per guest (Cap: up to 2 extra pasta dishes).
-- EXTRA DESSERT COURSES: +PHP 50 per guest (Cap: up to 2 extra dessert courses).
-- FLAT-RATE CELEBRATION STATIONS:
-  * ADD-CANDY-01: Chocolate Fountain & Candy Buffet (PHP 1,500 flat)
-  * ADD-HOST-02: Party Emcee & Games Host (PHP 2,000 flat)
-  * ADD-DESSERT-03: Assorted Dessert Station (PHP 1,000 flat)
-- EXCESS GUEST BUFFER FEE: +PHP 700 per excess guest beyond capacity (+10 food buffer pax).
+${menuCatalogDescription}
+
+LIVE DATABASE ADD-ONS & UPGRADES:
+${addonsCatalogDescription}
 
 CONTEXT-AWARE EVENT CLASSIFICATION:
 Classify the event into one of the 4 official Sinag categories:
@@ -345,7 +477,7 @@ When the user specifies a high target budget (e.g., wanting to spend an exact up
 - Intelligently bundle the base package with recommended upgrades to cleanly reach their target budget:
   1. Recommend the flagship 'Full Blast' (or highest tier package for their guest count).
   2. Bundle maximum extra courses: extra_main_count (up to 3), extra_pasta_count (up to 2), extra_dessert_count (up to 2).
-  3. Bundle all flat celebration enhancements (ADD-CANDY-01, ADD-HOST-02, ADD-DESSERT-03).
+  3. Bundle available celebration enhancements from the live add-ons list.
   4. If a remaining budget surplus exists (e.g., target PHP 150,000 vs calculated bundle), explain that the remaining balance covers Bespoke Thematic Stage & Ceiling Styling, Professional Sound & Lighting, and VIP Floral Centerpieces.
   5. Provide a clear, enthusiastic itemized breakdown showing how each upgrade elevates their event to luxury banquet standards.
   6. In "form_data", accurately set "extra_main_count", "extra_pasta_count", "extra_dessert_count", "addons", "event_type", and "notes" so the user can click "Auto-Fill Booking Wizard with AI Plan" to immediately load the entire maximized package into the booking wizard!
@@ -384,20 +516,34 @@ OR if recommending a package:
         { role: 'user', parts: [{ text: userInput }] },
       ]
 
-      const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: conversationContents,
-          generationConfig: {
-            responseMimeType: 'application/json',
-            temperature: 0.3,
-          },
-        }),
-      })
+      const candidateModels = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.8-flash']
+      let geminiRes: Response | null = null
 
-      if (geminiRes.ok) {
+      for (const model of candidateModels) {
+        try {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(6000),
+            body: JSON.stringify({
+              systemInstruction: { parts: [{ text: systemPrompt }] },
+              contents: conversationContents,
+              generationConfig: {
+                responseMimeType: 'application/json',
+                temperature: 0.3,
+              },
+            }),
+          })
+          if (res.ok) {
+            geminiRes = res
+            break
+          }
+        } catch {
+          // try next model candidate
+        }
+      }
+
+      if (geminiRes && geminiRes.ok) {
         const geminiData = await geminiRes.json()
         const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text
         if (text) {
@@ -416,7 +562,7 @@ OR if recommending a package:
             const extraPasta = Number(rawForm.extra_pasta_count) || 0
             const extraDessert = Number(rawForm.extra_dessert_count) || 0
 
-            const exactTotal = calculateTotalForPackage(chosenPkg, guestCount, addons, extraMain, extraPasta, extraDessert)
+            const exactTotal = calculateTotalForPackage(chosenPkg, guestCount, addons, extraMain, extraPasta, extraDessert, liveAddons)
 
             const formData: AIFormData = {
               package_id: chosenPkg.id,
@@ -455,5 +601,5 @@ OR if recommending a package:
   }
 
   // 3. Graceful offline / fallback engine
-  return generateLocalAIResponse(userInput, currentPackages)
+  return generateLocalAIResponse(userInput, currentPackages, liveMenuItems, liveAddons)
 }

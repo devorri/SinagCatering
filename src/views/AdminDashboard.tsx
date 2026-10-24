@@ -23,7 +23,6 @@ import {
   Check,
   CheckCircle2,
   Clock,
-  KeyRound,
   Printer,
   ArrowUpDown,
   ArrowUp,
@@ -39,6 +38,9 @@ import {
   ChevronsLeft,
   ChevronsRight,
   User as UserIcon,
+  UtensilsCrossed,
+  TrendingUp,
+  BarChart3,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useConfirm } from '../context/ConfirmContext'
@@ -51,8 +53,9 @@ import {
 import { formatMoney } from '../data/packages'
 import { ForgotPasswordModal } from '../components/ForgotPasswordModal'
 import { UserProfileModal } from '../components/UserProfileModal'
+import { AdminCatalogManager } from '../components/AdminCatalogManager'
 
-type AdminTabType = 'analytics' | 'bookings' | 'calendar' | 'staff' | 'reviews' | 'inquiries' | 'notifications'
+type AdminTabType = 'analytics' | 'bookings' | 'calendar' | 'staff' | 'reviews' | 'inquiries' | 'notifications' | 'catalog'
 
 interface AdminDashboardProps {
   onLogout?: () => void
@@ -475,6 +478,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [isSendingTestSms, setIsSendingTestSms] = useState(false)
   const [testSmsStatus, setTestSmsStatus] = useState('')
 
+  // Sales & Revenue Performance Report State (Day, Week, Month, Annual with Date Picker)
+  const [salesPeriod, setSalesPeriod] = useState<'day' | 'week' | 'month' | 'annual'>('month')
+  const [salesExactDate, setSalesExactDate] = useState<string>('')
+  const [salesExactMonth, setSalesExactMonth] = useState<string>('')
+  const [salesExactYear, setSalesExactYear] = useState<string>('')
+  const [salesSort, setSalesSort] = useState<'date-desc' | 'date-asc' | 'revenue-desc' | 'revenue-asc'>('date-desc')
+  const [salesStatusFilter, setSalesStatusFilter] = useState<'all' | 'confirmed' | 'pending'>('all')
+  const [salesReportPage, setSalesReportPage] = useState<number>(1)
+  const [salesReportPageSize, setSalesReportPageSize] = useState<number>(10)
+
+  const availableSalesYears = useMemo(() => {
+    const yrs = Array.from(new Set(bookings.map((b) => (b.eventDate || '').slice(0, 4)).filter(Boolean)))
+    return yrs.sort().reverse()
+  }, [bookings])
+
+  const availableSalesMonths = useMemo(() => {
+    const mos = Array.from(new Set(bookings.map((b) => (b.eventDate || '').slice(0, 7)).filter(Boolean)))
+    return mos.sort().reverse()
+  }, [bookings])
+
+
   useEffect(() => {
     const handleNotifUpdate = () => {
       setNotificationLogs(getNotificationLogs())
@@ -571,8 +595,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         totalGuests += b.guestCount
       }
 
-      // Package stats
-      packageStats[b.packageName] = (packageStats[b.packageName] || 0) + 1
+      // Package stats - normalize package names to remove "Kids" for general catering
+      const cleanPkgName = (b.packageName || 'Standard Package')
+        .replace(/\bKids\s*(Party\s*)?/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+      packageStats[cleanPkgName] = (packageStats[cleanPkgName] || 0) + 1
     })
 
     let popularPackageName = 'None'
@@ -615,6 +643,301 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       totalBookings: bookings.length,
     }
   }, [bookings])
+
+  // Aggregated Sales & Performance Analytics (Day / Week / Month / Annual with Date Picker)
+  const salesReportData = useMemo(() => {
+    let filtered = [...bookings]
+    if (salesStatusFilter === 'confirmed') {
+      filtered = filtered.filter(b => b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed')
+    } else if (salesStatusFilter === 'pending') {
+      filtered = filtered.filter(b => b.bookingStatus === 'pending')
+    }
+
+    let activeFilterLabel = ''
+
+    // Helper functions for timezone-safe date math
+    const parseLocalDate = (dateStr: string) => {
+      const parts = (dateStr || '').split('-').map(Number)
+      return new Date(parts[0] || 2026, (parts[1] || 1) - 1, parts[2] || 1)
+    }
+
+    const formatLocalDate = (dt: Date) => {
+      const yy = dt.getFullYear()
+      const mm = String(dt.getMonth() + 1).padStart(2, '0')
+      const dd = String(dt.getDate()).padStart(2, '0')
+      return `${yy}-${mm}-${dd}`
+    }
+
+    // 1. Day View Filter
+    if (salesPeriod === 'day') {
+      if (salesExactDate) {
+        filtered = filtered.filter(b => b.eventDate === salesExactDate)
+        try {
+          const dt = parseLocalDate(salesExactDate)
+          activeFilterLabel = dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+        } catch {
+          activeFilterLabel = salesExactDate
+        }
+      }
+    }
+    // 2. Week View Filter
+    else if (salesPeriod === 'week') {
+      if (salesExactDate) {
+        try {
+          const dt = parseLocalDate(salesExactDate)
+          const day = dt.getDay()
+          const diff = dt.getDate() - day + (day === 0 ? -6 : 1)
+          const mon = new Date(dt.getFullYear(), dt.getMonth(), diff)
+          const sun = new Date(mon)
+          sun.setDate(mon.getDate() + 6)
+          const startStr = formatLocalDate(mon)
+          const endStr = formatLocalDate(sun)
+
+          filtered = filtered.filter(b => (b.eventDate || '') >= startStr && (b.eventDate || '') <= endStr)
+          activeFilterLabel = `${mon.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${sun.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+        } catch {
+          activeFilterLabel = salesExactDate
+        }
+      }
+    }
+    // 3. Month View Filter
+    else if (salesPeriod === 'month') {
+      if (salesExactMonth) {
+        filtered = filtered.filter(b => (b.eventDate || '').startsWith(salesExactMonth))
+        try {
+          const [yr, mo] = salesExactMonth.split('-').map(Number)
+          const dt = new Date(yr, mo - 1, 1)
+          activeFilterLabel = dt.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+        } catch {
+          activeFilterLabel = salesExactMonth
+        }
+      }
+    }
+    // 4. Annual View Filter
+    else if (salesPeriod === 'annual') {
+      if (salesExactYear) {
+        filtered = filtered.filter(b => (b.eventDate || '').startsWith(salesExactYear))
+        activeFilterLabel = `Year ${salesExactYear}`
+      }
+    }
+
+    const buckets: Record<string, {
+      periodKey: string
+      periodLabel: string
+      shortLabel: string
+      totalRevenue: number
+      downpaymentCollected: number
+      uncollectedBalance: number
+      bookingsCount: number
+      guestsCount: number
+      items: Booking[]
+    }> = {}
+
+    // Pre-populate chart intervals for chosen periods to give full comparative context
+    if (salesPeriod === 'week' && salesExactDate) {
+      try {
+        const dt = parseLocalDate(salesExactDate)
+        const day = dt.getDay()
+        const diff = dt.getDate() - day + (day === 0 ? -6 : 1)
+        const mon = new Date(dt.getFullYear(), dt.getMonth(), diff)
+        for (let i = 0; i < 7; i++) {
+          const cur = new Date(mon)
+          cur.setDate(mon.getDate() + i)
+          const dayKey = formatLocalDate(cur)
+          const dayLabel = cur.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+          const short = cur.toLocaleDateString('en-US', { weekday: 'short' })
+          buckets[dayKey] = {
+            periodKey: dayKey,
+            periodLabel: dayLabel,
+            shortLabel: short,
+            totalRevenue: 0,
+            downpaymentCollected: 0,
+            uncollectedBalance: 0,
+            bookingsCount: 0,
+            guestsCount: 0,
+            items: [],
+          }
+        }
+      } catch {
+        // continue
+      }
+    } else if (salesPeriod === 'annual' && salesExactYear) {
+      const yrNum = Number(salesExactYear) || 2026
+      for (let m = 1; m <= 12; m++) {
+        const moKey = `${yrNum}-${String(m).padStart(2, '0')}`
+        const moDate = new Date(yrNum, m - 1, 1)
+        const moLabel = moDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+        const short = moDate.toLocaleDateString('en-US', { month: 'short' })
+        buckets[moKey] = {
+          periodKey: moKey,
+          periodLabel: moLabel,
+          shortLabel: short,
+          totalRevenue: 0,
+          downpaymentCollected: 0,
+          uncollectedBalance: 0,
+          bookingsCount: 0,
+          guestsCount: 0,
+          items: [],
+        }
+      }
+    }
+
+    filtered.forEach((b) => {
+      const d = b.eventDate || '2026-01-01'
+      let key = ''
+      let label = ''
+      let shortLabel = ''
+
+      if (salesPeriod === 'day') {
+        key = d
+        try {
+          const parsed = parseLocalDate(d)
+          label = parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+          shortLabel = parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        } catch {
+          label = d
+          shortLabel = d
+        }
+      } else if (salesPeriod === 'week') {
+        if (salesExactDate) {
+          // If a week is chosen, bucket by day of that week
+          key = d
+          try {
+            const parsed = parseLocalDate(d)
+            label = parsed.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+            shortLabel = parsed.toLocaleDateString('en-US', { weekday: 'short' })
+          } catch {
+            label = d
+            shortLabel = d
+          }
+        } else {
+          try {
+            const parsed = parseLocalDate(d)
+            const day = parsed.getDay()
+            const diff = parsed.getDate() - day + (day === 0 ? -6 : 1)
+            const mon = new Date(parsed.getFullYear(), parsed.getMonth(), diff)
+            key = formatLocalDate(mon)
+            const sun = new Date(mon)
+            sun.setDate(mon.getDate() + 6)
+            label = `${mon.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${sun.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+            shortLabel = `${mon.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+          } catch {
+            key = d
+            label = d
+            shortLabel = d
+          }
+        }
+      } else if (salesPeriod === 'month') {
+        if (salesExactMonth) {
+          // If a month is chosen, bucket by day of that month
+          key = d
+          try {
+            const parsed = parseLocalDate(d)
+            label = parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            shortLabel = `Day ${parsed.getDate()}`
+          } catch {
+            label = d
+            shortLabel = d
+          }
+        } else {
+          key = d.slice(0, 7)
+          try {
+            const [yr, mo] = key.split('-').map(Number)
+            const parsed = new Date(yr, mo - 1, 1)
+            label = parsed.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+            shortLabel = parsed.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+          } catch {
+            label = key
+            shortLabel = key
+          }
+        }
+      } else {
+        if (salesExactYear) {
+          key = d.slice(0, 7)
+          try {
+            const [yr, mo] = key.split('-').map(Number)
+            const parsed = new Date(yr, mo - 1, 1)
+            label = parsed.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+            shortLabel = parsed.toLocaleDateString('en-US', { month: 'short' })
+          } catch {
+            label = key
+            shortLabel = key
+          }
+        } else {
+          key = d.slice(0, 4)
+          label = `Year ${key}`
+          shortLabel = key
+        }
+      }
+
+      if (!buckets[key]) {
+        buckets[key] = {
+          periodKey: key,
+          periodLabel: label,
+          shortLabel,
+          totalRevenue: 0,
+          downpaymentCollected: 0,
+          uncollectedBalance: 0,
+          bookingsCount: 0,
+          guestsCount: 0,
+          items: [],
+        }
+      }
+
+      const total = Number(b.totalPrice) || 0
+      const dp = b.paymentStatus === 'fully_paid'
+        ? total
+        : b.paymentStatus === 'downpayment_paid'
+        ? (Number(b.downpaymentAmount) || Math.round(total * 0.5))
+        : 0
+      const uncollected = Math.max(0, total - dp)
+
+      buckets[key].totalRevenue += total
+      buckets[key].downpaymentCollected += dp
+      buckets[key].uncollectedBalance += uncollected
+      buckets[key].bookingsCount += 1
+      buckets[key].guestsCount += Number(b.guestCount) || 0
+      buckets[key].items.push(b)
+    })
+
+    const sortedBuckets = Object.values(buckets).sort((a, b) => {
+      if (salesSort === 'date-desc') return b.periodKey.localeCompare(a.periodKey)
+      if (salesSort === 'date-asc') return a.periodKey.localeCompare(b.periodKey)
+      if (salesSort === 'revenue-desc') return b.totalRevenue - a.totalRevenue
+      if (salesSort === 'revenue-asc') return a.totalRevenue - b.totalRevenue
+      return 0
+    })
+
+    const grandTotalRevenue = filtered.reduce((sum, b) => sum + (Number(b.totalPrice) || 0), 0)
+    const grandCollected = filtered.reduce((sum, b) => {
+      const tot = Number(b.totalPrice) || 0
+      return sum + (b.paymentStatus === 'fully_paid' ? tot : b.paymentStatus === 'downpayment_paid' ? (Number(b.downpaymentAmount) || Math.round(tot * 0.5)) : 0)
+    }, 0)
+    const grandUncollected = Math.max(0, grandTotalRevenue - grandCollected)
+    const grandBookings = filtered.length
+    const grandGuests = filtered.reduce((sum, b) => sum + (Number(b.guestCount) || 0), 0)
+    const avgPerEvent = grandBookings > 0 ? Math.round(grandTotalRevenue / grandBookings) : 0
+
+    const sortedItems = [...filtered].sort((a, b) => {
+      if (salesSort === 'date-desc') return (b.eventDate || '').localeCompare(a.eventDate || '')
+      if (salesSort === 'date-asc') return (a.eventDate || '').localeCompare(b.eventDate || '')
+      if (salesSort === 'revenue-desc') return b.totalPrice - a.totalPrice
+      if (salesSort === 'revenue-asc') return a.totalPrice - b.totalPrice
+      return 0
+    })
+
+    return {
+      buckets: sortedBuckets,
+      grandTotalRevenue,
+      grandCollected,
+      grandUncollected,
+      grandBookings,
+      grandGuests,
+      avgPerEvent,
+      items: sortedItems,
+      activeFilterLabel,
+    }
+  }, [bookings, salesPeriod, salesExactDate, salesExactMonth, salesExactYear, salesSort, salesStatusFilter])
 
   const getStaffRecommendation = (guestCount: number) => {
     const scale = guestCount / 100
@@ -970,23 +1293,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
               Unlock Executive Workspace <ShieldCheck size={18} />
             </button>
           </form>
-
-          <div className="demo-login-bar" style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #E2E8F0' }}>
-            <span style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#94A3B8' }}>
-              Quick Autofill:
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('admin@sinagcatering.ph')
-                setPassword('admin123')
-              }}
-              className="btn-demo-chip"
-              style={{ width: '100%', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-            >
-              <KeyRound size={14} /> Autofill Admin Credentials
-            </button>
-          </div>
         </div>
 
         <ForgotPasswordModal
@@ -1015,6 +1321,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       {
         group: 'OPERATIONS',
         items: [
+          { id: 'catalog', label: 'Menu & Pricing', icon: <UtensilsCrossed size={18} /> },
           { id: 'staff', label: 'Staff Roster', icon: <Users size={18} />, badge: staff.length },
           { id: 'reviews', label: 'Reviews Moderation', icon: <Star size={18} />, badge: reviews.length },
         ],
@@ -1200,6 +1507,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   ? 'Reviews & Moderation'
                   : activeTab === 'inquiries'
                   ? 'Customer Inquiries'
+                  : activeTab === 'catalog'
+                  ? 'Packages & Menu Catalog'
                   : 'Notifications & Activity Hub'}
               </h1>
               <p className="lede">
@@ -1364,6 +1673,574 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         </>
                       )
                     })()}
+                  </div>
+                </div>
+              </div>
+
+              {/* Sales & Financial Revenue Performance Report (Day / Week / Month / Annual with Date Picker) */}
+              <div className="admin-chart-card" style={{ marginTop: '24px' }}>
+                <div className="admin-chart-header" style={{ flexWrap: 'wrap', gap: '16px', alignItems: 'flex-start' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <TrendingUp size={20} style={{ color: '#0F172A' }} />
+                      <h3 className="admin-chart-title">Sales & Financial Performance Report</h3>
+                    </div>
+                    <p className="admin-chart-subtitle">
+                      Periodic sales analysis, downpayment collections, and event financial summaries.
+                    </p>
+                  </div>
+
+                  {/* Period Switcher, Date Picker & Sorting Controls */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    {/* Period Pills: Daily | Weekly | Monthly | Annual */}
+                    <div className="admin-filter-bar">
+                      {(['day', 'week', 'month', 'annual'] as const).map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          className={`admin-filter-pill ${salesPeriod === p ? 'active' : ''}`}
+                          onClick={() => {
+                            setSalesPeriod(p)
+                            setSalesReportPage(1)
+                          }}
+                          style={{ textTransform: 'capitalize' }}
+                        >
+                          {p === 'day' ? 'Daily' : p === 'week' ? 'Weekly' : p === 'month' ? 'Monthly' : 'Annual'}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Exact Date Picker by View Period */}
+                    {salesPeriod === 'day' && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <input
+                          type="date"
+                          className="admin-sort-select"
+                          value={salesExactDate}
+                          onChange={(e) => {
+                            setSalesExactDate(e.target.value)
+                            setSalesReportPage(1)
+                          }}
+                          style={{ fontSize: '0.8rem', padding: '6px 10px' }}
+                          title="Choose exact event date"
+                        />
+                        <button
+                          type="button"
+                          className="btn-action-view"
+                          style={{ padding: '6px 10px', fontSize: '0.78rem' }}
+                          onClick={() => {
+                            const now = new Date()
+                            const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+                            setSalesExactDate(todayStr)
+                            setSalesReportPage(1)
+                          }}
+                        >
+                          Today
+                        </button>
+                        {salesExactDate && (
+                          <button
+                            type="button"
+                            className="btn-action-view"
+                            style={{ padding: '6px 10px', fontSize: '0.78rem' }}
+                            onClick={() => {
+                              setSalesExactDate('')
+                              setSalesReportPage(1)
+                            }}
+                            title="Clear date filter to view all days"
+                          >
+                            All Days
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {salesPeriod === 'week' && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <input
+                          type="date"
+                          className="admin-sort-select"
+                          value={salesExactDate}
+                          onChange={(e) => {
+                            setSalesExactDate(e.target.value)
+                            setSalesReportPage(1)
+                          }}
+                          style={{ fontSize: '0.8rem', padding: '6px 10px' }}
+                          title="Pick any date in target week"
+                        />
+                        <button
+                          type="button"
+                          className="btn-action-view"
+                          style={{ padding: '6px 10px', fontSize: '0.78rem' }}
+                          onClick={() => {
+                            const now = new Date()
+                            const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+                            setSalesExactDate(todayStr)
+                            setSalesReportPage(1)
+                          }}
+                        >
+                          This Week
+                        </button>
+                        {salesExactDate && (
+                          <button
+                            type="button"
+                            className="btn-action-view"
+                            style={{ padding: '6px 10px', fontSize: '0.78rem' }}
+                            onClick={() => {
+                              setSalesExactDate('')
+                              setSalesReportPage(1)
+                            }}
+                            title="Clear week filter to view all weeks"
+                          >
+                            All Weeks
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {salesPeriod === 'month' && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <select
+                          className="admin-sort-select"
+                          value={salesExactMonth}
+                          onChange={(e) => {
+                            setSalesExactMonth(e.target.value)
+                            setSalesReportPage(1)
+                          }}
+                          style={{ fontSize: '0.8rem', padding: '6px 10px' }}
+                        >
+                          <option value="">All Months</option>
+                          {availableSalesMonths.map((mo) => {
+                            const [yr, m] = mo.split('-').map(Number)
+                            const dt = new Date(yr, m - 1, 1)
+                            return (
+                              <option key={mo} value={mo}>
+                                {dt.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                              </option>
+                            )
+                          })}
+                        </select>
+                        <input
+                          type="month"
+                          className="admin-sort-select"
+                          value={salesExactMonth}
+                          onChange={(e) => {
+                            setSalesExactMonth(e.target.value)
+                            setSalesReportPage(1)
+                          }}
+                          style={{ fontSize: '0.8rem', padding: '6px 8px' }}
+                          title="Custom month picker"
+                        />
+                        {salesExactMonth && (
+                          <button
+                            type="button"
+                            className="btn-action-view"
+                            style={{ padding: '6px 10px', fontSize: '0.78rem' }}
+                            onClick={() => {
+                              setSalesExactMonth('')
+                              setSalesReportPage(1)
+                            }}
+                            title="Clear month filter to view all months"
+                          >
+                            All Months
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {salesPeriod === 'annual' && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <select
+                          className="admin-sort-select"
+                          value={salesExactYear}
+                          onChange={(e) => {
+                            setSalesExactYear(e.target.value)
+                            setSalesReportPage(1)
+                          }}
+                          style={{ fontSize: '0.8rem', padding: '6px 10px' }}
+                        >
+                          <option value="">All Recorded Years</option>
+                          {availableSalesYears.map((yr) => (
+                            <option key={yr} value={yr}>
+                              Year {yr}
+                            </option>
+                          ))}
+                        </select>
+                        {salesExactYear && (
+                          <button
+                            type="button"
+                            className="btn-action-view"
+                            style={{ padding: '6px 10px', fontSize: '0.78rem' }}
+                            onClick={() => {
+                              setSalesExactYear('')
+                              setSalesReportPage(1)
+                            }}
+                            title="Clear year filter to view all years"
+                          >
+                            All Years
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Status Filter */}
+                    <select
+                      className="admin-sort-select"
+                      value={salesStatusFilter}
+                      onChange={(e) => {
+                        setSalesStatusFilter(e.target.value as any)
+                        setSalesReportPage(1)
+                      }}
+                      style={{ fontSize: '0.8rem', padding: '6px 10px' }}
+                    >
+                      <option value="all">All Bookings</option>
+                      <option value="confirmed">Confirmed / Paid Only</option>
+                      <option value="pending">Pending Only</option>
+                    </select>
+
+                    {/* Sort Order */}
+                    <select
+                      className="admin-sort-select"
+                      value={salesSort}
+                      onChange={(e) => setSalesSort(e.target.value as any)}
+                      style={{ fontSize: '0.8rem', padding: '6px 10px' }}
+                    >
+                      <option value="date-desc">Date (Newest First)</option>
+                      <option value="date-asc">Date (Oldest First)</option>
+                      <option value="revenue-desc">Sales (Highest First)</option>
+                      <option value="revenue-asc">Sales (Lowest First)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ padding: '24px' }}>
+                  {/* Active Filter Notification Pill */}
+                  {salesReportData.activeFilterLabel && (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      background: '#F8FAFC',
+                      border: '1px solid #E2E8F0',
+                      borderRadius: '8px',
+                      padding: '8px 14px',
+                      marginBottom: '16px',
+                      fontSize: '0.8rem',
+                      color: '#334155',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Calendar size={15} style={{ color: '#0F172A' }} />
+                        <span>
+                          Viewing sales for <strong>{salesPeriod.toUpperCase()}</strong>: <strong>{salesReportData.activeFilterLabel}</strong>
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSalesExactDate('')
+                          setSalesExactMonth('')
+                          setSalesExactYear('')
+                          setSalesReportPage(1)
+                        }}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#64748B',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          fontSize: '0.76rem',
+                          fontWeight: 600,
+                        }}
+                      >
+                        <X size={13} />
+                        Clear Filter
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Financial KPI Banner — Uniform Styling */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                    gap: '14px',
+                    marginBottom: '24px',
+                  }}>
+                    <div style={{
+                      background: '#FFFFFF',
+                      border: '1px solid #E2E8F0',
+                      borderTop: '3px solid #0F172A',
+                      borderRadius: '10px',
+                      padding: '16px 18px',
+                      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.03)',
+                    }}>
+                      <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        Period Total Sales
+                      </div>
+                      <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#0F172A', marginTop: '4px' }}>
+                        {formatMoney(salesReportData.grandTotalRevenue, 'PHP')}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: '#64748B', fontWeight: 500, marginTop: '4px' }}>
+                        Across {salesReportData.grandBookings} event reservations
+                      </div>
+                    </div>
+
+                    <div style={{
+                      background: '#FFFFFF',
+                      border: '1px solid #E2E8F0',
+                      borderTop: '3px solid #0F172A',
+                      borderRadius: '10px',
+                      padding: '16px 18px',
+                      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.03)',
+                    }}>
+                      <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        Collected Downpayments
+                      </div>
+                      <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#0F172A', marginTop: '4px' }}>
+                        {formatMoney(salesReportData.grandCollected, 'PHP')}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: '#64748B', fontWeight: 500, marginTop: '4px' }}>
+                        Secured funds in bank / GCash
+                      </div>
+                    </div>
+
+                    <div style={{
+                      background: '#FFFFFF',
+                      border: '1px solid #E2E8F0',
+                      borderTop: '3px solid #0F172A',
+                      borderRadius: '10px',
+                      padding: '16px 18px',
+                      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.03)',
+                    }}>
+                      <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        Receivable Balance
+                      </div>
+                      <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#0F172A', marginTop: '4px' }}>
+                        {formatMoney(salesReportData.grandUncollected, 'PHP')}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: '#64748B', fontWeight: 500, marginTop: '4px' }}>
+                        Due on or before event day
+                      </div>
+                    </div>
+
+                    <div style={{
+                      background: '#FFFFFF',
+                      border: '1px solid #E2E8F0',
+                      borderTop: '3px solid #0F172A',
+                      borderRadius: '10px',
+                      padding: '16px 18px',
+                      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.03)',
+                    }}>
+                      <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        Avg Spend / Event
+                      </div>
+                      <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#0F172A', marginTop: '4px' }}>
+                        {formatMoney(salesReportData.avgPerEvent, 'PHP')}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: '#64748B', fontWeight: 500, marginTop: '4px' }}>
+                        {salesReportData.grandGuests.toLocaleString()} total attendees
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Visual Periodic Sales Bar Chart — Uniform Styling */}
+                  <div style={{ marginBottom: '24px', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '18px 20px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', fontWeight: 700, color: '#0F172A' }}>
+                        <BarChart3 size={16} style={{ color: '#0F172A' }} />
+                        <span>Sales Distribution by {salesPeriod === 'day' ? 'Day' : salesPeriod === 'week' ? 'Week' : salesPeriod === 'month' ? 'Month' : 'Year'}</span>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', color: '#64748B' }}>
+                        {salesReportData.buckets.length} intervals recorded
+                      </span>
+                    </div>
+
+                    {/* Chart Bars */}
+                    {salesReportData.buckets.length === 0 ? (
+                      <div style={{ padding: '32px', textAlign: 'center', color: '#94A3B8' }}>
+                        No sales records found for this period filter.
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', minHeight: '160px', overflowX: 'auto', paddingBottom: '10px' }}>
+                        {salesReportData.buckets.slice(0, 16).map((b) => {
+                          const maxVal = Math.max(...salesReportData.buckets.map(bk => bk.totalRevenue), 1)
+                          const heightPct = b.totalRevenue > 0 ? Math.max(12, Math.round((b.totalRevenue / maxVal) * 100)) : 6
+                          return (
+                            <div
+                              key={b.periodKey}
+                              style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                flex: '1 0 54px',
+                                minWidth: '54px',
+                                maxWidth: '90px',
+                              }}
+                            >
+                              <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#0F172A', marginBottom: '4px', whiteSpace: 'nowrap' }}>
+                                {b.totalRevenue > 0 ? `₱${(b.totalRevenue / 1000).toFixed(0)}k` : '₱0'}
+                              </span>
+                              <div
+                                style={{
+                                  width: '100%',
+                                  height: `${heightPct * 1.2}px`,
+                                  maxHeight: '120px',
+                                  background: b.totalRevenue > 0 ? '#C2410C' : '#E2E8F0',
+                                  borderRadius: '6px 6px 2px 2px',
+                                  transition: 'all 0.3s ease',
+                                  cursor: 'pointer',
+                                }}
+                                title={`${b.periodLabel}: ${formatMoney(b.totalRevenue, 'PHP')} (${b.bookingsCount} events)`}
+                              />
+                              <span
+                                style={{
+                                  fontSize: '0.68rem',
+                                  color: '#334155',
+                                  fontWeight: 600,
+                                  marginTop: '6px',
+                                  textAlign: 'center',
+                                  whiteSpace: 'nowrap',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  maxWidth: '100%',
+                                }}
+                                title={b.periodLabel}
+                              >
+                                {b.shortLabel}
+                              </span>
+                              <span style={{ fontSize: '0.62rem', color: '#94A3B8', marginTop: '1px' }}>
+                                {b.bookingsCount} {b.bookingsCount === 1 ? 'event' : 'events'}
+                              </span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Detailed Sales Records Table — Uniform Styling */}
+                  <div className="table-responsive" style={{ border: '1px solid #E2E8F0', borderRadius: '10px', overflow: 'hidden' }}>
+                    <table className="admin-table">
+                      <thead>
+                        <tr>
+                          <th style={{ width: '18%' }}>EVENT DATE</th>
+                          <th style={{ width: '24%' }}>CLIENT & EVENT</th>
+                          <th style={{ width: '22%' }}>PACKAGE & GUESTS</th>
+                          <th style={{ width: '16%' }}>PAYMENT STATUS</th>
+                          <th style={{ width: '20%', textAlign: 'right' }}>REVENUE / COLLECTED</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {salesReportData.items.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} style={{ textAlign: 'center', padding: '32px', color: '#94A3B8' }}>
+                              No sales records found for this period filter.
+                            </td>
+                          </tr>
+                        ) : (
+                          salesReportData.items
+                            .slice((salesReportPage - 1) * salesReportPageSize, salesReportPage * salesReportPageSize)
+                            .map((b) => (
+                              <tr key={b.id} onClick={() => handleOpenBookingDetails(b)} style={{ cursor: 'pointer' }}>
+                                <td>
+                                  <div style={{ fontWeight: 700, color: '#0F172A', fontSize: '0.88rem' }}>{b.eventDate}</div>
+                                  <div style={{ fontSize: '0.74rem', color: '#64748B' }}>#{b.id}</div>
+                                </td>
+                                <td>
+                                  <div style={{ fontWeight: 600, color: '#1E293B' }}>{b.customerName}</div>
+                                  <div style={{ fontSize: '0.76rem', color: '#64748B' }}>
+                                    {b.eventType} · {b.phone}
+                                  </div>
+                                </td>
+                                <td>
+                                  <div style={{ fontWeight: 600, color: '#334155', fontSize: '0.84rem' }}>{b.packageName}</div>
+                                  <div style={{ fontSize: '0.74rem', color: '#64748B', fontWeight: 600 }}>
+                                    {b.guestCount} guests
+                                  </div>
+                                </td>
+                                <td>
+                                  <span style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    fontSize: '0.74rem',
+                                    fontWeight: 600,
+                                    color: '#334155',
+                                    background: '#F8FAFC',
+                                    border: '1px solid #E2E8F0',
+                                    padding: '3px 10px',
+                                    borderRadius: '12px',
+                                  }}>
+                                    <span style={{
+                                      width: '6px',
+                                      height: '6px',
+                                      borderRadius: '50%',
+                                      background: b.paymentStatus === 'fully_paid' ? '#10B981' : b.paymentStatus === 'downpayment_paid' ? '#D97706' : '#94A3B8',
+                                    }} />
+                                    {b.paymentStatus === 'fully_paid'
+                                      ? 'Fully Paid'
+                                      : b.paymentStatus === 'downpayment_paid'
+                                      ? 'Downpayment Paid'
+                                      : 'Unpaid / Pending'}
+                                  </span>
+                                </td>
+                                <td style={{ textAlign: 'right' }}>
+                                  <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '0.92rem' }}>
+                                    {formatMoney(b.totalPrice, 'PHP')}
+                                  </div>
+                                  <div style={{ fontSize: '0.74rem', color: '#64748B', fontWeight: 500 }}>
+                                    Paid: {formatMoney(b.paymentStatus === 'fully_paid' ? b.totalPrice : (b.downpaymentAmount || b.totalPrice * 0.5), 'PHP')}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Pagination & Page Size Control */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '0.78rem', color: '#64748B' }}>
+                        Showing {salesReportData.items.length === 0 ? 0 : Math.min((salesReportPage - 1) * salesReportPageSize + 1, salesReportData.items.length)} to {Math.min(salesReportPage * salesReportPageSize, salesReportData.items.length)} of {salesReportData.items.length} records
+                      </span>
+                      <select
+                        className="admin-sort-select"
+                        value={salesReportPageSize}
+                        onChange={(e) => {
+                          setSalesReportPageSize(Number(e.target.value))
+                          setSalesReportPage(1)
+                        }}
+                        style={{ fontSize: '0.74rem', padding: '3px 8px' }}
+                      >
+                        <option value={5}>5 per page</option>
+                        <option value={10}>10 per page</option>
+                        <option value={25}>25 per page</option>
+                        <option value={50}>50 per page</option>
+                      </select>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button
+                        type="button"
+                        className="btn-action-view"
+                        disabled={salesReportPage <= 1}
+                        onClick={() => setSalesReportPage(p => Math.max(1, p - 1))}
+                        style={{ opacity: salesReportPage <= 1 ? 0.5 : 1, padding: '4px 10px', fontSize: '0.76rem' }}
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-action-view"
+                        disabled={salesReportPage * salesReportPageSize >= salesReportData.items.length}
+                        onClick={() => setSalesReportPage(p => p + 1)}
+                        style={{ opacity: salesReportPage * salesReportPageSize >= salesReportData.items.length ? 0.5 : 1, padding: '4px 10px', fontSize: '0.76rem' }}
+                      >
+                        Next
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -3163,6 +4040,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                 </div>
               )}
             </div>
+          )}
+
+          {/* PACKAGES, MENU & ADDONS CATALOG MANAGER */}
+          {activeTab === 'catalog' && (
+            <AdminCatalogManager />
           )}
 
           {/* DOWNPAYMENT VERIFICATION & APPROVAL MODAL (Item 8) */}

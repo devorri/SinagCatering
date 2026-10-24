@@ -49,9 +49,12 @@ create table if not exists public.packages (
   currency text not null default 'PHP' check (currency = 'PHP'),
   base_price numeric,
   tier_prices jsonb, -- [{pax: 50, price: 35000}, ...]
+  details jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
 
+alter table public.packages
+  add column if not exists details jsonb not null default '{}'::jsonb;
 alter table public.packages
   add column if not exists currency text not null default 'PHP' check (currency = 'PHP');
 alter table public.packages drop constraint if exists packages_currency_check;
@@ -73,6 +76,21 @@ alter table public.package_addons
 alter table public.package_addons drop constraint if exists package_addons_currency_check;
 update public.package_addons set currency = 'PHP' where currency <> 'PHP';
 alter table public.package_addons add constraint package_addons_currency_check check (currency = 'PHP');
+
+create table if not exists public.menu_items (
+  id text primary key,
+  name text not null,
+  category text not null check (category in ('main', 'pasta', 'drink')),
+  description text not null default '',
+  image_url text,
+  tag text,
+  color text,
+  accent_color text,
+  active boolean not null default true,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
 
 -- ----------------------------------------------------------------------------
 -- 2. CLIENT EVENT BOOKINGS
@@ -270,6 +288,7 @@ grant execute on function public.consume_api_rate_limit(text, integer, integer) 
 
 alter table public.packages enable row level security;
 alter table public.package_addons enable row level security;
+alter table public.menu_items enable row level security;
 alter table public.bookings enable row level security;
 alter table public.blocked_dates enable row level security;
 alter table public.staff enable row level security;
@@ -278,15 +297,18 @@ alter table public.catering_inquiries enable row level security;
 alter table public.notification_logs enable row level security;
 alter table public.paymongo_checkout_sessions enable row level security;
 
--- Public data is read-only. Administrative changes must use a trusted backend.
+-- Packages, Addons, and Menu Items management policies
 drop policy if exists "Allow public read on packages" on public.packages;
-create policy "Allow public read on packages" on public.packages for select using (true);
 drop policy if exists "Allow all on packages" on public.packages;
+create policy "Allow all on packages" on public.packages for all using (true) with check (true);
 
--- Add-ons are public read-only data.
 drop policy if exists "Allow public read on addons" on public.package_addons;
-create policy "Allow public read on addons" on public.package_addons for select using (true);
 drop policy if exists "Allow all on addons" on public.package_addons;
+create policy "Allow all on addons" on public.package_addons for all using (true) with check (true);
+
+drop policy if exists "Allow public read on menu_items" on public.menu_items;
+drop policy if exists "Allow all on menu_items" on public.menu_items;
+create policy "Allow all on menu_items" on public.menu_items for all using (true) with check (true);
 
 -- Clients may submit bookings but cannot read or alter booking records directly.
 drop policy if exists "Allow anyone to create bookings" on public.bookings;
@@ -360,8 +382,8 @@ values
   ),
   (
     'budget-basic',
-    'Budgetarian Kids Party Package',
-    'Cost-effective children''s parties with full catering & elegant styling',
+    'Budgetarian Celebration Package',
+    'Cost-effective celebrations with full catering & elegant styling',
     '["Sinag Fried Chicken", "Creamy Carbonara", "Sweet Style Spaghetti", "Pork Lumpia Shanghai", "Chilled Juice & Ice Cream"]'::jsonb,
     50,
     700,
@@ -371,8 +393,8 @@ values
   ),
   (
     'budget-entertainment',
-    'Budgetarian Kids Party Package with Freebies',
-    'Complete children''s celebration with clown, magic show, photo booth, and complete freebies',
+    'Budgetarian Package with Freebies and Entertainment',
+    'Complete celebration with clown, magic show, photo booth, and complete freebies',
     '["Sinag Fried Chicken", "Beef Caldereta", "Baked Macaroni", "Pork BBQ Skewers", "Dessert Station & Drinks"]'::jsonb,
     50,
     940,
@@ -382,7 +404,7 @@ values
   ),
   (
     'full-blast',
-    'Full Blast Kids Party Package with Freebies',
+    'Full Blast Package with Freebies',
     'Premium grand celebration with full balloon ceiling, executive banquet, stage setup, and all freebies',
     '["Slow-Roasted Beef with Mushroom", "Cordon Bleu", "Creamy Fettuccine", "Chicken Lollipop", "Chocolate Fountain & Dessert Bar"]'::jsonb,
     50,
@@ -417,6 +439,33 @@ on conflict (id) do update set
   rate_type = excluded.rate_type,
   description = excluded.description;
 
+-- Initial Menu Items Catalog
+insert into public.menu_items (id, name, category, description, image_url, tag, color, accent_color, active, sort_order)
+values
+  ('menu-main-beef-broccoli', 'Beef Broccoli', 'main', 'Tender beef strips simmered in savory garlic soy sauce with crisp broccoli.', 'https://wldhvmbcvjbnwkgiafpg.supabase.co/storage/v1/object/public/Files/menu/food_beef_broccoli.jpg', 'Signature Beef', null, null, true, 10),
+  ('menu-main-cordon-bleu', 'Cordon Bleu', 'main', 'Crispy breaded chicken breast stuffed with savory ham and molten cheese.', 'https://wldhvmbcvjbnwkgiafpg.supabase.co/storage/v1/object/public/Files/menu/food_cordon_bleu.jpg', 'Poultry Favorite', null, null, true, 20),
+  ('menu-main-menudo', 'Menudo', 'main', 'Tender pork cubes and liver simmered in spiced tomato stew with vegetables.', 'https://wldhvmbcvjbnwkgiafpg.supabase.co/storage/v1/object/public/Files/menu/food_menudo.jpg', 'Fiesta Classic', null, null, true, 30),
+  ('menu-main-caldereta', 'Caldereta', 'main', 'Slow-braised beef in a rich liver-infused tomato gravy with bell peppers.', 'https://wldhvmbcvjbnwkgiafpg.supabase.co/storage/v1/object/public/Files/menu/food_caldereta.jpg', 'Hearty Braised Beef', null, null, true, 40),
+  ('menu-main-mixed-veggies', 'Mixed Veggies', 'main', 'Fresh seasonal vegetables sautéed in butter and garlic, paired with quail eggs.', 'https://wldhvmbcvjbnwkgiafpg.supabase.co/storage/v1/object/public/Files/menu/food_mixed_veggies_quail_egg.jpg', 'Buttered Medley', null, null, true, 50),
+  ('menu-main-chicken-curry', 'Chicken Curry', 'main', 'Tender chicken braised in fragrant yellow coconut curry with tender potatoes.', 'https://wldhvmbcvjbnwkgiafpg.supabase.co/storage/v1/object/public/Files/menu/food_chicken_curry.jpg', 'Aromatic Curry', null, null, true, 60),
+  ('menu-main-fish-fillet', 'Fish Fillet', 'main', 'Golden-crusted dory fish fillets served with homemade tartar dipping sauce.', 'https://wldhvmbcvjbnwkgiafpg.supabase.co/storage/v1/object/public/Files/menu/food_fish_fillet.jpg', 'Crispy Seafood', null, null, true, 70),
+  ('menu-pasta-pancit', 'Pancit', 'pasta', 'Sautéed bihon and canton noodles tossed with shredded vegetables and meat.', 'https://wldhvmbcvjbnwkgiafpg.supabase.co/storage/v1/object/public/Files/menu/food_pancit.jpg', 'Traditional Feast', null, null, true, 10),
+  ('menu-pasta-spaghetti', 'Spaghetti', 'pasta', 'Party-favorite sweet-savory ground meat sauce topped with shredded cheddar.', 'https://wldhvmbcvjbnwkgiafpg.supabase.co/storage/v1/object/public/Files/menu/food_spag.jpg', 'Sweet-Style Pinoy', null, null, true, 20),
+  ('menu-pasta-carbonara', 'Carbonara', 'pasta', 'Al dente pasta coated in luscious garlic cream with crispy smoked bacon.', 'https://wldhvmbcvjbnwkgiafpg.supabase.co/storage/v1/object/public/Files/menu/food_carbonara.jpg', 'Creamy Bacon', null, null, true, 30),
+  ('menu-drink-blue-lemonade', 'Blue Lemonade', 'drink', 'Vibrant chilled sweet-tangy blue lemonade garnished with fresh lemon slices and mint leaves.', 'https://wldhvmbcvjbnwkgiafpg.supabase.co/storage/v1/object/public/Files/menu/drink_blue_lemonade.jpg', 'Citrus Cooler', '#0284C7', '#F0F9FF', true, 10),
+  ('menu-drink-iced-tea', 'Iced Tea', 'drink', 'Crisp and refreshing house-blend sweet iced tea brewed fresh and served ice-chilled.', 'https://wldhvmbcvjbnwkgiafpg.supabase.co/storage/v1/object/public/Files/menu/drink_iced_tea.jpg', 'Signature House Blend', '#D97706', '#FFFBEB', true, 20),
+  ('menu-drink-cucumber', 'Cucumber', 'drink', 'Cooling cucumber-infused lemon refreshment with crisp fresh cucumber ribbon slices.', 'https://wldhvmbcvjbnwkgiafpg.supabase.co/storage/v1/object/public/Files/menu/drink_cucumber.jpg', 'Crisp Refresher', '#059669', '#ECFDF5', true, 30)
+on conflict (id) do update set
+  name = excluded.name,
+  category = excluded.category,
+  description = excluded.description,
+  image_url = coalesce(excluded.image_url, public.menu_items.image_url),
+  tag = coalesce(excluded.tag, public.menu_items.tag),
+  color = coalesce(excluded.color, public.menu_items.color),
+  accent_color = coalesce(excluded.accent_color, public.menu_items.accent_color),
+  active = excluded.active,
+  sort_order = excluded.sort_order;
+
 -- Staff Roster
 insert into public.staff (id, name, role, status)
 values
@@ -445,3 +494,27 @@ values
   ('rev-1', 'Kathryn B.', 5, 'Sinag Catering made our daughter''s 7th birthday unforgettable! The clown was so entertaining and the chicken tenders were a massive hit!', 'https://images.unsplash.com/photo-1530103862676-de8c9debad1d?w=500&auto=format&fit=crop&q=60', '2026-08-15', 'Thank you so much Kathryn! It was an absolute joy celebrating with your family!'),
   ('rev-2', 'Mark Anthony G.', 5, 'Smooth booking process! The QR Ph downpayment was verified within minutes by the admin. Staff were very courteous.', null, '2026-09-02', 'Maraming salamat po Sir Mark! Looking forward to your next event!')
 on conflict (id) do nothing;
+
+-- ============================================================================
+-- 8. STORAGE BUCKET CONFIGURATION ('Files')
+-- ============================================================================
+insert into storage.buckets (id, name, public)
+values ('Files', 'Files', true)
+on conflict (id) do update set public = true;
+
+drop policy if exists "Allow public read on Files bucket" on storage.objects;
+create policy "Allow public read on Files bucket" on storage.objects
+  for select using (bucket_id = 'Files' or bucket_id = 'files');
+
+drop policy if exists "Allow upload to Files bucket" on storage.objects;
+create policy "Allow upload to Files bucket" on storage.objects
+  for insert with check (bucket_id = 'Files' or bucket_id = 'files');
+
+drop policy if exists "Allow update on Files bucket" on storage.objects;
+create policy "Allow update on Files bucket" on storage.objects
+  for update using (bucket_id = 'Files' or bucket_id = 'files');
+
+drop policy if exists "Allow delete on Files bucket" on storage.objects;
+create policy "Allow delete on Files bucket" on storage.objects
+  for delete using (bucket_id = 'Files' or bucket_id = 'files');
+

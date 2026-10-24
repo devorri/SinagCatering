@@ -162,10 +162,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   </div>
                 </div>
                 <h3 style={{ fontSize: 'clamp(1.6rem, 2.4vw, 2.1rem)', lineHeight: 1.15, marginBottom: '0.9rem' }}>
-                  Kids' Party Specialist & <span className="serif-italic">Thematic Styling.</span>
+                  Celebration Specialist & <span className="serif-italic">Thematic Styling.</span>
                 </h3>
                 <p style={{ color: '#5A3D10', fontSize: '0.96rem', lineHeight: 1.7, maxWidth: '580px' }}>
-                  Custom thematic backdrops, balloon garlands, candy dessert corners, and entertainment coordination designed to bring wonder and celebration to every young celebrant.
+                  Custom thematic backdrops, balloon garlands, candy dessert corners, and entertainment coordination designed to bring wonder and celebration to every special milestone.
                 </p>
               </div>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '1.5rem' }}>

@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { ArrowRight, X, Eye, EyeOff, AlertCircle, Lock, Sparkles, CheckCircle2, ShieldCheck } from 'lucide-react'
+import { ArrowRight, X, Eye, EyeOff, AlertCircle, CheckCircle2, ShieldCheck } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { PasswordStrengthIndicator, getPasswordValidationError } from './PasswordStrengthIndicator'
 import { ForgotPasswordModal } from './ForgotPasswordModal'
@@ -113,56 +113,32 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
 
   return (
     <div className="login-modal-overlay" onClick={onClose}>
-      <div className="login-modal-card" onClick={(e) => e.stopPropagation()}>
+      <div className="login-modal-card" style={{ maxWidth: '520px', width: '100%', padding: 'clamp(28px, 5vw, 44px)', boxSizing: 'border-box' }} onClick={(e) => e.stopPropagation()}>
         <button className="login-modal-close" onClick={onClose} aria-label="Close modal">
           <X size={18} />
         </button>
 
-        <div className="login-modal-header">
+        <div className="login-modal-header" style={{ textAlign: 'center', marginBottom: '24px' }}>
           <img
             src="/sinag_logo.png"
             alt="Sinag Catering"
             className="brand-logo-img"
-            style={{ width: '52px', height: '52px', margin: '0 auto 12px', display: 'block' }}
+            style={{ width: '56px', height: '56px', margin: '0 auto 16px', display: 'block', objectFit: 'contain' }}
           />
-          <div className="login-modal-badge">
-            <Sparkles size={12} style={{ color: 'var(--terracotta)' }} />
-            <span>Sinag Client Access</span>
-          </div>
-          <h2 className="login-modal-title">
-            {isRegistering ? 'Create Client Account' : 'Sign In to Book'}
+          <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: '2.25rem', fontWeight: 400, color: 'var(--ink, #1f1d1a)', margin: '0 0 8px', letterSpacing: '-0.02em', lineHeight: 1.15 }}>
+            Sinag Portal Access
           </h2>
-          <p className="login-modal-sub">
-            {isRegistering
-              ? 'Register your client account to reserve dates, customize menus, and track event progress.'
-              : 'Sign in to access your reservation details and complete your event booking.'}
+          <p style={{ color: 'var(--muted, #6b7280)', fontSize: '0.95rem', margin: 0, lineHeight: 1.45 }}>
+            Sign in or register to manage your event reservation.
           </p>
-        </div>
-
-        {/* Tab switcher for Sign In vs Register */}
-        <div className="login-modal-tabs">
-          <button
-            type="button"
-            className={`login-modal-tab ${!isRegistering ? 'active' : ''}`}
-            onClick={() => handleTabChange(false)}
-          >
-            Sign In
-          </button>
-          <button
-            type="button"
-            className={`login-modal-tab ${isRegistering ? 'active' : ''}`}
-            onClick={() => handleTabChange(true)}
-          >
-            Register
-          </button>
         </div>
 
         <form onSubmit={handleSubmit}>
           {isRegistering && (
             <>
-              <div className="form-group">
-                <label>
-                  Full Name <span className="required-star">*</span>
+              <div className="form-group" style={{ textAlign: 'left', marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#374151', marginBottom: '8px' }}>
+                  FULL NAME <span className="required-star" style={{ color: '#dc2626' }}>*</span>
                 </label>
                 <input
                   type="text"
@@ -172,12 +148,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   disabled={isSubmitting}
+                  style={{ width: '100%', padding: '12px 14px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '0.95rem', boxSizing: 'border-box' }}
                 />
               </div>
 
-              <div className="form-group">
-                <label>
-                  Mobile Number (For SMS & Updates) <span className="required-star">*</span>
+              <div className="form-group" style={{ textAlign: 'left', marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#374151', marginBottom: '8px' }}>
+                  MOBILE NUMBER (FOR SMS & UPDATES) <span className="required-star" style={{ color: '#dc2626' }}>*</span>
                 </label>
                 <input
                   type="tel"
@@ -187,29 +164,31 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   disabled={isSubmitting}
+                  style={{ width: '100%', padding: '12px 14px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '0.95rem', boxSizing: 'border-box' }}
                 />
               </div>
             </>
           )}
 
-          <div className="form-group">
-            <label>
-              Email Address <span className="required-star">*</span>
+          <div className="form-group" style={{ textAlign: 'left', marginBottom: '20px' }}>
+            <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#374151', marginBottom: '8px' }}>
+              EMAIL ADDRESS <span className="required-star" style={{ color: '#dc2626' }}>*</span>
             </label>
             <input
-              type="email"
+              type="text"
               className="input-field"
               required
               placeholder="maria@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               disabled={isSubmitting}
+              style={{ width: '100%', padding: '12px 14px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '0.95rem', boxSizing: 'border-box' }}
             />
           </div>
 
-          <div className="form-group">
-            <label>
-              Password <span className="required-star">*</span>
+          <div className="form-group" style={{ textAlign: 'left', marginBottom: '10px' }}>
+            <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#374151', marginBottom: '8px' }}>
+              PASSWORD <span className="required-star" style={{ color: '#dc2626' }}>*</span>
             </label>
             <div style={{ position: 'relative' }}>
               <input
@@ -220,7 +199,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={isSubmitting}
-                style={{ width: '100%', paddingRight: '44px' }}
+                style={{ width: '100%', padding: '12px 42px 12px 14px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '0.95rem', boxSizing: 'border-box' }}
               />
               <button
                 type="button"
@@ -235,7 +214,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
                   background: 'none',
                   border: 'none',
                   cursor: 'pointer',
-                  color: showPassword ? 'var(--terracotta)' : 'var(--muted)',
+                  color: 'var(--muted, #6b7280)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -249,8 +228,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
             {isRegistering ? (
               <PasswordStrengthIndicator password={password} showChecklist={true} />
             ) : (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
-                <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--muted, #6b7280)' }}>
                   Enter your account password
                 </span>
                 <button
@@ -259,8 +238,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
                   style={{
                     background: 'none',
                     border: 'none',
-                    color: 'var(--terracotta)',
-                    fontSize: '0.74rem',
+                    color: 'var(--terracotta, #8c4a2f)',
+                    fontSize: '0.8rem',
                     fontWeight: 600,
                     cursor: 'pointer',
                     textDecoration: 'underline',
@@ -358,50 +337,50 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
 
           <button
             type="submit"
-            className="btn-hero-primary"
-            style={{ width: '100%', marginTop: '6px', minHeight: '48px', justifyContent: 'center' }}
+            style={{
+              width: '100%',
+              marginTop: '22px',
+              padding: '13px 18px',
+              background: '#1f1d1a',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.95rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              transition: 'background 0.2s',
+            }}
             disabled={isSubmitting}
           >
             {isSubmitting
               ? 'Please wait...'
               : isRegistering
-                ? 'Register & Continue to Booking'
-                : 'Sign In & Continue to Booking'}
+                ? 'Register & Continue'
+                : 'Sign In'}
             <ArrowRight size={16} />
           </button>
 
-          <div style={{ marginTop: '18px', textAlign: 'center' }}>
+          <div style={{ marginTop: '20px', textAlign: 'center' }}>
             <button
               type="button"
               onClick={() => handleTabChange(!isRegistering)}
               style={{
                 background: 'none',
                 border: 'none',
-                color: 'var(--muted)',
+                color: '#6b7280',
                 fontSize: '0.85rem',
                 cursor: 'pointer',
                 textDecoration: 'underline',
               }}
             >
               {isRegistering
-                ? 'Already have an account? Sign in instead'
-                : 'New client? Create an account to start'}
+                ? 'Already registered? Sign in instead'
+                : 'New client? Register an account'}
             </button>
-          </div>
-
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '6px',
-              marginTop: '16px',
-              color: 'var(--muted)',
-              fontSize: '0.78rem',
-            }}
-          >
-            <Lock size={12} />
-            <span>Secure reservation access for Sinag clients</span>
           </div>
         </form>
       </div>
