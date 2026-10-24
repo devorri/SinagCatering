@@ -2,10 +2,9 @@ import React, { createContext, useContext, useState, useEffect, useMemo } from '
 import type { ReactNode } from 'react'
 import type { User, Booking, Review, Staff, Inquiry, AdminNotification, MenuItem, CateringAddon } from '../types'
 import { supabase } from '../lib/supabase'
-import { mapDatabasePackage, SINAG_PACKAGES, AI_CATALOG_ADDONS, formatMoney, STORAGE_FILES_BASE } from '../data/packages'
+import { mapDatabasePackage, formatMoney, STORAGE_FILES_BASE } from '../data/packages'
 import type { CateringPackage } from '../data/packages'
 import {
-  FALLBACK_MENU_ITEMS,
   mapDbMenuItem,
   mapDbAddon,
   apiCatalogRequest,
@@ -186,19 +185,6 @@ const mapDbInquiry = (i: any): Inquiry => ({
   date: i.created_at || new Date().toISOString(),
 })
 
-export const DEFAULT_STAFF: Staff[] = [
-  { id: 'st-1', name: 'Juan Dela Cruz', role: 'waiter', status: 'available', age: 28, offDays: ['Monday', 'Wednesday'] },
-  { id: 'st-2', name: 'Maria Santos', role: 'waiter', status: 'available', age: 24, offDays: ['Tuesday'] },
-  { id: 'st-3', name: 'Pedro Concepcion', role: 'waiter', status: 'available', age: 30, offDays: ['Monday', 'Thursday'] },
-  { id: 'st-4', name: 'Carlos Perez', role: 'waiter', status: 'available', age: 26, offDays: ['Sunday'] },
-  { id: 'st-5', name: 'Jose Rizal', role: 'waiter', status: 'available', age: 32, offDays: ['Wednesday', 'Friday'] },
-  { id: 'st-6', name: 'Ana Kalang', role: 'food_attendant', status: 'available', age: 25, offDays: ['Monday'] },
-  { id: 'st-7', name: 'Luisa Fernandez', role: 'food_attendant', status: 'available', age: 23, offDays: ['Thursday'] },
-  { id: 'st-8', name: 'Rosario Mercado', role: 'food_attendant', status: 'available', age: 29, offDays: ['Saturday'] },
-  { id: 'st-9', name: 'Gabriela Silang', role: 'food_attendant', status: 'available', age: 27, offDays: ['Tuesday', 'Friday'] },
-  { id: 'st-10', name: 'Teresa Magbanua', role: 'food_attendant', status: 'available', age: 31, offDays: ['Monday', 'Sunday'] },
-]
-
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const PACKAGES_STORAGE_KEY = 'sinag_catalog_packages'
   const MENU_ITEMS_STORAGE_KEY = 'sinag_catalog_menu_items'
@@ -226,7 +212,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
       }
     } catch {}
-    return SINAG_PACKAGES
+    return []
   })
   const [menuItems, setMenuItems] = useState<MenuItem[]>(() => {
     try {
@@ -244,7 +230,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
       }
     } catch {}
-    return FALLBACK_MENU_ITEMS
+    return []
   })
   const [addons, setAddons] = useState<CateringAddon[]>(() => {
     try {
@@ -254,11 +240,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (Array.isArray(parsed) && parsed.length > 0) return parsed
       }
     } catch {}
-    return AI_CATALOG_ADDONS
+    return []
   })
   const [bookings, setBookings] = useState<Booking[]>([])
   const [reviews, setReviews] = useState<Review[]>([])
-  const [baseStaff, setBaseStaff] = useState<Staff[]>(DEFAULT_STAFF)
+  const [baseStaff, setBaseStaff] = useState<Staff[]>([])
   const [blockedDates, setBlockedDates] = useState<string[]>([])
   const [inquiries, setInquiries] = useState<Inquiry[]>([])
 
@@ -407,6 +393,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           if (data) setAddons(data.map(mapDbAddon))
         })
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'staff' }, () => {
+        client.from('staff').select('*').then(({ data }) => {
+          if (data) {
+            setBaseStaff(data.map((row: any) => ({
+              id: row.id,
+              name: row.name,
+              role: row.role,
+              status: row.status || 'available',
+              age: typeof row.age === 'number' ? row.age : (row.age ? Number(row.age) : 25),
+              offDays: Array.isArray(row.off_days) && row.off_days.length > 0 ? row.off_days : (row.offDays || []),
+            })))
+          }
+        })
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews' }, () => {
+        client.from('reviews').select('*').order('created_at', { ascending: false }).then(({ data }) => {
+          if (data) setReviews(data.map(mapDbReview))
+        })
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'catering_inquiries' }, () => {
+        client.from('catering_inquiries').select('*').order('created_at', { ascending: false }).then(({ data }) => {
+          if (data) setInquiries(data.map(mapDbInquiry))
+        })
+      })
       .subscribe()
     return () => { client.removeChannel(channel) }
   }, [])
@@ -474,19 +484,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       .select('*')
       .then(({ data, error }) => {
         if (!error && data && data.length > 0) {
-          const mapped = data.map((row: any) => {
-            const fallback = DEFAULT_STAFF.find((d) => d.id === row.id)
-            return {
-              id: row.id,
-              name: row.name,
-              role: row.role,
-              status: row.status || 'available',
-              age: typeof row.age === 'number' ? row.age : (row.age ? Number(row.age) : fallback?.age ?? 25),
-              offDays: Array.isArray(row.off_days) && row.off_days.length > 0
-                ? row.off_days
-                : (row.offDays || fallback?.offDays || []),
-            }
-          })
+          const mapped = data.map((row: any) => ({
+            id: row.id,
+            name: row.name,
+            role: row.role,
+            status: row.status || 'available',
+            age: typeof row.age === 'number' ? row.age : (row.age ? Number(row.age) : 25),
+            offDays: Array.isArray(row.off_days) && row.off_days.length > 0
+              ? row.off_days
+              : (row.offDays || []),
+          }))
           setBaseStaff(mapped)
         }
       })
@@ -576,9 +583,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             phone: data.phone || undefined,
             role: data.role || (data.email?.toLowerCase().includes('admin') ? 'admin' : 'client'),
           }
-          sessionStorage.setItem(SESSION_TOKEN_KEY, `user-session-${user.id}`)
+          const sessionToken = `session_${user.id}_${Date.now()}`
+          sessionStorage.setItem(SESSION_TOKEN_KEY, sessionToken)
           sessionStorage.setItem(LOCAL_USER_BACKUP_KEY, JSON.stringify(user))
           setCurrentUser(user)
+
+          // Persist session to database
+          if (supabase) {
+            void supabase.from('user_sessions').insert({
+              user_id: user.id,
+              token_hash: sessionToken,
+              expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+            })
+          }
+
           return { user, error: null }
         }
 
@@ -623,9 +641,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             phone: data.phone || undefined,
             role: data.role,
           }
-          sessionStorage.setItem(SESSION_TOKEN_KEY, `user-session-${user.id}`)
+          const sessionToken = `session_${user.id}_${Date.now()}`
+          sessionStorage.setItem(SESSION_TOKEN_KEY, sessionToken)
           sessionStorage.setItem(LOCAL_USER_BACKUP_KEY, JSON.stringify(user))
           setCurrentUser(user)
+
+          // Persist session to database
+          if (supabase) {
+            void supabase.from('user_sessions').insert({
+              user_id: user.id,
+              token_hash: sessionToken,
+              expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+            })
+          }
+
           return { user, error: null }
         }
 
@@ -641,6 +670,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }
 
   const logout = async () => {
+    const token = sessionStorage.getItem(SESSION_TOKEN_KEY)
+    if (token && supabase) {
+      void supabase.from('user_sessions').update({ revoked_at: new Date().toISOString() }).eq('token_hash', token)
+    }
     sessionStorage.removeItem(SESSION_TOKEN_KEY)
     sessionStorage.removeItem(LOCAL_USER_BACKUP_KEY)
     setCurrentUser(null)

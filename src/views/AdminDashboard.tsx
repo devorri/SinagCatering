@@ -47,6 +47,7 @@ import { useConfirm } from '../context/ConfirmContext'
 import type { Booking, Inquiry, NotificationLog, Staff } from '../types'
 import {
   getNotificationLogs,
+  fetchNotificationLogs,
   clearNotificationLogs,
   sendSemaphoreSMS,
 } from '../lib/notifications'
@@ -500,8 +501,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
 
   useEffect(() => {
+    void fetchNotificationLogs().then((logs) => setNotificationLogs(logs))
     const handleNotifUpdate = () => {
-      setNotificationLogs(getNotificationLogs())
+      void fetchNotificationLogs().then((logs) => setNotificationLogs(logs))
     }
     window.addEventListener('sinag-notification-sent', handleNotifUpdate)
     return () => window.removeEventListener('sinag-notification-sent', handleNotifUpdate)

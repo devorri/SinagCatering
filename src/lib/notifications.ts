@@ -55,8 +55,43 @@ export const logNotification = (log: Omit<NotificationLog, 'id' | 'timestamp'>):
   return newLog
 }
 
+export const fetchNotificationLogs = async (): Promise<NotificationLog[]> => {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('notification_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100)
+      if (!error && data && data.length > 0) {
+        const mapped = data.map((d: any) => ({
+          id: d.id,
+          type: d.type,
+          recipient: d.recipient,
+          subject: d.subject || undefined,
+          message: d.message,
+          status: d.status,
+          provider: d.provider,
+          referenceId: d.reference_id || undefined,
+          timestamp: d.created_at || new Date().toISOString(),
+        }))
+        try {
+          localStorage.setItem(LOCAL_STORAGE_LOGS_KEY, JSON.stringify(mapped))
+        } catch {}
+        return mapped
+      }
+    } catch {
+      // fallback
+    }
+  }
+  return getNotificationLogs()
+}
+
 export const clearNotificationLogs = () => {
   localStorage.removeItem(LOCAL_STORAGE_LOGS_KEY)
+  if (supabase) {
+    void supabase.from('notification_logs').delete().neq('id', '')
+  }
   window.dispatchEvent(new CustomEvent('sinag-notification-sent'))
 }
 
