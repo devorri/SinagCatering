@@ -21,6 +21,7 @@ import {
   User as UserIcon,
   Maximize2,
   Loader2,
+  Utensils,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import type { Booking } from '../types'
@@ -418,6 +419,96 @@ export const ClientPortal: React.FC = () => {
                         : 'Contract unlocks upon admin booking confirmation'}
                     </span>
                   </div>
+                </div>
+
+                {/* Catering Menu & Course Selections Display */}
+                <div style={{ background: '#FFFDF9', border: '1.5px solid var(--gold)', borderRadius: '12px', padding: '18px 22px', margin: '18px 0', boxShadow: '0 2px 8px rgba(184,137,66,0.06)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Utensils size={18} style={{ color: 'var(--gold-dark)' }} />
+                      <h4 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: 'var(--ink)' }}>
+                        Your Catering Menu & Banquet Selections
+                      </h4>
+                    </div>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--muted)', fontWeight: 600 }}>
+                      Package: <strong>{booking.packageName}</strong> ({booking.guestCount} pax + 10 pax buffer)
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+                    {/* Main Courses */}
+                    <div style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: '8px', padding: '12px 14px' }}>
+                      <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#991B1B', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '6px' }}>
+                        Included Main Courses (3 Mains)
+                      </div>
+                      {booking.addOns?.selectedMainDishes && booking.addOns.selectedMainDishes.length > 0 ? (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                          {booking.addOns.selectedMainDishes.map((dish) => (
+                            <span key={dish} style={{ background: '#FFFFFF', color: '#991B1B', padding: '3px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600, border: '1px solid #FECACA' }}>
+                              ✓ {dish}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: '0.82rem', color: '#991B1B', fontStyle: 'italic' }}>Standard Chef Banquet Selection</span>
+                      )}
+                    </div>
+
+                    {/* Pasta */}
+                    <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '8px', padding: '12px 14px' }}>
+                      <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#1E40AF', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '6px' }}>
+                        Included Pasta Specialty (1 Pasta)
+                      </div>
+                      {booking.addOns?.selectedPastaDishes && booking.addOns.selectedPastaDishes.length > 0 ? (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                          {booking.addOns.selectedPastaDishes.map((pasta) => (
+                            <span key={pasta} style={{ background: '#FFFFFF', color: '#1E40AF', padding: '3px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600, border: '1px solid #DBEAFE' }}>
+                              ✓ {pasta}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: '0.82rem', color: '#1E40AF', fontStyle: 'italic' }}>Standard House Pasta Selection</span>
+                      )}
+                    </div>
+
+                    {/* Drink */}
+                    <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '8px', padding: '12px 14px' }}>
+                      <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#065F46', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '6px' }}>
+                        Included Refreshing Drink
+                      </div>
+                      {booking.addOns?.selectedDrinks && booking.addOns.selectedDrinks.length > 0 ? (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                          {booking.addOns.selectedDrinks.map((drink) => (
+                            <span key={drink} style={{ background: '#FFFFFF', color: '#065F46', padding: '3px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600, border: '1px solid #A7F3D0' }}>
+                              🥤 {drink}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: '0.82rem', color: '#065F46', fontStyle: 'italic' }}>Signature House Cooler</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Extra Food & Add-ons */}
+                  {((booking.addOns?.extraMainDishes && booking.addOns.extraMainDishes.length > 0) ||
+                    (booking.addOns?.extraPastaDishes && booking.addOns.extraPastaDishes.length > 0) ||
+                    (booking.notes && booking.notes.includes('Selected mains:'))) && (
+                    <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px dashed #E2E8F0', display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Configured Options:</span>
+                      {booking.addOns?.extraMainDishes?.map((dish, i) => (
+                        <span key={`ex-m-${i}`} style={{ background: '#FEF3C7', color: '#92400E', padding: '2px 8px', borderRadius: '4px', fontSize: '0.76rem', fontWeight: 600 }}>
+                          + Extra Main: {dish}
+                        </span>
+                      ))}
+                      {booking.addOns?.extraPastaDishes?.map((dish, i) => (
+                        <span key={`ex-p-${i}`} style={{ background: '#EDE9FE', color: '#6D28D9', padding: '2px 8px', borderRadius: '4px', fontSize: '0.76rem', fontWeight: 600 }}>
+                          + Extra Pasta: {dish}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Payment Actions Box */}
@@ -912,6 +1003,28 @@ export const ClientPortal: React.FC = () => {
                   <span>Event Date:</span>
                   <strong>{selectedBooking.eventDate}</strong>
                 </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', marginBottom: '8px' }}>
+                  <span>Catering Package:</span>
+                  <strong>{selectedBooking.packageName} ({selectedBooking.guestCount} pax)</strong>
+                </div>
+                {selectedBooking.addOns?.selectedMainDishes && selectedBooking.addOns.selectedMainDishes.length > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '6px', color: '#475569' }}>
+                    <span>Included Mains:</span>
+                    <span>{selectedBooking.addOns.selectedMainDishes.join(', ')}</span>
+                  </div>
+                )}
+                {selectedBooking.addOns?.selectedPastaDishes && selectedBooking.addOns.selectedPastaDishes.length > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '6px', color: '#475569' }}>
+                    <span>Included Pasta:</span>
+                    <span>{selectedBooking.addOns.selectedPastaDishes.join(', ')}</span>
+                  </div>
+                )}
+                {selectedBooking.addOns?.selectedDrinks && selectedBooking.addOns.selectedDrinks.length > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '6px', color: '#475569' }}>
+                    <span>Included Beverage:</span>
+                    <span>{selectedBooking.addOns.selectedDrinks.join(', ')}</span>
+                  </div>
+                )}
               </div>
 
               <div style={{ borderTop: '1px solid var(--line)', paddingTop: '16px' }}>
@@ -943,8 +1056,17 @@ export const ClientPortal: React.FC = () => {
             <div style={{ fontSize: '0.9rem', lineHeight: 1.7, color: 'var(--ink)' }}>
               <p><strong>MEMORANDUM OF AGREEMENT</strong></p>
               <p>This Catering Contract is executed between <strong>Sinag Catering Services</strong> and <strong>{selectedBooking.customerName}</strong> for the <strong>{selectedBooking.eventType}</strong> event on <strong>{selectedBooking.eventDate}</strong>.</p>
-              <p>1. <strong>Service Scope:</strong> Full buffet setup, {selectedBooking.packageName} menu spread, and staff allocation of 3 waiters per 100 pax.</p>
-              <p>2. <strong>Payment Terms:</strong> 50% downpayment received; remaining 50% balance payable on or before event setup date.</p>
+              <p>1. <strong>Service Scope:</strong> Full banquet arrangement for <strong>{selectedBooking.guestCount} attendees (+10 buffer)</strong> under the <strong>{selectedBooking.packageName}</strong> with professional staff and tableware.</p>
+              {selectedBooking.addOns?.selectedMainDishes && selectedBooking.addOns.selectedMainDishes.length > 0 && (
+                <p>2. <strong>Included Main Courses:</strong> {selectedBooking.addOns.selectedMainDishes.join(', ')}.</p>
+              )}
+              {selectedBooking.addOns?.selectedPastaDishes && selectedBooking.addOns.selectedPastaDishes.length > 0 && (
+                <p>3. <strong>Included Pasta Specialty:</strong> {selectedBooking.addOns.selectedPastaDishes.join(', ')}.</p>
+              )}
+              {selectedBooking.addOns?.selectedDrinks && selectedBooking.addOns.selectedDrinks.length > 0 && (
+                <p>4. <strong>Included Refreshment:</strong> {selectedBooking.addOns.selectedDrinks.join(', ')}.</p>
+              )}
+              <p>5. <strong>Payment Terms:</strong> 50% downpayment received; remaining balance payable on or before event setup date.</p>
             </div>
 
             <div style={{ marginTop: '24px', textAlign: 'right' }}>

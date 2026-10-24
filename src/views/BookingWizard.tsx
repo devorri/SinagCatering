@@ -45,7 +45,7 @@ import {
   recommendPackage,
 } from '../data/packages'
 import { CATEGORY_SHOWCASE_GALLERY } from '../data/eventGalleries'
-import { AI_CATALOG_ADDONS, formatMoney } from '../data/packages'
+import { AI_CATALOG_ADDONS, formatMoney, SINAG_PACKAGES } from '../data/packages'
 import type { AIFormData } from '../lib/ai'
 import { EmbeddedCheckoutModal } from '../components/EmbeddedCheckoutModal'
 
@@ -131,23 +131,20 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     }
   }
 
-  const [currentStep, setCurrentStep] = useState(0)
-  const [maxVisitedStep, setMaxVisitedStep] = useState(initialAIFormData ? 1 : 0)
+  // Package Selection by ID (resilient to dynamic catalog re-fetching and sorting)
+  const [selectedPkgId, setSelectedPkgId] = useState<string>(() => {
+    if (initialAIFormData?.package_id) return initialAIFormData.package_id
+    if (initialPackageId) return initialPackageId
+    return packages[0]?.id || 'budget-basic'
+  })
+
+  // Start directly on Step 1 (Customize Menu) if arriving with a preselected package or AI recommendation
+  const [currentStep, setCurrentStep] = useState<number>(() => (initialAIFormData || initialPackageId) ? 1 : 0)
+  const [maxVisitedStep, setMaxVisitedStep] = useState<number>(() => (initialAIFormData || initialPackageId) ? 1 : 0)
   const initialPresetAppliedRef = React.useRef(false)
 
   // Step 1 — Package Selection & AI Recommendation Mode
   const [packageSelectMode, setPackageSelectMode] = useState<'standard' | 'ai'>('standard')
-  const [selectedPkgIndex, setSelectedPkgIndex] = useState(() => {
-    if (initialAIFormData?.package_id) {
-      const idx = packages.findIndex((p) => p.id === initialAIFormData.package_id)
-      if (idx !== -1) return idx
-    }
-    if (initialPackageId) {
-      const idx = packages.findIndex((p) => p.id === initialPackageId)
-      if (idx !== -1) return idx
-    }
-    return 0
-  })
 
   // Dedicated AI Recommendation Inputs (Step 1 AI Tab)
   const [aiBudget, setAiBudget] = useState(60000)
@@ -262,13 +259,25 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const [selectedGalleryPhotoIndex, setSelectedGalleryPhotoIndex] = useState(0)
   const [notes, setNotes] = useState(initialAIFormData?.notes || '')
 
+  // Reactively sync selected package whenever initialPackageId or packages list updates
+  React.useEffect(() => {
+    if (initialPackageId) {
+      setSelectedPkgId(initialPackageId)
+      setCurrentStep(1)
+      setMaxVisitedStep((prev) => Math.max(prev, 1))
+      const match = packages.find((p) => p.id === initialPackageId)
+      if (match && match.defaultPax) {
+        setGuestCount(match.defaultPax)
+      }
+    }
+  }, [initialPackageId, packages])
+
   // Reactively auto-fill and advance wizard whenever an AI recommendation is applied
   React.useEffect(() => {
     if (initialAIFormData && !initialPresetAppliedRef.current) {
       initialPresetAppliedRef.current = true
       if (initialAIFormData.package_id) {
-        const idx = packages.findIndex((p) => p.id === initialAIFormData.package_id)
-        if (idx !== -1) setSelectedPkgIndex(idx)
+        setSelectedPkgId(initialAIFormData.package_id)
       }
       if (initialAIFormData.guest_count) setGuestCount(initialAIFormData.guest_count)
       if (initialAIFormData.addons) setSelectedAIAddonIds(initialAIFormData.addons)
@@ -326,7 +335,20 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const [successMsg, setSuccessMsg] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const currentPkg = packages[selectedPkgIndex] ?? packages[0]
+  const selectedPkgIndex = useMemo(() => {
+    const idx = packages.findIndex((p) => p.id === selectedPkgId)
+    return idx !== -1 ? idx : 0
+  }, [packages, selectedPkgId])
+
+  const setSelectedPkgIndex = (idx: number) => {
+    if (packages[idx]) {
+      setSelectedPkgId(packages[idx].id)
+    }
+  }
+
+  const currentPkg = useMemo(() => {
+    return packages.find((p) => p.id === selectedPkgId) ?? packages[0] ?? SINAG_PACKAGES[0]
+  }, [packages, selectedPkgId])
 
   // Task 3: Precise Math Logic for Package, Buffers, Add-ons & 50% Downpayment
   const calculations = useMemo(() => {
@@ -980,72 +1002,89 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
           {/* Mode 1: Standard Packages Grid */}
           {packageSelectMode === 'standard' && (
             <div className="wizard-packages-grid">
-              {packages.map((pkg, idx) => (
-                <div
-                  key={pkg.id}
-                  className={`wizard-package-card ${selectedPkgIndex === idx ? 'selected' : ''}`}
-                  onClick={() => {
-                    setSelectedPkgIndex(idx)
-                    setGuestCount(pkg.defaultPax ?? 70)
-                    if (pkg.pricePerHead === undefined) setSelectedAIAddonIds([])
-                  }}
-                >
-                  {idx === 2 && <div className="wizard-pkg-badge">Most Popular</div>}
-                  {pkg.imageUrl && (
-                    <div style={{ width: '100%', height: '140px', borderRadius: '8px', overflow: 'hidden', marginBottom: '14px', background: '#F1F5F9' }}>
-                      <img
-                        src={pkg.imageUrl}
-                        alt={pkg.name}
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                        onError={(e) => {
-                          ;(e.currentTarget as HTMLElement).style.display = 'none'
-                        }}
-                      />
-                    </div>
-                  )}
-                  <h3>{pkg.shortName}</h3>
-                  <p className="wizard-pkg-desc">{pkg.description}</p>
+              {packages.map((pkg, idx) => {
+                const isSelected = selectedPkgId === pkg.id || (selectedPkgIndex === idx && !packages.some((p) => p.id === selectedPkgId))
+                const firstTierPax = pkg.tiers?.[0]?.pax ?? 50
+                const firstTierPrice = pkg.tiers?.[0]?.price ?? 35000
+                const startingPrice = pkg.pricePerHead !== undefined
+                  ? pkg.pricePerHead * (pkg.defaultPax ?? firstTierPax)
+                  : firstTierPrice
 
-                  <div className="wizard-pkg-price">
-                    Starting at <strong>{formatMoney(pkg.pricePerHead !== undefined
-                      ? pkg.pricePerHead * (pkg.defaultPax ?? pkg.tiers[0].pax)
-                      : pkg.tiers[0].price, pkg.currency)}</strong>
-                    <span>{pkg.pricePerHead !== undefined
-                      ? ` / ${pkg.defaultPax ?? pkg.tiers[0].pax} pax`
-                      : ` / ${pkg.tiers[0].pax} pax (+${FOOD_BUFFER_PAX} buffer)`}</span>
-                  </div>
-
-                  <ul className="wizard-pkg-features">
-                    {pkg.inclusions.slice(0, 4).map((inc) => (
-                      <li key={inc}><Check size={14} /> {inc}</li>
-                    ))}
-                    {pkg.inclusions.length > 4 && (
-                      <li style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
-                        +{pkg.inclusions.length - 4} more inclusions
-                      </li>
-                    )}
-                  </ul>
-
-                  <div className="wizard-pkg-extras">
-                    {pkg.freebies.length > 0 && (
-                      <span><Sparkles size={12} /> {pkg.freebies.length} freebies</span>
-                    )}
-                    {pkg.entertainment.length > 0 && (
-                      <span><Star size={12} /> {pkg.entertainment.length} entertainment</span>
-                    )}
-                    {pkg.entertainment.length === 0 && (
-                      <span style={{ color: 'var(--muted)' }}>No entertainment included</span>
-                    )}
-                  </div>
-
-                  <button
-                    type="button"
-                    className={`wizard-pkg-select-btn ${selectedPkgIndex === idx ? 'active' : ''}`}
+                return (
+                  <div
+                    key={pkg.id}
+                    className={`wizard-package-card ${isSelected ? 'selected' : ''}`}
+                    onClick={() => {
+                      setSelectedPkgId(pkg.id)
+                      setGuestCount(pkg.defaultPax ?? firstTierPax)
+                      if (pkg.pricePerHead === undefined) setSelectedAIAddonIds([])
+                      setCurrentStep(1)
+                      setMaxVisitedStep((prev) => Math.max(prev, 1))
+                    }}
                   >
-                    {selectedPkgIndex === idx ? '✓ Selected' : 'Select Package'}
-                  </button>
-                </div>
-              ))}
+                    {idx === 1 && <div className="wizard-pkg-badge">Most Popular</div>}
+                    {pkg.imageUrl && (
+                      <div style={{ width: '100%', height: '140px', borderRadius: '8px', overflow: 'hidden', marginBottom: '14px', background: '#F1F5F9' }}>
+                        <img
+                          src={pkg.imageUrl}
+                          alt={pkg.name}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          onError={(e) => {
+                            ;(e.currentTarget as HTMLElement).style.display = 'none'
+                          }}
+                        />
+                      </div>
+                    )}
+                    <h3>{pkg.shortName}</h3>
+                    <p className="wizard-pkg-desc">{pkg.description}</p>
+
+                    <div className="wizard-pkg-price">
+                      Starting at <strong>{formatMoney(startingPrice, pkg.currency)}</strong>
+                      <span>{pkg.pricePerHead !== undefined
+                        ? ` / ${pkg.defaultPax ?? firstTierPax} pax`
+                        : ` / ${firstTierPax} pax (+${FOOD_BUFFER_PAX} buffer)`}</span>
+                    </div>
+
+                    <ul className="wizard-pkg-features">
+                      {pkg.inclusions.slice(0, 4).map((inc) => (
+                        <li key={inc}><Check size={14} /> {inc}</li>
+                      ))}
+                      {pkg.inclusions.length > 4 && (
+                        <li style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
+                          +{pkg.inclusions.length - 4} more inclusions
+                        </li>
+                      )}
+                    </ul>
+
+                    <div className="wizard-pkg-extras">
+                      {pkg.freebies.length > 0 && (
+                        <span><Sparkles size={12} /> {pkg.freebies.length} freebies</span>
+                      )}
+                      {pkg.entertainment.length > 0 && (
+                        <span><Star size={12} /> {pkg.entertainment.length} entertainment</span>
+                      )}
+                      {pkg.entertainment.length === 0 && (
+                        <span style={{ color: 'var(--muted)' }}>No entertainment included</span>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setSelectedPkgId(pkg.id)
+                        setGuestCount(pkg.defaultPax ?? firstTierPax)
+                        if (pkg.pricePerHead === undefined) setSelectedAIAddonIds([])
+                        setCurrentStep(1)
+                        setMaxVisitedStep((prev) => Math.max(prev, 1))
+                      }}
+                      className={`wizard-pkg-select-btn ${isSelected ? 'active' : ''}`}
+                    >
+                      {isSelected ? '✓ Selected · Customize Menu →' : 'Select Package & Customize Menu →'}
+                    </button>
+                  </div>
+                )
+              })}
             </div>
           )}
 
@@ -1187,8 +1226,29 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
               {/* Selected Package Banner */}
               <div className="pkg-header-info" style={{ marginBottom: '28px' }}>
                 <div>
-                  <h3 className="pkg-title">{currentPkg.name}</h3>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{currentPkg.description}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <h3 className="pkg-title" style={{ margin: 0 }}>{currentPkg.name}</h3>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentStep(0)}
+                      style={{
+                        background: '#FEF3C7',
+                        border: '1px solid #F59E0B',
+                        color: '#92400E',
+                        borderRadius: '20px',
+                        padding: '3px 12px',
+                        fontSize: '0.76rem',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                    >
+                      ← Change Package
+                    </button>
+                  </div>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginTop: '4px' }}>{currentPkg.description}</span>
                 </div>
                 <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
                   <div className="pkg-rate">
