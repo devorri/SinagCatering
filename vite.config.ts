@@ -1,6 +1,28 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import type { Plugin } from 'vite'
+import fs from 'node:fs'
+import path from 'node:path'
+
+function getLivePaymongoSecretKey(): string {
+  try {
+    const envPath = path.resolve(process.cwd(), '.env')
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf8')
+      for (const line of content.split('\n')) {
+        const m = line.match(/^\s*(VITE_PAYMONGO_SECRET_KEY|PAYMONGO_SECRET_KEY)\s*=\s*(.*)?$/)
+        if (m) {
+          let v = (m[2] || '').trim()
+          if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+            v = v.slice(1, -1).trim()
+          }
+          if (v.startsWith('sk_')) return v
+        }
+      }
+    }
+  } catch {}
+  return process.env.VITE_PAYMONGO_SECRET_KEY || process.env.PAYMONGO_SECRET_KEY || ''
+}
 
 function apiServerPlugin(env: Record<string, string> = {}): Plugin {
   return {
@@ -24,7 +46,7 @@ function apiServerPlugin(env: Record<string, string> = {}): Plugin {
         if (url === '/api/paymongo/create-checkout' && req.method === 'POST') {
           try {
             const body = await readJsonBody()
-            const secretKey = process.env.VITE_PAYMONGO_SECRET_KEY || process.env.PAYMONGO_SECRET_KEY || 'sk_test_c45YuqZKv46a1C22BDm5VbDB'
+            const secretKey = getLivePaymongoSecretKey()
             const authHeader = 'Basic ' + Buffer.from(secretKey + ':').toString('base64')
 
             const amountMinor = Math.round((body.amount || 17500) * 100) // minor unit (cents)
@@ -90,7 +112,7 @@ function apiServerPlugin(env: Record<string, string> = {}): Plugin {
         if (url === '/api/paymongo/verify-payment' && req.method === 'POST') {
           try {
             const body = await readJsonBody()
-            const secretKey = process.env.VITE_PAYMONGO_SECRET_KEY || process.env.PAYMONGO_SECRET_KEY || 'sk_test_c45YuqZKv46a1C22BDm5VbDB'
+            const secretKey = getLivePaymongoSecretKey()
             const authHeader = 'Basic ' + Buffer.from(secretKey + ':').toString('base64')
 
             const sessionId = body.checkoutSessionId
@@ -139,7 +161,7 @@ function apiServerPlugin(env: Record<string, string> = {}): Plugin {
         if (url === '/api/paymongo/generate-qrph' && req.method === 'POST') {
           try {
             const body = await readJsonBody()
-            const secretKey = process.env.VITE_PAYMONGO_SECRET_KEY || process.env.PAYMONGO_SECRET_KEY || 'sk_test_c45YuqZKv46a1C22BDm5VbDB'
+            const secretKey = getLivePaymongoSecretKey()
             const authHeader = 'Basic ' + Buffer.from(secretKey + ':').toString('base64')
             const amountMinor = Math.round((body.amount || 25000) * 100)
 
@@ -247,7 +269,7 @@ function apiServerPlugin(env: Record<string, string> = {}): Plugin {
         if (url === '/api/paymongo/check-payment-intent' && req.method === 'POST') {
           try {
             const body = await readJsonBody()
-            const secretKey = process.env.VITE_PAYMONGO_SECRET_KEY || process.env.PAYMONGO_SECRET_KEY || 'sk_test_c45YuqZKv46a1C22BDm5VbDB'
+            const secretKey = getLivePaymongoSecretKey()
             const authHeader = 'Basic ' + Buffer.from(secretKey + ':').toString('base64')
             const piId = body.paymentIntentId
 

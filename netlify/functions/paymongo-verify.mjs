@@ -22,7 +22,7 @@ export const handler = async (event) => {
     const secretKey =
       process.env.VITE_PAYMONGO_SECRET_KEY ||
       process.env.PAYMONGO_SECRET_KEY ||
-      'sk_test_c45YuqZKv46a1C22BDm5VbDB'
+      ''
     const authHeader = 'Basic ' + Buffer.from(secretKey + ':').toString('base64')
 
     const sessionId = body.checkoutSessionId || body.sessionId
