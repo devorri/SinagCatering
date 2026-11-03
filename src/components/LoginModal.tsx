@@ -3,6 +3,7 @@ import { ArrowRight, X, Eye, EyeOff, AlertCircle, CheckCircle2, ShieldCheck } fr
 import { useApp } from '../context/AppContext'
 import { PasswordStrengthIndicator, getPasswordValidationError } from './PasswordStrengthIndicator'
 import { ForgotPasswordModal } from './ForgotPasswordModal'
+import { GoogleSignInButton } from './GoogleSignInButton'
 
 interface LoginModalProps {
   isOpen: boolean
@@ -363,6 +364,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
                 : 'Sign In'}
             <ArrowRight size={16} />
           </button>
+
+          <GoogleSignInButton returnView="booking" isRegistering={isRegistering} />
 
           <div style={{ marginTop: '20px', textAlign: 'center' }}>
             <button

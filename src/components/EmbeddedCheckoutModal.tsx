@@ -28,6 +28,8 @@ interface EmbeddedCheckoutModalProps {
   customerEmail?: string
   customerPhone?: string
   onPaymentSuccess: (referenceNumber: string) => void
+  /** When false (booking wizard, booking not created yet) the modal does not touch any booking record. */
+  syncBooking?: boolean
 }
 
 export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
@@ -43,8 +45,9 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
   customerEmail = 'client@sinagcater.com',
   customerPhone = '0928 714 4597',
   onPaymentSuccess,
+  syncBooking = true,
 }) => {
-  const { updatePaymentStatus } = useApp()
+  const { bookings, verifyDownpaymentBooking } = useApp()
   const [activeTab, setActiveTab] = useState<'gcash' | 'card' | 'maya'>('gcash')
   const [gcashMode, setGcashMode] = useState<'qr' | 'number'>('qr')
 
@@ -149,6 +152,14 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
     return () => clearInterval(interval)
   }, [isOpen, paymentIntentId, isSuccess, isProcessing])
 
+  const cardRef = React.useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (isOpen) {
+      cardRef.current?.scrollTo(0, 0)
+    }
+  }, [isOpen])
+
   if (!isOpen) return null
 
   const formatCardNumber = (val: string) => {
@@ -177,18 +188,17 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
 
     const ref = customRef || `SINAG-${methodName.toUpperCase()}-${Math.floor(10000000 + Math.random() * 90000000)}`
 
-    // Update in Context and database live
+    // Update in Context and database live (only for bookings that already exist)
     try {
-      updatePaymentStatus(bookingId, 'downpayment_paid', amount)
-      if (supabase) {
-        await supabase
-          .from('bookings')
-          .update({
-            payment_status: 'downpayment_paid',
-            downpayment_amount: amount,
-            gcash_ref_number: ref,
-          })
-          .eq('id', bookingId)
+      const existing = syncBooking ? bookings.find((b) => b.id === bookingId) : undefined
+      if (existing) {
+        verifyDownpaymentBooking(bookingId, amount)
+        if (supabase) {
+          await supabase
+            .from('bookings')
+            .update({ gcash_ref_number: ref, payment_method: 'paymongo' })
+            .eq('id', bookingId)
+        }
       }
     } catch (e) {
       console.warn('Sync error:', e)
@@ -199,14 +209,6 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
     setIsSuccess(true)
     onPaymentSuccess(ref)
   }
-
-  const cardRef = React.useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (isOpen) {
-      cardRef.current?.scrollTo(0, 0)
-    }
-  }, [isOpen])
 
   return (
     <div

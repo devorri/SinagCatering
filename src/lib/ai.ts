@@ -119,11 +119,94 @@ export const calculateTotalForPackage = (
   return baseCost + excessPaxFee + extraMainCost + extraPastaCost + extraDessertCost + addonsCost
 }
 
+
+// ---------------------------------------------------------------------------
+// HARD BUDGET CEILING (Revision 6)
+// Package Base Price ≤ Client Budget. The assistant must never recommend or
+// calculate a total above the client's stated budget — not even by ₱1 —
+// unless the client explicitly asks "What if I increase my budget?".
+// ---------------------------------------------------------------------------
+const BUDGET_INCREASE_RE = /\b(what if|if)\b[^.?!]*\b(increase|raise|bump|up|add to|stretch|extend)\b[^.?!]*\bbudget\b|\b(increase|raise|bump up|stretch|extend)\s+(my|the|our)\s+budget\b|\b(higher|bigger|larger|more)\s+budget\b|\bover\s+(my|the)\s+budget\b|\bexceed(ing)?\s+(my|the)\s+budget\b/i
+
+export const isBudgetIncreaseRequest = (input: string): boolean => BUDGET_INCREASE_RE.test(input)
+
+/**
+ * The budget ceiling in force for this message:
+ *  - a budget stated in the current message (also when increasing it to a new amount)
+ *  - "what if I increase my budget?" without an amount lifts the ceiling for this answer
+ *  - otherwise the most recent budget the client stated earlier in the chat
+ */
+export const resolveBudgetCeiling = (
+  input: string,
+  history: { role: 'user' | 'assistant'; content: string }[] = [],
+): number | undefined => {
+  const current = extractBudget(input)
+  if (current) return current
+  if (isBudgetIncreaseRequest(input)) return undefined
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const h = history[i]
+    if (h.role !== 'user') continue
+    const b = extractBudget(h.content)
+    if (b) return b
+  }
+  return undefined
+}
+
+export const resolveGuestCount = (
+  input: string,
+  history: { role: 'user' | 'assistant'; content: string }[] = [],
+): number | undefined => {
+  const current = extractGuestCount(input)
+  if (current) return current
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const h = history[i]
+    if (h.role !== 'user') continue
+    const g = extractGuestCount(h.content)
+    if (g) return g
+  }
+  return undefined
+}
+
+/** Packages whose base price (incl. excess-guest fees) fits the ceiling. */
+export const filterPackagesWithinBudget = (
+  packages: CateringPackage[],
+  guestCount: number,
+  budget: number,
+  liveAddons: any[] = [],
+): CateringPackage[] =>
+  packages.filter((p) => calculateTotalForPackage(p, guestCount, [], 0, 0, 0, liveAddons) <= budget)
+
+/** Removes upgrades until the plan total is within the ceiling. Returns null if even the bare package exceeds it. */
+export const trimPlanToBudget = (
+  pkg: CateringPackage,
+  guestCount: number,
+  plan: { addons: string[]; extraMain: number; extraPasta: number; extraDessert: number },
+  budget: number,
+  liveAddons: any[] = [],
+): { addons: string[]; extraMain: number; extraPasta: number; extraDessert: number; total: number } | null => {
+  const addons = [...plan.addons]
+  let extraMain = plan.extraMain
+  let extraPasta = plan.extraPasta
+  let extraDessert = plan.extraDessert
+  const calc = () => calculateTotalForPackage(pkg, guestCount, addons, extraMain, extraPasta, extraDessert, liveAddons)
+  let total = calc()
+  while (total > budget) {
+    if (addons.length > 0) addons.pop()
+    else if (extraDessert > 0) extraDessert -= 1
+    else if (extraPasta > 0) extraPasta -= 1
+    else if (extraMain > 0) extraMain -= 1
+    else break
+    total = calc()
+  }
+  return total <= budget ? { addons, extraMain, extraPasta, extraDessert, total } : null
+}
+
 export const generateLocalAIResponse = (
   input: string,
   livePackages: CateringPackage[] = [],
   liveMenuItems: any[] = [],
   liveAddons: any[] = [],
+  context?: { budgetCeiling?: number | null; guestCount?: number },
 ): AIResponse => {
   const inputLower = input.toLowerCase().trim()
 
@@ -244,24 +327,59 @@ export const generateLocalAIResponse = (
     livePackages = SINAG_PACKAGES
   }
 
-  const count = extractGuestCount(input) || 80
-  const targetBudget = extractBudget(input)
+  const count = context?.guestCount || extractGuestCount(input) || 80
+  // Hard ceiling: an explicit context value wins (null = ceiling lifted by "increase my budget")
+  const targetBudget = context && 'budgetCeiling' in context
+    ? (context.budgetCeiling ?? undefined)
+    : (isBudgetIncreaseRequest(input) && !extractBudget(input) ? undefined : extractBudget(input))
   const eventTypeObj = detectEventType(input)
   const isGrandRequest = /grand|blast|premium|full|ceiling|luxury|vip|maximize/i.test(inputLower) || (targetBudget && targetBudget >= 65000)
 
-  // Package Selection
-  let chosenPkg = livePackages[1] || livePackages[0] // default Budgetarian Plus
-  if (isGrandRequest || eventTypeObj.category === 'Wedding' || eventTypeObj.category === 'Debut') {
-    chosenPkg = livePackages.find((p) => p.id === 'full-blast') || livePackages[2] || chosenPkg
-  } else if (/simple|basic|budget|low cost/i.test(inputLower) && !targetBudget) {
-    chosenPkg = livePackages.find((p) => p.id === 'budget-basic') || chosenPkg
-  } else {
-    const reco = recommendPackage(livePackages, count, targetBudget || 60000)
-    if (reco?.pkg) chosenPkg = reco.pkg
+  // Retrieval filter: only packages whose base price fits the client's budget
+  const eligiblePackages = targetBudget
+    ? filterPackagesWithinBudget(livePackages, count, targetBudget, liveAddons)
+    : livePackages
+
+  if (targetBudget && eligiblePackages.length === 0) {
+    const cheapest = [...livePackages]
+      .map((p) => ({ p, total: calculateTotalForPackage(p, count, [], 0, 0, 0, liveAddons) }))
+      .sort((a, b) => a.total - b.total)[0]
+    const maxGuestsHint = cheapest
+      ? (() => {
+          for (let g = count - 1; g >= 10; g -= 1) {
+            if (calculateTotalForPackage(cheapest.p, g, [], 0, 0, 0, liveAddons) <= targetBudget) return g
+          }
+          return 0
+        })()
+      : 0
+    return {
+      text: `Mabuhay! I want to stay strictly within your **${formatMoney(targetBudget)}** budget. Unfortunately, none of our packages fit that amount for **${count} guests** — the most affordable option, **${cheapest?.p.name ?? 'our basic package'}**, comes to **${cheapest ? formatMoney(cheapest.total) : 'more than your budget'}** for that guest count.\n\n` +
+        (maxGuestsHint > 0 ? `• Within your budget, we can serve up to about **${maxGuestsHint} guests** with the ${cheapest?.p.name}.\n` : '') +
+        `• You can also ask me **"What if I increase my budget?"** to see the next options.\n\n` +
+        `Let me know how you'd like to proceed!`,
+      escalate: false,
+      isLiveApi: false,
+    }
   }
 
-  // BUDGET MAXIMIZER UPSELL LOGIC:
-  // When a user specifies a target budget that exceeds standard base tier, bundle upgrades to reach budget cleanly
+  // Package Selection (always from the budget-eligible list)
+  let chosenPkg = eligiblePackages[1] || eligiblePackages[0] // default Budgetarian Plus
+  if (isGrandRequest || eventTypeObj.category === 'Wedding' || eventTypeObj.category === 'Debut') {
+    chosenPkg = eligiblePackages.find((p) => p.id === 'full-blast') || eligiblePackages[eligiblePackages.length - 1] || chosenPkg
+    if (targetBudget) {
+      // Prefer the richest package that still fits the ceiling
+      const reco = recommendPackage(eligiblePackages, count, targetBudget)
+      if (reco?.pkg && !reco.budgetExceeded && !eligiblePackages.some((p) => p.id === 'full-blast')) chosenPkg = reco.pkg
+    }
+  } else if (/simple|basic|budget|low cost/i.test(inputLower) && !targetBudget) {
+    chosenPkg = eligiblePackages.find((p) => p.id === 'budget-basic') || chosenPkg
+  } else {
+    const reco = recommendPackage(eligiblePackages, count, targetBudget || 60000)
+    if (reco?.pkg && (!targetBudget || !reco.budgetExceeded)) chosenPkg = reco.pkg
+  }
+
+  // BUDGET MAXIMIZER (never above the ceiling):
+  // When a user specifies a target budget that exceeds the base tier, bundle upgrades up to — never past — that budget
   const baseCost = calculateTotalForPackage(chosenPkg, count, [], 0, 0, 0, liveAddons)
   const isBudgetMaximizerActive = Boolean(targetBudget && targetBudget > baseCost)
 
@@ -271,7 +389,6 @@ export const generateLocalAIResponse = (
   let extraDessert = 0
 
   if (isBudgetMaximizerActive && targetBudget) {
-    // Intelligently bundle maximum upgrades to maximize user's high budget
     selectedAddons = ['ADD-CANDY-01', 'ADD-HOST-02', 'ADD-DESSERT-03']
     extraMain = Math.min(3, Math.max(1, Math.floor((targetBudget - baseCost) / (EXTRA_MAIN_RATE * count * 2))))
     extraPasta = Math.min(2, Math.max(1, Math.floor((targetBudget - baseCost) / (EXTRA_PASTA_RATE * count * 3))))
@@ -286,8 +403,22 @@ export const generateLocalAIResponse = (
     extraPasta = /extra pasta/i.test(inputLower) ? 1 : 0
   }
 
+  if (targetBudget) {
+    const trimmed = trimPlanToBudget(chosenPkg, count, { addons: selectedAddons, extraMain, extraPasta, extraDessert }, targetBudget, liveAddons)
+    if (trimmed) {
+      selectedAddons = trimmed.addons
+      extraMain = trimmed.extraMain
+      extraPasta = trimmed.extraPasta
+      extraDessert = trimmed.extraDessert
+    }
+  }
+
   const total = calculateTotalForPackage(chosenPkg, count, selectedAddons, extraMain, extraPasta, extraDessert, liveAddons)
   const downpayment = Math.round(total * 0.5)
+  const addonNames = selectedAddons.map((id) => {
+    const live = liveAddons.find((a) => a.id === id)
+    return live?.name || AI_CATALOG_ADDONS.find((a) => a.id === id)?.name || id
+  })
 
   const formData: AIFormData = {
     package_id: chosenPkg.id,
@@ -301,27 +432,27 @@ export const generateLocalAIResponse = (
     extra_dessert_count: extraDessert,
     event_type: eventTypeObj.category,
     notes: isBudgetMaximizerActive && targetBudget
-      ? `AI Budget Maximizer: Target budget ${formatMoney(targetBudget)} cleanly allocated with ${extraMain} Extra Mains, ${extraPasta} Extra Pastas, ${extraDessert} Extra Desserts, plus full celebration stations for ${eventTypeObj.label}.`
+      ? `AI Budget Plan: ${formatMoney(total)} total within the ${formatMoney(targetBudget)} budget ceiling (${extraMain} extra mains, ${extraPasta} extra pastas, ${extraDessert} extra desserts) for ${eventTypeObj.label}.`
       : `AI Recommendation for ${eventTypeObj.label} (${count} pax). 50% Downpayment: ${formatMoney(downpayment)}.`,
   }
 
   if (isBudgetMaximizerActive && targetBudget) {
     const stylingSurplus = Math.max(0, targetBudget - total)
     return {
-      text: `Mabuhay! For your **${eventTypeObj.label}** with **${count} guests** and an exact target budget of **${formatMoney(targetBudget)}**, I've activated our **AI Budget Maximizer** to curate an all-inclusive premier banquet instead of stopping at the basic tier!\n\n` +
+      text: `Mabuhay! For your **${eventTypeObj.label}** with **${count} guests** and a budget of **${formatMoney(targetBudget)}**, here's the best plan that stays **within your budget** (never above it):\n\n` +
         `👑 **Recommended Flagship Plan:** **${chosenPkg.name}**\n` +
         `• **Base Package Tier:** ${formatMoney(baseCost)} (${count} Pax + ${FOOD_BUFFER_PAX} Buffer Pax)\n` +
         `• **Included Inclusions:** ${chosenPkg.inclusions.slice(0, 4).join(', ')}\n\n` +
         `💎 **Curated Luxury Upgrades Bundled to Maximize Your Budget:**\n` +
-        `• **${extraMain} Extra Main Dishes (+PHP 100/pax):** +${formatMoney(extraMain * EXTRA_MAIN_RATE * count)} (Beef, Cordon Bleu, Fish Fillet)\n` +
-        `• **${extraPasta} Extra Pasta Courses (+PHP 80/pax):** +${formatMoney(extraPasta * EXTRA_PASTA_RATE * count)} (Creamy Carbonara / Baked Penne)\n` +
-        `• **${extraDessert} Extra Dessert Course (+PHP 50/pax):** +${formatMoney(extraDessert * EXTRA_DESSERT_RATE * count)}\n` +
-        `• **Celebration Stations Included:** Chocolate Fountain Buffet, Party Host & Emcee, and Assorted Dessert Bar\n` +
-        (stylingSurplus > 0 ? `• **VIP Production Allocation:** ${formatMoney(stylingSurplus)} tailored for Bespoke Thematic Stage Backdrop, Balloon Ceiling Canopy, and Ambient Event Lighting\n\n` : '\n') +
+        (extraMain > 0 ? `• **${extraMain} Extra Main Dish${extraMain > 1 ? 'es' : ''} (+PHP 100/pax):** +${formatMoney(extraMain * EXTRA_MAIN_RATE * count)}\n` : '') +
+        (extraPasta > 0 ? `• **${extraPasta} Extra Pasta Course${extraPasta > 1 ? 's' : ''} (+PHP 80/pax):** +${formatMoney(extraPasta * EXTRA_PASTA_RATE * count)}\n` : '') +
+        (extraDessert > 0 ? `• **${extraDessert} Extra Dessert Course${extraDessert > 1 ? 's' : ''} (+PHP 50/pax):** +${formatMoney(extraDessert * EXTRA_DESSERT_RATE * count)}\n` : '') +
+        (addonNames.length > 0 ? `• **Celebration Add-ons:** ${addonNames.join(', ')}\n` : '') +
+        (stylingSurplus > 0 ? `• **Unused budget:** ${formatMoney(stylingSurplus)} stays with you — the plan is within your ${formatMoney(targetBudget)} ceiling.\n\n` : '\n') +
         `📊 **Calculated Package Total:** **${formatMoney(total)}**\n` +
         `🔒 **Required 50% Downpayment:** **${formatMoney(downpayment)}** (Locks in your date)\n` +
         `🏷️ **Event Category:** **${eventTypeObj.category}**\n\n` +
-        `Click **"Auto-Fill Booking Wizard with AI Plan"** below to instantly pre-fill all ${extraMain} extra mains, ${extraPasta} extra pasta, dessert, and stations directly into your reservation!`,
+        `Click **"Auto-Fill Booking Wizard with AI Plan"** below to load this plan into your reservation. Want more? Ask me **"What if I increase my budget?"**`,
       escalate: false,
       pkgId: chosenPkg.id,
       guestCount: count,
@@ -335,7 +466,8 @@ export const generateLocalAIResponse = (
       `• **Estimated Total:** ${formatMoney(total)} (50% Downpayment: ${formatMoney(downpayment)})\n` +
       `• **Menu Inclusions:** ${chosenPkg.inclusions.slice(0, 3).join(', ')} and more\n` +
       (chosenPkg.entertainment.length > 0 ? `• **Entertainment Included:** ${chosenPkg.entertainment.join(', ')}\n` : '') +
-      (selectedAddons.length > 0 ? `• **Selected Add-ons:** ${selectedAddons.join(', ')}\n` : '') +
+      (addonNames.length > 0 ? `• **Selected Add-ons:** ${addonNames.join(', ')}\n` : '') +
+      (targetBudget ? `• **Within your budget:** ${formatMoney(total)} ≤ ${formatMoney(targetBudget)}\n` : '') +
       `• **Event Category:** ${eventTypeObj.category}\n\n` +
       `Click **"Auto-Fill Booking Wizard with AI Plan"** below to load this setup into the reservation form!`,
     escalate: false,
@@ -379,6 +511,19 @@ export const querySinagAI = async (
     currentPackages = SINAG_PACKAGES
   }
 
+  // Hard budget ceiling for this message (persists across the chat)
+  const budgetCeiling = resolveBudgetCeiling(userInput, history)
+  const ceilingGuestCount = resolveGuestCount(userInput, history)
+  const localContext = { budgetCeiling: budgetCeiling ?? null, guestCount: ceilingGuestCount }
+  const promptPackages = budgetCeiling
+    ? filterPackagesWithinBudget(currentPackages, ceilingGuestCount || 80, budgetCeiling, liveAddons)
+    : currentPackages
+
+  // Nothing fits the stated budget: answer locally so no over-budget price is ever shown
+  if (budgetCeiling && promptPackages.length === 0 && /recommend|package|pax|guest|plan|budget|quote|price|estimate|book/i.test(userInput)) {
+    return generateLocalAIResponse(userInput, currentPackages, liveMenuItems, liveAddons, localContext)
+  }
+
   // 2. Call Google Gemini with gemini-3.5-flash if API key is present
   const rawKey = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined) ||
     (import.meta.env.VITE_AI_API_KEY as string | undefined) || ''
@@ -386,7 +531,7 @@ export const querySinagAI = async (
 
   if (apiKey) {
     try {
-      const packageCatalogDescription = currentPackages.map((p) => {
+      const packageCatalogDescription = promptPackages.map((p) => {
         const tierSummary = Array.isArray(p.tiers) && p.tiers.length > 0
           ? p.tiers.map((t) => `${t.pax} pax: PHP ${t.price.toLocaleString()}`).join(', ')
           : `Starting at PHP ${(p.pricePerHead ? p.pricePerHead * 50 : 35000).toLocaleString()}`
@@ -474,16 +619,19 @@ Classify the event into one of the 4 official Sinag categories:
 - 'Others (Please Specify)': Corporate banquets, baptisms, anniversaries, reunions, and thanksgiving feasts.
 Align your tone, terminology, and recommendations with this event category!
 
-BUDGET MAXIMIZER UPSELL LOGIC:
-When the user specifies a high target budget (e.g., wanting to spend an exact upper limit like PHP 150,000 for 80 guests, or budget of 120k):
-- DO NOT stop short at just the base tier (e.g., returning only a PHP 65,000 base package when the client wants to spend PHP 150,000)!
-- Intelligently bundle the base package with recommended upgrades to cleanly reach their target budget:
-  1. Recommend the flagship 'Full Blast' (or highest tier package for their guest count).
-  2. Bundle maximum extra courses: extra_main_count (up to 3), extra_pasta_count (up to 2), extra_dessert_count (up to 2).
-  3. Bundle available celebration enhancements from the live add-ons list.
-  4. If a remaining budget surplus exists (e.g., target PHP 150,000 vs calculated bundle), explain that the remaining balance covers Bespoke Thematic Stage & Ceiling Styling, Professional Sound & Lighting, and VIP Floral Centerpieces.
-  5. Provide a clear, enthusiastic itemized breakdown showing how each upgrade elevates their event to luxury banquet standards.
-  6. In "form_data", accurately set "extra_main_count", "extra_pasta_count", "extra_dessert_count", "addons", "event_type", and "notes" so the user can click "Auto-Fill Booking Wizard with AI Plan" to immediately load the entire maximized package into the booking wizard!
+ABSOLUTE BUDGET CEILING RULE (HIGHEST PRIORITY — OVERRIDES EVERYTHING BELOW):
+- Package Base Price ≤ Client Budget. ${budgetCeiling ? `The client's budget ceiling is PHP ${budgetCeiling.toLocaleString()}${ceilingGuestCount ? ` for ${ceilingGuestCount} guests` : ''}.` : 'The client has not stated a budget ceiling for this message.'}
+- HARD CEILING: You are strictly forbidden from recommending or calculating a package total that exceeds the client's stated budget by even PHP 1 — including add-ons, extra courses and excess-guest fees.
+- Only the packages listed under LIVE DATABASE PACKAGES are eligible; packages above the budget have already been removed.
+- The ONLY exception: the client explicitly asks "What if I increase my budget?" (or clearly asks to go over budget).
+- If nothing fits, say so honestly, mention how many guests the budget can serve, and invite them to ask "What if I increase my budget?". Set "form_data" to null.
+
+BUDGET PLANNING LOGIC (always within the ceiling):
+When the user specifies a target budget (e.g., PHP 150,000 for 80 guests):
+- Recommend the richest eligible package whose base price fits the budget.
+- You may add extra courses (extra_main_count up to 3, extra_pasta_count up to 2, extra_dessert_count up to 2) and add-ons ONLY while the running total stays at or below the budget.
+- Show an itemized breakdown and the final total, and state clearly that it is within their budget.
+- In "form_data", accurately set "extra_main_count", "extra_pasta_count", "extra_dessert_count", "addons", "event_type", and "notes" so the user can click "Auto-Fill Booking Wizard with AI Plan".
 
 CRITICAL INSTRUCTIONS ON WHEN TO RECOMMEND A PACKAGE:
 - If the user is asking FAQ or general policy questions (such as refund policy, cancellation terms, payments, downpayment, location, contact info, lead time, or greetings):
@@ -567,6 +715,14 @@ OR if recommending a package:
 
             const exactTotal = calculateTotalForPackage(chosenPkg, guestCount, addons, extraMain, extraPasta, extraDessert, liveAddons)
 
+            // Enforce the hard ceiling on the model's plan; never show an over-budget plan
+            if (budgetCeiling && exactTotal > budgetCeiling) {
+              return generateLocalAIResponse(userInput, currentPackages, liveMenuItems, liveAddons, {
+                budgetCeiling,
+                guestCount: guestCount || ceilingGuestCount,
+              })
+            }
+
             const formData: AIFormData = {
               package_id: chosenPkg.id,
               package_name: chosenPkg.name,
@@ -604,5 +760,5 @@ OR if recommending a package:
   }
 
   // 3. Graceful offline / fallback engine
-  return generateLocalAIResponse(userInput, currentPackages, liveMenuItems, liveAddons)
+  return generateLocalAIResponse(userInput, currentPackages, liveMenuItems, liveAddons, localContext)
 }

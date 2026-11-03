@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext'
 import { PasswordStrengthIndicator, getPasswordValidationError } from '../components/PasswordStrengthIndicator'
 import { LoadingScreen } from '../components/LoadingScreen'
 import { ForgotPasswordModal } from '../components/ForgotPasswordModal'
+import { GoogleSignInButton } from '../components/GoogleSignInButton'
 
 interface LoginPageProps {
   onLoginSuccess: (role: 'client' | 'admin') => void
@@ -335,6 +336,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
           >
             {isRegistering ? 'Register & Continue' : 'Sign In'} <ArrowRight size={16} />
           </button>
+
+          <GoogleSignInButton returnView="client" isRegistering={isRegistering} />
 
           <div style={{ marginTop: '20px', textAlign: 'center' }}>
             <button

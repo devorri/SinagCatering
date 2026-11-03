@@ -8,6 +8,7 @@ import {
   Clock,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { isBookingOccupyingDate, isReserveHold } from '../lib/bookingRules'
 
 interface PublicAvailabilityModalProps {
   isOpen: boolean
@@ -96,14 +97,17 @@ export const PublicAvailabilityModal: React.FC<PublicAvailabilityModalProps> = (
     if (dateObj < minBookingDate) {
       return { status: 'too_soon', label: 'Requires 14-day advance', canBook: false }
     }
+    // Rule 1: 50% / 100% bookings lock the date as RESERVED.
+    // Rule 2: "Reserve Only" 48-hour holds show as BLOCKED until paid or expired.
+    const dayBookings = bookings.filter((b) => b.eventDate === dateStr && isBookingOccupyingDate(b))
+    if (dayBookings.some((b) => !isReserveHold(b))) {
+      return { status: 'reserved', label: 'Reserved / Booked', canBook: false }
+    }
+    if (dayBookings.length > 0) {
+      return { status: 'blocked', label: 'Blocked – temporary 48-hour hold', canBook: false }
+    }
     if (blockedDates.includes(dateStr)) {
       return { status: 'blocked', label: 'Blocked / Holiday', canBook: false }
-    }
-    const hasBooking = bookings.some(
-      (b) => b.eventDate === dateStr && b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit',
-    )
-    if (hasBooking) {
-      return { status: 'reserved', label: 'Reserved / Booked', canBook: false }
     }
     return { status: 'available', label: 'Available for Booking', canBook: true }
   }
@@ -207,7 +211,7 @@ export const PublicAvailabilityModal: React.FC<PublicAvailabilityModalProps> = (
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#64748B' }}>
             <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#94A3B8' }} />
-            <span>Blocked / Holiday</span>
+            <span>Blocked / Holiday / 48h Hold</span>
           </div>
         </div>
 
@@ -360,7 +364,7 @@ export const PublicAvailabilityModal: React.FC<PublicAvailabilityModalProps> = (
                     border: isSelected ? '2px solid #059669' : 'none',
                     transition: 'all 0.15s ease',
                   }}
-                  title={canBook ? `Click to select ${item.dateStr} for booking` : status}
+                  title={canBook ? `Click to select ${item.dateStr} for booking` : getDateStatus(item.dateStr).label || status}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: '0.88rem', fontWeight: isSelected || canBook ? 800 : 500, color: textColor }}>

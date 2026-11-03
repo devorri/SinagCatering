@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import {
   AlertCircle,
   ArrowLeft,
@@ -48,6 +49,23 @@ import { CATEGORY_SHOWCASE_GALLERY } from '../data/eventGalleries'
 import { AI_CATALOG_ADDONS, formatMoney, SINAG_PACKAGES } from '../data/packages'
 import type { AIFormData } from '../lib/ai'
 import { EmbeddedCheckoutModal } from '../components/EmbeddedCheckoutModal'
+import { isBookingOccupyingDate, isReserveHold, RESERVATION_FEE, RESERVE_HOLD_HOURS } from '../lib/bookingRules'
+
+// Revision 6: default menu pre-selected for every package on the Customize step
+const DEFAULT_MAIN_DISHES = ['Cordon Bleu', 'Mixed Veggies', 'Fish Fillet']
+const DEFAULT_PASTA_DISHES = ['Carbonara']
+const DEFAULT_DRINKS = ['Cucumber']
+
+const pickAvailable = (wanted: string[], available: string[]): string[] => {
+  const picked: string[] = []
+  wanted.forEach((w) => {
+    const lw = w.toLowerCase()
+    const exact = available.find((a) => a.toLowerCase() === lw)
+    const loose = exact || available.find((a) => a.toLowerCase().startsWith(lw) || a.toLowerCase().includes(lw))
+    if (loose && !picked.includes(loose)) picked.push(loose)
+  })
+  return picked
+}
 
 interface BookingWizardProps {
   onComplete: () => void
@@ -157,9 +175,16 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const [extraMain, setExtraMain] = useState(initialAIFormData?.extra_main_count || 0)
   const [extraPasta, setExtraPasta] = useState(initialAIFormData?.extra_pasta_count || 0)
   const [extraDessert, setExtraDessert] = useState(initialAIFormData?.extra_dessert_count || 0)
-  const [selectedMainDishes, setSelectedMainDishes] = useState<string[]>([])
-  const [selectedPastaDishes, setSelectedPastaDishes] = useState<string[]>([])
-  const [selectedDrinks, setSelectedDrinks] = useState<string[]>(initialAIFormData?.selected_drinks ?? [])
+  const [selectedMainDishes, setSelectedMainDishes] = useState<string[]>(() => pickAvailable(DEFAULT_MAIN_DISHES, availableMainDishes))
+  const [selectedPastaDishes, setSelectedPastaDishes] = useState<string[]>(() => pickAvailable(DEFAULT_PASTA_DISHES, availablePastaDishes))
+  const [selectedDrinks, setSelectedDrinks] = useState<string[]>(() =>
+    initialAIFormData?.selected_drinks && initialAIFormData.selected_drinks.length > 0
+      ? initialAIFormData.selected_drinks
+      : pickAvailable(DEFAULT_DRINKS, availableDrinkOptions),
+  )
+  // Tracks whether the client changed the default dishes for the current package
+  const menuTouchedRef = React.useRef(false)
+  const defaultsPkgRef = React.useRef<string | null>(null)
   const [extraMainDishes, setExtraMainDishes] = useState<string[]>([])
   const [extraPastaDishes, setExtraPastaDishes] = useState<string[]>([])
   const [showExtraDishErrors, setShowExtraDishErrors] = useState(false)
@@ -240,8 +265,17 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     return getMinBookingDate().getMonth()
   })
 
-  // Payment Term Option (50% Downpayment vs. 100% Full Payment Upfront)
-  const [paymentTerm, setPaymentTerm] = useState<'downpayment' | 'full'>('downpayment')
+  // Payment Term Option (100% Full / 50% Downpayment / Reserve Only 48-hour hold)
+  const [paymentTerm, setPaymentTerm] = useState<'downpayment' | 'full' | 'reserve'>('downpayment')
+  const [paidOnlineRef, setPaidOnlineRef] = useState<string | null>(null)
+  const [paymentNotice, setPaymentNotice] = useState('')
+  const choosePaymentTerm = (term: 'downpayment' | 'full' | 'reserve') => {
+    if (paidOnlineRef) {
+      setErrorMsg('Your online payment is already recorded for the selected payment term.')
+      return
+    }
+    setPaymentTerm(term)
+  }
 
   // Step 4 — Client Details & Category Selection
   const [clientName, setClientName] = useState(currentUser?.name || '')
@@ -350,6 +384,40 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     return packages.find((p) => p.id === selectedPkgId) ?? packages[0] ?? SINAG_PACKAGES[0]
   }, [packages, selectedPkgId])
 
+  // Pre-populate the default menu whenever a package is selected
+  React.useEffect(() => {
+    if (!currentPkg) return
+    if (defaultsPkgRef.current === currentPkg.id) return
+    defaultsPkgRef.current = currentPkg.id
+    menuTouchedRef.current = false
+    setSelectedMainDishes(pickAvailable(DEFAULT_MAIN_DISHES, availableMainDishes))
+    setSelectedPastaDishes(pickAvailable(DEFAULT_PASTA_DISHES, availablePastaDishes))
+    setSelectedDrinks((current) => {
+      const aiDrinks = initialAIFormData?.selected_drinks
+      if (aiDrinks && aiDrinks.length > 0 && current.length > 0 && aiDrinks.includes(current[0])) return current
+      return pickAvailable(DEFAULT_DRINKS, availableDrinkOptions)
+    })
+  }, [currentPkg?.id])
+
+  // When the live menu catalog loads/changes, keep selections valid
+  React.useEffect(() => {
+    setSelectedMainDishes((current) => {
+      const valid = current.filter((d) => availableMainDishes.includes(d))
+      if (valid.length === 0 && !menuTouchedRef.current) return pickAvailable(DEFAULT_MAIN_DISHES, availableMainDishes)
+      return valid.length === current.length ? current : valid
+    })
+    setSelectedPastaDishes((current) => {
+      const valid = current.filter((d) => availablePastaDishes.includes(d))
+      if (valid.length === 0 && !menuTouchedRef.current) return pickAvailable(DEFAULT_PASTA_DISHES, availablePastaDishes)
+      return valid.length === current.length ? current : valid
+    })
+    setSelectedDrinks((current) => {
+      const valid = current.filter((d) => availableDrinkOptions.includes(d))
+      if (valid.length === 0 && !menuTouchedRef.current) return pickAvailable(DEFAULT_DRINKS, availableDrinkOptions)
+      return valid.length === current.length ? current : valid
+    })
+  }, [availableMainDishes, availablePastaDishes, availableDrinkOptions])
+
   // Task 3: Precise Math Logic for Package, Buffers, Add-ons & 50% Downpayment
   const calculations = useMemo(() => {
     if (!currentPkg) {
@@ -394,7 +462,9 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
   // Dynamic payable amount based on payment term (50% downpayment vs. 100% full payment)
   const payableAmount = useMemo(() => {
-    return paymentTerm === 'full' ? calculations.totalPrice : calculations.downpayment
+    if (paymentTerm === 'full') return calculations.totalPrice
+    if (paymentTerm === 'reserve') return Math.min(RESERVATION_FEE, calculations.totalPrice)
+    return calculations.downpayment
   }, [paymentTerm, calculations.totalPrice, calculations.downpayment])
 
   // Dedicated AI Recommendation Calculation (For Step 1 AI Tab)
@@ -406,6 +476,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
   const selectedDishCount = selectedMainDishes.length + selectedPastaDishes.length
   const toggleDish = (dish: string, kind: 'main' | 'pasta') => {
+    menuTouchedRef.current = true
     if (kind === 'main') {
       setSelectedMainDishes((current) =>
         current.includes(dish)
@@ -426,6 +497,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   }
 
   const toggleDrink = (drink: string) => {
+    menuTouchedRef.current = true
     setSelectedDrinks((current) =>
       current.includes(drink)
         ? []
@@ -446,13 +518,15 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   }, [currentYear, currentMonth])
 
   const getBookingCountForDate = (dateStr: string) => {
-    return bookings.filter(
-      (b) => b.eventDate === dateStr && b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit',
-    ).length
+    return bookings.filter((b) => b.eventDate === dateStr && isBookingOccupyingDate(b)).length
   }
 
   const hasPendingBookings = (dateStr: string) => {
-    return bookings.some((b) => b.eventDate === dateStr && b.bookingStatus === 'pending')
+    return bookings.some((b) => b.eventDate === dateStr && b.bookingStatus === 'pending' && isBookingOccupyingDate(b))
+  }
+
+  const hasTemporaryHold = (dateStr: string) => {
+    return bookings.some((b) => b.eventDate === dateStr && isReserveHold(b) && isBookingOccupyingDate(b))
   }
 
   const monthsList = [
@@ -516,9 +590,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       return
     }
     const isBlocked = blockedDates.includes(dateStr)
-    const isBooked = bookings.some(
-      (b) => b.eventDate === dateStr && b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit',
-    )
+    const isBooked = bookings.some((b) => b.eventDate === dateStr && isBookingOccupyingDate(b))
     const bookingCount = getBookingCountForDate(dateStr)
 
     if (isBlocked) {
@@ -617,7 +689,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       if (new Date(`${eventDate}T00:00:00`) < minValidDate) {
         return { valid: false, error: 'Selected date requires at least 14 days advance booking.' }
       }
-      const isBooked = bookings.some((b) => b.eventDate === eventDate && b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit')
+      const isBooked = bookings.some((b) => b.eventDate === eventDate && isBookingOccupyingDate(b))
       if (isBooked) {
         return { valid: false, error: 'Selected date is already reserved. Please choose another date.' }
       }
@@ -633,12 +705,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       if (eventType === 'Others (Please Specify)' && !customEventType.trim()) {
         return { valid: false, error: 'Please specify your custom event type.' }
       }
-      if (!gcashRefNumber.trim()) {
-        return { valid: false, error: 'Please enter your payment transaction reference number.' }
-      }
-      if (!proofOfPaymentUrl) {
-        return { valid: false, error: `Please attach a screenshot proof of your ${paymentTerm === 'full' ? 'full payment' : '50% downpayment'} receipt.` }
-      }
+      // Payment receipt upload is optional at checkout (it can be uploaded later in My Bookings)
       return { valid: true }
     }
     return { valid: true }
@@ -814,6 +881,8 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const handleSubmit = async () => {
     setErrorMsg('')
     setIsSubmitting(true)
+    const isReserve = paymentTerm === 'reserve'
+    const termLabel = paymentTerm === 'full' ? '100% FULL PAYMENT UPFRONT' : paymentTerm === 'reserve' ? 'RESERVE ONLY (₱2,000 RESERVATION FEE)' : '50% DOWNPAYMENT'
 
     if (!currentUser && (!clientName.trim() || !clientEmail.trim())) {
       setErrorMsg('Missing contact details.')
@@ -875,18 +944,20 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
         extraPastaDishes: extraPastaDishes.slice(0, extraPasta),
       },
       totalPrice: calculations.totalPrice,
-      downpaymentAmount: payableAmount,
+      downpaymentAmount: paymentTerm === 'full' ? calculations.totalPrice : paymentTerm === 'reserve' ? payableAmount : calculations.downpayment,
       paymentTerm,
-      paymentMethod,
-      gcashRefNumber: gcashRefNumber.trim(),
+      paymentMethod: paidOnlineRef ? ('paymongo' as const) : paymentMethod,
+      gcashRefNumber: paidOnlineRef || gcashRefNumber.trim(),
       proofOfPaymentUrl: proofOfPaymentUrl || null,
-      notes: `${currentPkg.pricePerHead !== undefined ? 'Per-head pricing; ' : `Tier: ${calculations.tier.pax} pax + ${FOOD_BUFFER_PAX} pax buffer. `}Selected mains: ${selectedMainDishes.join(', ') || 'none'}. Selected pasta: ${selectedPastaDishes.join(', ') || 'none'}. Selected drink: ${selectedDrinks.join(', ') || 'none'}. Extra mains: ${extraMainDishes.slice(0, extraMain).join(', ') || 'none'}. Extra pasta: ${extraPastaDishes.slice(0, extraPasta).join(', ') || 'none'}. Extra Dessert: ${extraDessert}. Flat add-ons: ${selectedAIAddonIds.join(', ') || 'none'}.\nPayment Term: ${paymentTerm === 'full' ? '100% FULL PAYMENT UPFRONT' : '50% DOWNPAYMENT'}. Payment: ${paymentMethod === 'bank_transfer' ? 'MARIBANK / BANK TRANSFER' : 'QR PH / GCASH'} (Ref: ${gcashRefNumber.trim()}). Receipt proof attached.\n${notes}`,
+      notes: `${currentPkg.pricePerHead !== undefined ? 'Per-head pricing; ' : `Tier: ${calculations.tier.pax} pax + ${FOOD_BUFFER_PAX} pax buffer. `}Selected mains: ${selectedMainDishes.join(', ') || 'none'}. Selected pasta: ${selectedPastaDishes.join(', ') || 'none'}. Selected drink: ${selectedDrinks.join(', ') || 'none'}. Extra mains: ${extraMainDishes.slice(0, extraMain).join(', ') || 'none'}. Extra pasta: ${extraPastaDishes.slice(0, extraPasta).join(', ') || 'none'}. Extra Dessert: ${extraDessert}. Flat add-ons: ${selectedAIAddonIds.join(', ') || 'none'}.\nPayment Term: ${termLabel}. ${paidOnlineRef ? `Paid online via PayMongo (Ref: ${paidOnlineRef}).` : proofOfPaymentUrl || gcashRefNumber.trim() ? `Payment: ${paymentMethod === 'bank_transfer' ? 'MARIBANK / BANK TRANSFER' : 'QR PH / GCASH'} (Ref: ${gcashRefNumber.trim() || 'n/a'}). Receipt proof attached.` : 'Receipt not uploaded yet (optional at checkout).'}\n${notes}`,
     }
 
     const confirmed = await confirm({
       title: 'Confirm Event Reservation',
-      message: `Are you ready to submit your catering booking for ${guestCount} guests on ${eventDate} (${currentPkg.name})?\n\nTotal package amount: ₱${calculations.totalPrice.toLocaleString()} (${paymentTerm === 'full' ? '100% Full Payment Upfront' : '50% Downpayment'}: ₱${payableAmount.toLocaleString()}).`,
-      confirmText: 'Submit Reservation',
+      message: isReserve
+        ? `Reserve ${eventDate} for ${guestCount} guests (${currentPkg.name})?\n\nReservation fee: ₱${payableAmount.toLocaleString()} (deducted from your ₱${calculations.totalPrice.toLocaleString()} total). ${paidOnlineRef || proofOfPaymentUrl ? 'Your payment will be verified by our team.' : 'Pay it within 48 hours and upload the receipt in My Bookings, or the hold automatically expires.'}`
+        : `Are you ready to submit your catering booking for ${guestCount} guests on ${eventDate} (${currentPkg.name})?\n\nTotal package amount: ₱${calculations.totalPrice.toLocaleString()} (${termLabel}: ₱${payableAmount.toLocaleString()}).`,
+      confirmText: isReserve ? 'Reserve My Date' : 'Complete Booking',
       cancelText: 'Review Details',
       variant: 'primary',
     })
@@ -895,14 +966,20 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       return
     }
 
-    createBooking(bookingData)
+    createBooking(bookingData, undefined, { paidOnline: Boolean(paidOnlineRef) })
 
     setIsCompleted(true)
-    setSuccessMsg(paymentTerm === 'full'
-      ? 'Booking submitted successfully! You will receive an SMS and email notification with your booking reference. Please wait for payment verification.'
-      : 'Booking submitted successfully! You will receive an SMS and email notification with your booking reference. Please wait for downpayment verification.')
+    setSuccessMsg(
+      isReserve
+        ? (paidOnlineRef || proofOfPaymentUrl
+          ? 'Reservation fee submitted! Your date is reserved while we verify your payment. Redirecting to My Bookings…'
+          : `Your date is temporarily held! Please pay the ₱${payableAmount.toLocaleString()} reservation fee within 2 days (48 hours) to lock in your reservation, or your booking will automatically expire. Redirecting to My Bookings…`)
+        : paidOnlineRef
+        ? 'Booking complete and paid online! Your date is locked. Redirecting to My Bookings…'
+        : 'Booking complete! Your date is locked on our calendar. You can upload your payment receipt anytime in My Bookings. Redirecting…',
+    )
     setIsSubmitting(false)
-    setTimeout(onComplete, 2400)
+    setTimeout(onComplete, isReserve ? 2600 : 1500)
   }
 
   // Active showcase photos for selected category (Checklist Item 5)
@@ -912,6 +989,23 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   return (
     <div className="wizard-container">
       {/* Step Indicators */}
+      {/* Mobile: one step at a time */}
+      <div className="wizard-progress-mobile" aria-live="polite">
+        <div className="wizard-progress-mobile-row">
+          <span className="wizard-progress-mobile-dot">{currentStep + 1}</span>
+          <div className="wizard-progress-mobile-text">
+            <span>Step {currentStep + 1} of {STEP_LABELS.length}</span>
+            <strong>{STEP_LABELS[currentStep]}</strong>
+          </div>
+          {currentStep < STEP_LABELS.length - 1 && (
+            <span className="wizard-progress-mobile-next">Next: {STEP_LABELS[currentStep + 1]}</span>
+          )}
+        </div>
+        <div className="wizard-progress-mobile-bar" role="progressbar" aria-valuemin={1} aria-valuemax={STEP_LABELS.length} aria-valuenow={currentStep + 1}>
+          <span style={{ width: `${((currentStep + 1) / STEP_LABELS.length) * 100}%` }} />
+        </div>
+      </div>
+
       <div className="wizard-progress" role="navigation" aria-label="Booking Progress Stepper">
         {STEP_LABELS.map((label, idx) => {
           const isCompleted = idx < currentStep
@@ -960,6 +1054,13 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
         <div className="alert-box success" style={{ marginBottom: '24px', background: '#D1FAE5', border: '1px solid #10B981' }}>
           <Check size={18} style={{ color: '#059669', flexShrink: 0 }} />
           <span style={{ color: '#065F46' }}>{successMsg}</span>
+        </div>
+      )}
+
+      {paymentNotice && !successMsg && (
+        <div className="alert-box success" role="status" style={{ marginBottom: '24px', background: '#ECFDF5', border: '1px solid #6EE7B7' }}>
+          <CheckCircle size={18} style={{ color: '#059669', flexShrink: 0 }} />
+          <span style={{ color: '#065F46' }}>{paymentNotice}</span>
         </div>
       )}
 
@@ -2460,17 +2561,20 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 const isBlocked = blockedDates.includes(item.dateStr)
                 const minValidDate = getMinBookingDate()
                 const isTooSoon = new Date(`${item.dateStr}T00:00:00`) < minValidDate
-                const isBooked = bookings.some((b) => b.eventDate === item.dateStr && b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit')
+                const isHeld = hasTemporaryHold(item.dateStr)
+                const isBooked = bookings.some((b) => b.eventDate === item.dateStr && isBookingOccupyingDate(b))
                 const bookingCount = getBookingCountForDate(item.dateStr)
                 const hasPending = hasPendingBookings(item.dateStr)
 
                 const isClickable = !isTooSoon && !isBlocked && !isBooked
                 const isSelected = eventDate === item.dateStr && isClickable
 
+                const isReservedByPayment = bookings.some((b) => b.eventDate === item.dateStr && isBookingOccupyingDate(b) && !isReserveHold(b))
+
                 let stateClass = 'available'
                 if (isTooSoon) stateClass = 'lead-time-disabled'
-                else if (isBlocked) stateClass = 'blocked'
-                else if (isBooked) stateClass = 'booked'
+                else if (isReservedByPayment) stateClass = 'booked'
+                else if (isBlocked || isHeld) stateClass = 'blocked'
                 else if (hasPending) stateClass = 'pending-booking'
 
                 return (
@@ -2480,14 +2584,16 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     className={`calendar-day-cell ${stateClass} ${isSelected ? 'selected' : ''} ${!isClickable ? 'disabled' : ''}`}
                     onClick={() => isClickable && handleDateSelect(item.dateStr)}
                     disabled={!isClickable}
-                    title={isTooSoon ? 'Requires at least 14 days advance booking' : isBlocked ? 'Blocked date' : isBooked ? 'Already reserved' : 'Available for booking'}
+                    title={isTooSoon ? 'Requires at least 14 days advance booking' : isBlocked ? 'Blocked date' : isHeld ? `Temporarily held (${RESERVE_HOLD_HOURS}-hour hold)` : isBooked ? 'Already reserved' : 'Available for booking'}
                   >
                     <span className="calendar-day-number">{item.day}</span>
                     {isTooSoon ? (
                       <span className="calendar-lead-time-tag">14d notice</span>
-                    ) : isBlocked ? (
+                    ) : isReservedByPayment ? (
+                      <span className="calendar-count-tag">Reserved</span>
+                    ) : isBlocked || isHeld ? (
                       <span className="calendar-blocked-tag">
-                        Blocked
+                        {isHeld && !isBlocked ? 'On Hold' : 'Blocked'}
                       </span>
                     ) : bookingCount > 0 ? (
                       <span className="calendar-count-tag">
@@ -2507,7 +2613,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
             <div className="calendar-legend-bar">
               <div className="legend-item"><span className="legend-dot available" /> Available</div>
               <div className="legend-item"><span className="legend-dot booked" /> Reserved</div>
-              <div className="legend-item"><span className="legend-dot blocked" /> Blocked</div>
+              <div className="legend-item"><span className="legend-dot blocked" /> Blocked / 48h Hold</div>
               <div className="legend-item"><span className="legend-dot pending-booking" /> Pending Request</div>
               <div className="legend-item"><span className="legend-dot" style={{ background: '#9CA3AF' }} /> 14-Day Lead Buffer</div>
             </div>
@@ -2660,7 +2766,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
                     {/* Option 1: 50% Downpayment */}
                     <div
-                      onClick={() => setPaymentTerm('downpayment')}
+                      onClick={() => choosePaymentTerm('downpayment')}
                       style={{
                         padding: '16px',
                         borderRadius: 'var(--radius-sm)',
@@ -2680,7 +2786,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                             type="radio"
                             name="paymentTerm"
                             checked={paymentTerm === 'downpayment'}
-                            onChange={() => setPaymentTerm('downpayment')}
+                            onChange={() => choosePaymentTerm('downpayment')}
                             style={{ accentColor: 'var(--terracotta)', cursor: 'pointer' }}
                           />
                           <strong style={{ fontSize: '0.95rem', color: 'var(--ink)' }}>50% Downpayment</strong>
@@ -2699,7 +2805,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
                     {/* Option 2: 100% Full Payment Upfront */}
                     <div
-                      onClick={() => setPaymentTerm('full')}
+                      onClick={() => choosePaymentTerm('full')}
                       style={{
                         padding: '16px',
                         borderRadius: 'var(--radius-sm)',
@@ -2719,7 +2825,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                             type="radio"
                             name="paymentTerm"
                             checked={paymentTerm === 'full'}
-                            onChange={() => setPaymentTerm('full')}
+                            onChange={() => choosePaymentTerm('full')}
                             style={{ accentColor: '#059669', cursor: 'pointer' }}
                           />
                           <strong style={{ fontSize: '0.95rem', color: 'var(--ink)' }}>100% Full Payment Upfront</strong>
@@ -2735,16 +2841,71 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                         Fully settle entire package & add-on bill upfront today. Enjoy peace of mind with ₱0 balance on event day.
                       </span>
                     </div>
+
+                    {/* Option 3: Reserve Only (48-hour temporary hold) */}
+                    <div
+                      onClick={() => choosePaymentTerm('reserve')}
+                      style={{
+                        padding: '16px',
+                        borderRadius: 'var(--radius-sm)',
+                        border: paymentTerm === 'reserve' ? '2px solid #B45309' : '1px solid var(--line)',
+                        background: paymentTerm === 'reserve' ? '#FFFBEB' : '#FFFFFF',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        boxShadow: paymentTerm === 'reserve' ? '0 4px 12px rgba(180, 83, 9, 0.10)' : 'none',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <input
+                            type="radio"
+                            name="paymentTerm"
+                            checked={paymentTerm === 'reserve'}
+                            onChange={() => choosePaymentTerm('reserve')}
+                            style={{ accentColor: '#B45309', cursor: 'pointer' }}
+                          />
+                          <strong style={{ fontSize: '0.95rem', color: 'var(--ink)' }}>Reserve Only</strong>
+                        </div>
+                        <span style={{ fontSize: '0.7rem', fontWeight: 700, background: '#FEF3C7', color: '#92400E', padding: '2px 8px', borderRadius: '4px' }}>
+                          {RESERVE_HOLD_HOURS}-HOUR HOLD
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#B45309', margin: '4px 0 2px' }}>
+                        {formatMoney(RESERVATION_FEE, currentPkg.currency)}
+                      </div>
+                      <span style={{ fontSize: '0.76rem', color: 'var(--muted)', lineHeight: 1.4 }}>
+                        Reservation fee to lock your date. Pay it within 48 hours — it&apos;s deducted from your total. Remaining balance: {formatMoney(Math.max(0, calculations.totalPrice - RESERVATION_FEE), currentPkg.currency)}.
+                      </span>
+                    </div>
                   </div>
                 </div>
 
-                <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0 0 16px' }}>
-                  To reserve and lock your celebration date, {paymentTerm === 'full' ? (
-                    <>a <strong>100% full upfront payment</strong> of <strong style={{ color: 'var(--ink)' }}>{formatMoney(calculations.totalPrice, currentPkg.currency)}</strong></>
-                  ) : (
-                    <>a required <strong>50% downpayment</strong> of <strong style={{ color: 'var(--ink)' }}>{formatMoney(calculations.downpayment, currentPkg.currency)}</strong></>
-                  )} is required. Please transfer via QR Ph / GCash or MariBank and attach your proof below.
-                </p>
+                {paymentTerm === 'reserve' ? (
+                  <div style={{ background: '#FFFBEB', border: '1.5px solid #FCD34D', borderRadius: 'var(--radius-md)', padding: '16px 18px', marginBottom: '8px', display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                    <AlertCircle size={20} style={{ color: '#B45309', flexShrink: 0, marginTop: '2px' }} />
+                    <div style={{ fontSize: '0.85rem', color: '#78350F', lineHeight: 1.55 }}>
+                      <strong style={{ display: 'block', fontSize: '0.95rem', marginBottom: '4px' }}>How the ₱2,000 reservation works</strong>
+                      Your date is held (shown as <strong>Blocked</strong>) for {RESERVE_HOLD_HOURS} hours. Pay the <strong>{formatMoney(RESERVATION_FEE, currentPkg.currency)}</strong> reservation
+                      fee and upload the receipt — now below, or later from <strong>My Bookings</strong> — within that window to lock the date as <strong>Reserved</strong>.
+                      The fee is deducted from your total ({formatMoney(calculations.totalPrice, currentPkg.currency)}). If no payment is uploaded in time,
+                      the hold expires automatically and the date is released. You&apos;ll get an SMS confirmation right after booking.
+                    </div>
+                  </div>
+                ) : (
+                  <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0 0 16px' }}>
+                    To lock your celebration date, {paymentTerm === 'full' ? (
+                      <>a <strong>100% full upfront payment</strong> of <strong style={{ color: 'var(--ink)' }}>{formatMoney(calculations.totalPrice, currentPkg.currency)}</strong></>
+                    ) : (
+                      <>a <strong>50% downpayment</strong> of <strong style={{ color: 'var(--ink)' }}>{formatMoney(calculations.downpayment, currentPkg.currency)}</strong></>
+                    )} applies. Transfer via QR Ph / GCash or MariBank — uploading your receipt now is <strong>optional</strong>; you can also upload it later from <strong>My Bookings</strong>.
+                  </p>
+                )}
+
+                {(
+                <>
 
                 {/* Streamlined Payment Method Tabs (Action Item 1) */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
@@ -2892,7 +3053,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                           </button>
                         </div>
                         <div style={{ fontSize: '0.92rem', color: 'var(--ink-light)', marginTop: '12px', padding: '12px 16px', background: '#F8FAFC', borderRadius: '8px', border: '1.5px solid #E2E8F0' }}>
-                          {paymentTerm === 'full' ? 'Required Full Upfront Payment' : 'Required 50% Downpayment'}:{' '}
+                          {paymentTerm === 'full' ? 'Required Full Upfront Payment' : paymentTerm === 'reserve' ? 'Reservation Fee' : 'Required 50% Downpayment'}:{' '}
                           <strong style={{ color: paymentTerm === 'full' ? '#059669' : 'var(--terracotta)', fontSize: '1.35rem', display: 'block', marginTop: '4px' }}>
                             {formatMoney(payableAmount, currentPkg.currency)}
                           </strong>
@@ -3005,7 +3166,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                           </button>
                         </div>
                         <div style={{ fontSize: '0.92rem', color: 'var(--ink-light)', marginTop: '12px', padding: '12px 16px', background: '#F8FAFC', borderRadius: '8px', border: '1.5px solid #E2E8F0' }}>
-                          {paymentTerm === 'full' ? 'Required Full Upfront Payment' : 'Required 50% Downpayment'}:{' '}
+                          {paymentTerm === 'full' ? 'Required Full Upfront Payment' : paymentTerm === 'reserve' ? 'Reservation Fee' : 'Required 50% Downpayment'}:{' '}
                           <strong style={{ color: paymentTerm === 'full' ? '#059669' : 'var(--terracotta)', fontSize: '1.35rem', display: 'block', marginTop: '4px' }}>
                             {formatMoney(payableAmount, currentPkg.currency)}
                           </strong>
@@ -3033,6 +3194,11 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       </span>
                     </div>
                   </div>
+                  {paidOnlineRef ? (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 800, fontSize: '0.85rem', color: '#166534', background: '#DCFCE7', padding: '8px 14px', borderRadius: '8px' }}>
+                      <CheckCircle size={15} /> Paid online · Ref {paidOnlineRef}
+                    </span>
+                  ) : (
                   <button
                     type="button"
                     onClick={() => setIsPayMongoModalOpen(true)}
@@ -3054,6 +3220,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     <CreditCard size={15} />
                     <span>Pay Online with PayMongo</span>
                   </button>
+                  )}
                 </div>
 
                 {/* Action Item 2: Integrated Mandatory Proof Upload Panel (PHOTO 4B) */}
@@ -3065,19 +3232,19 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                         Submit Transaction Proof
                       </h4>
                     </div>
-                    <span style={{ fontSize: '0.72rem', background: '#FEF2F2', color: '#991B1B', border: '1px solid #FECACA', padding: '3px 10px', borderRadius: '999px', fontWeight: 700, letterSpacing: '0.04em' }}>
-                      Required to Confirm
+                    <span style={{ fontSize: '0.72rem', background: '#F0F9FF', color: '#075985', border: '1px solid #BAE6FD', padding: '3px 10px', borderRadius: '999px', fontWeight: 700, letterSpacing: '0.04em' }}>
+                      Optional
                     </span>
                   </div>
 
                   <p style={{ margin: '0 0 16px', fontSize: '0.82rem', color: 'var(--muted)', lineHeight: 1.45 }}>
-                    Enter your GCash / MariBank reference number and attach your payment receipt screenshot below so our admin team can verify and lock in your reservation date.
+                    Already paid? Enter your GCash / MariBank reference number and attach your receipt screenshot so our admin team can verify it faster. You can also do this later from My Bookings.
                   </p>
 
                   <div className="form-group" style={{ marginBottom: '14px' }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', fontWeight: 600, color: 'var(--ink)', marginBottom: '6px' }}>
                       <Receipt size={13} style={{ color: 'var(--terracotta)' }} />
-                      <span>Reference Number <strong style={{ color: '#DC2626' }}>*</strong></span>
+                      <span>Reference Number <em style={{ color: 'var(--muted)', fontWeight: 500 }}>(optional)</em></span>
                     </label>
                     <input
                       type="text"
@@ -3085,7 +3252,6 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       placeholder="e.g. 902148923019 or MariBank transaction ID"
                       value={gcashRefNumber}
                       onChange={(e) => setGcashRefNumber(e.target.value)}
-                      required
                     />
                     <span style={{ fontSize: '0.74rem', color: 'var(--muted)', marginTop: '4px', display: 'block' }}>
                       Found on your GCash SMS / receipt or banking app transfer confirmation screen.
@@ -3095,12 +3261,12 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   <div className="form-group" style={{ marginBottom: '8px' }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', fontWeight: 600, color: 'var(--ink)', marginBottom: '6px' }}>
                       <UploadCloud size={13} style={{ color: 'var(--terracotta)' }} />
-                      <span>Screenshot Proof <strong style={{ color: '#DC2626' }}>*</strong></span>
+                      <span>Screenshot Proof <em style={{ color: 'var(--muted)', fontWeight: 500 }}>(optional)</em></span>
                     </label>
 
                     <label
                       htmlFor="booking-proof-upload"
-                      className={`portal-dropzone ${proofOfPaymentUrl ? 'has-file' : ''} ${isDraggingProof ? 'drag-over' : ''} ${errorMsg && !proofOfPaymentUrl ? 'dropzone-error' : ''}`}
+                      className={`portal-dropzone ${proofOfPaymentUrl ? 'has-file' : ''} ${isDraggingProof ? 'drag-over' : ''}`}
                       onDragOver={(e) => {
                         e.preventDefault()
                         setIsDraggingProof(true)
@@ -3208,10 +3374,12 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     )}
 
                     <span style={{ fontSize: '0.74rem', color: 'var(--muted)', marginTop: '6px', display: 'block' }}>
-                      Both Reference Number and Receipt Screenshot are required before proceeding to confirmation.
+                      Optional — skip this now and upload your receipt anytime from My Bookings.
                     </span>
                   </div>
                 </div>
+                </>
+                )}
               </div>
             </div>
 
@@ -3607,79 +3775,104 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 </div>
 
                 {/* Highlighted Payment Term Banner */}
-                <div
-                  style={{
-                    marginTop: '18px',
-                    background: paymentTerm === 'full' ? '#ECFDF5' : '#FFF7ED',
-                    border: paymentTerm === 'full' ? '1.5px solid #6EE7B7' : '1.5px solid #FDBA74',
-                    borderRadius: '10px',
-                    padding: '14px 18px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    flexWrap: 'wrap',
-                    gap: '12px',
-                  }}
-                >
-                  <div>
-                    <span style={{ display: 'block', fontSize: '0.7rem', fontWeight: 800, color: paymentTerm === 'full' ? '#065F46' : '#9A3412', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      {paymentTerm === 'full' ? 'Full Settlement Term' : 'Lock-In Requirement'}
-                    </span>
-                    <strong style={{ fontSize: '1.1rem', color: paymentTerm === 'full' ? '#065F46' : '#9A3412', display: 'block' }}>
-                      {paymentTerm === 'full' ? '100% Full Payment Upfront' : `Required 50% Downpayment: ${formatMoney(calculations.downpayment, currentPkg.currency)}`}
-                    </strong>
-                    <span style={{ fontSize: '0.76rem', color: paymentTerm === 'full' ? '#047857' : '#B45309' }}>
-                      {paymentTerm === 'full'
-                        ? 'Event bill fully settled upfront. Zero (₱0) balance remaining on event day.'
-                        : `Remaining 50% balance (${formatMoney(calculations.totalPrice - calculations.downpayment, currentPkg.currency)}) payable on event day.`}
-                    </span>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '1.45rem', fontWeight: 800, color: paymentTerm === 'full' ? '#059669' : 'var(--terracotta)' }}>
-                      {formatMoney(payableAmount, currentPkg.currency)}
+                {(() => {
+                  const tone = paymentTerm === 'full'
+                    ? { bg: '#ECFDF5', border: '#6EE7B7', ink: '#065F46', sub: '#047857', big: '#059669', pill: '#059669' }
+                    : paymentTerm === 'reserve'
+                    ? { bg: '#FFFBEB', border: '#FCD34D', ink: '#92400E', sub: '#B45309', big: '#B45309', pill: '#B45309' }
+                    : { bg: '#FFF7ED', border: '#FDBA74', ink: '#9A3412', sub: '#B45309', big: 'var(--terracotta)', pill: '#EA580C' }
+                  return (
+                    <div
+                      style={{
+                        marginTop: '18px',
+                        background: tone.bg,
+                        border: `1.5px solid ${tone.border}`,
+                        borderRadius: '10px',
+                        padding: '14px 18px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexWrap: 'wrap',
+                        gap: '12px',
+                      }}
+                    >
+                      <div>
+                        <span style={{ display: 'block', fontSize: '0.7rem', fontWeight: 800, color: tone.ink, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          {paymentTerm === 'full' ? 'Full Settlement Term' : paymentTerm === 'reserve' ? 'Reservation Fee' : 'Lock-In Requirement'}
+                        </span>
+                        <strong style={{ fontSize: '1.1rem', color: tone.ink, display: 'block' }}>
+                          {paymentTerm === 'full'
+                            ? '100% Full Payment Upfront'
+                            : paymentTerm === 'reserve'
+                            ? `Reserve Only – ${formatMoney(payableAmount, currentPkg.currency)} Reservation Fee`
+                            : `50% Downpayment: ${formatMoney(calculations.downpayment, currentPkg.currency)}`}
+                        </strong>
+                        <span style={{ fontSize: '0.76rem', color: tone.sub }}>
+                          {paymentTerm === 'full'
+                            ? 'Event bill fully settled upfront. Zero (₱0) balance remaining on event day.'
+                            : paymentTerm === 'reserve'
+                            ? `Pay within 48 hours to lock your date. Remaining balance (${formatMoney(Math.max(0, calculations.totalPrice - payableAmount), currentPkg.currency)}) due before the event.`
+                            : `Remaining 50% balance (${formatMoney(calculations.totalPrice - calculations.downpayment, currentPkg.currency)}) payable on event day.`}
+                        </span>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '1.45rem', fontWeight: 800, color: tone.big }}>
+                          {formatMoney(payableAmount, currentPkg.currency)}
+                        </div>
+                        <span style={{ fontSize: '0.68rem', fontWeight: 700, background: tone.pill, color: '#FFF', padding: '2px 8px', borderRadius: '4px' }}>
+                          {paymentTerm === 'full' ? (paidOnlineRef ? 'PAID ONLINE' : 'FULL PAYMENT') : paymentTerm === 'reserve' ? (paidOnlineRef ? 'PAID ONLINE' : 'DUE WITHIN 48 HOURS') : (paidOnlineRef ? 'PAID ONLINE' : 'DOWNPAYMENT')}
+                        </span>
+                      </div>
                     </div>
-                    <span style={{ fontSize: '0.68rem', fontWeight: 700, background: paymentTerm === 'full' ? '#059669' : '#EA580C', color: '#FFF', padding: '2px 8px', borderRadius: '4px' }}>
-                      {paymentTerm === 'full' ? 'PAID IN FULL' : 'DUE UPON RESERVATION'}
-                    </span>
-                  </div>
-                </div>
+                  )
+                })()}
               </div>
 
               {/* Submitted Payment Details */}
               <div style={{ padding: '20px 0 6px' }}>
                 <h4 style={{ margin: '0 0 12px', fontSize: '0.82rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <CreditCard size={13} style={{ color: 'var(--terracotta)' }} /> Submitted Payment Details
+                  <CreditCard size={13} style={{ color: 'var(--terracotta)' }} /> Payment Details
                 </h4>
 
-                <div style={{ background: '#F0FDF4', border: '1.5px solid #86EFAC', borderRadius: '10px', padding: '16px' }}>
+                <div style={{ background: paidOnlineRef || proofOfPaymentUrl ? '#F0FDF4' : '#F8FAFC', border: `1.5px solid ${paidOnlineRef || proofOfPaymentUrl ? '#86EFAC' : '#E2E8F0'}`, borderRadius: '10px', padding: '16px' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: proofOfPaymentUrl ? '12px' : '0' }}>
                     <div>
-                      <span style={{ display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', color: '#166534', fontWeight: 700, letterSpacing: '0.05em' }}>
+                      <span style={{ display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', color: '#475569', fontWeight: 700, letterSpacing: '0.05em' }}>
                         Selected Payment Term
                       </span>
-                      <strong style={{ fontSize: '0.92rem', color: '#14532D' }}>
-                        {paymentTerm === 'full' ? '100% Full Payment Upfront' : '50% Downpayment'}
+                      <strong style={{ fontSize: '0.92rem', color: 'var(--ink)' }}>
+                        {paymentTerm === 'full' ? '100% Full Payment Upfront' : paymentTerm === 'reserve' ? `Reserve Only (${formatMoney(payableAmount, currentPkg.currency)} fee)` : '50% Downpayment'}
                       </strong>
                     </div>
-                    <div>
-                      <span style={{ display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', color: '#166534', fontWeight: 700, letterSpacing: '0.05em' }}>
-                        Selected Payment Method
-                      </span>
-                      <strong style={{ fontSize: '0.92rem', color: '#14532D' }}>
-                        {paymentMethod === 'bank_transfer' ? 'MariBank / Bank Transfer' : 'QR Ph / GCash'}
-                      </strong>
-                    </div>
-                    <div>
-                      <span style={{ display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', color: '#166534', fontWeight: 700, letterSpacing: '0.05em' }}>
-                        Entered Reference Number
-                      </span>
-                      <strong style={{ fontSize: '0.95rem', color: '#14532D', fontFamily: 'monospace' }}>
-                        {gcashRefNumber || 'N/A'}
-                      </strong>
-                    </div>
+                    {(
+                      <>
+                        <div>
+                          <span style={{ display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', color: '#475569', fontWeight: 700, letterSpacing: '0.05em' }}>
+                            Payment Method
+                          </span>
+                          <strong style={{ fontSize: '0.92rem', color: 'var(--ink)' }}>
+                            {paidOnlineRef ? 'PayMongo (Online)' : paymentMethod === 'bank_transfer' ? 'MariBank / Bank Transfer' : 'QR Ph / GCash'}
+                          </strong>
+                        </div>
+                        <div>
+                          <span style={{ display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', color: '#475569', fontWeight: 700, letterSpacing: '0.05em' }}>
+                            Reference Number
+                          </span>
+                          <strong style={{ fontSize: '0.95rem', color: 'var(--ink)', fontFamily: 'monospace' }}>
+                            {paidOnlineRef || gcashRefNumber || 'Not provided yet'}
+                          </strong>
+                        </div>
+                      </>
+                    )}
                   </div>
 
-                  {proofOfPaymentUrl && (
+                  {!paidOnlineRef && !proofOfPaymentUrl && (
+                    <p style={{ margin: '12px 0 0', fontSize: '0.8rem', color: '#475569', lineHeight: 1.45 }}>
+                      No receipt attached — that&apos;s okay. You can upload your payment receipt anytime from <strong>My Bookings</strong> after completing your booking.
+                    </p>
+                  )}
+
+                  {proofOfPaymentUrl && !paidOnlineRef && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#FFFFFF', border: '1px solid #BBF7D0', padding: '10px 14px', borderRadius: '8px' }}>
                       <img
                         src={proofOfPaymentUrl}
@@ -3702,7 +3895,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 </div>
 
                 <p style={{ margin: '14px 0 0', fontSize: '0.74rem', color: 'var(--muted)', textAlign: 'center', lineHeight: 1.4 }}>
-                  * This digital provisional summary confirms your booking submission. A binding catering contract and official invoice will be generated upon downpayment clearance by our banquet team.
+                  * This digital provisional summary confirms your booking submission. A binding catering contract and official invoice will be generated once your payment is verified by our banquet team.
                 </p>
               </div>
             </div>
@@ -3711,8 +3904,8 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       )}
 
       {/* Navigation Buttons */}
-      {!successMsg && (
-        <div className="wizard-nav-buttons">
+      {!isCompleted && typeof document !== 'undefined' && createPortal(
+        <div className="wizard-nav-buttons wizard-nav-sticky">
           <button
             type="button"
             className="btn-hero-outline wizard-back-btn"
@@ -3751,19 +3944,22 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 <>⏳ Submitting Request...</>
               ) : (
                 <>
-                  <ShieldCheck size={18} /> Submit Reservation Request
+                  <ShieldCheck size={18} /> {paymentTerm === 'reserve' ? 'Reserve My Date' : 'Complete Booking'}
                 </>
               )}
             </button>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
 
-      {currentStep === 4 && !successMsg && (
+      {currentStep === 4 && !isCompleted && (
         <p style={{ color: 'var(--muted)', fontSize: '0.82rem', textAlign: 'center', marginTop: '14px' }}>
-          Your reservation will be saved, and confirmation notifications will trigger via SMS and email.
+          After you complete your booking you&apos;ll be taken straight to My Bookings. Confirmation notifications are sent via SMS and email.
         </p>
       )}
+
+      {!isCompleted && <div className="wizard-nav-spacer" aria-hidden="true" />}
 
       {/* Fullscreen QR Code Inspection Modal */}
       {qrModalInfo?.isOpen && (
@@ -3874,15 +4070,16 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
           bookingId={tempBookingRef}
           packageName={currentPkg.name}
           amount={payableAmount}
-          customerName={clientName || 'Valued Client'}
-          customerEmail={clientEmail || ''}
+          customerName={currentUser?.name || clientName || 'Valued Client'}
+          customerEmail={currentUser?.email || clientEmail || ''}
           customerPhone={clientPhone || ''}
+          syncBooking={false}
           onPaymentSuccess={(ref) => {
             setIsPayMongoModalOpen(false)
+            setPaidOnlineRef(ref)
             setGcashRefNumber(ref)
             setProofFileName(`PayMongo Live Transaction #${ref}`)
-            setProofOfPaymentUrl('/sinag_gcash_qr.png')
-            setSuccessMsg('PayMongo online payment confirmed! Proceed to final step.')
+            setPaymentNotice('PayMongo online payment confirmed! Click "Next Step" to review and complete your booking.')
           }}
         />
       )}

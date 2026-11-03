@@ -14,13 +14,15 @@ import { LoginPage } from './views/LoginPage'
 import { TestimonialsPage } from './views/TestimonialsPage'
 import { LoginModal } from './components/LoginModal'
 import { PublicAvailabilityModal } from './components/PublicAvailabilityModal'
+import { ClientNotificationBell } from './components/ClientNotificationBell'
+import { TermsGateModal } from './components/TermsGateModal'
 import type { AIFormData } from './lib/ai'
 import { supabase } from './lib/supabase'
 
 type ViewName = 'landing' | 'gallery' | 'testimonials' | 'login' | 'client' | 'admin' | 'booking'
 
 function AppContent() {
-  const { currentUser, bookings, logout, updatePaymentStatus } = useApp()
+  const { currentUser, bookings, logout, updatePaymentStatus, needsTermsAcceptance, acceptTerms, googleAuth, clearGoogleAuthMessage } = useApp()
   const { confirm } = useConfirm()
   const userBookings = currentUser
     ? bookings.filter((b) => b.email?.toLowerCase().trim() === currentUser.email?.toLowerCase().trim())
@@ -45,6 +47,18 @@ function AppContent() {
       ? 'Checkout was cancelled. Your booking request remains unpaid.'
       : '',
   )
+
+  // After returning from Google sign-in, continue where the user started
+  useEffect(() => {
+    if (!currentUser) return
+    const pending = sessionStorage.getItem('sinag_oauth_return_view')
+    if (!pending) return
+    sessionStorage.removeItem('sinag_oauth_return_view')
+    setIsAuthModalOpen(false)
+    if (currentUser.role === 'admin') setActiveView('admin')
+    else setActiveView(pending === 'booking' ? 'booking' : 'client')
+    window.scrollTo({ top: 0 })
+  }, [currentUser])
 
   useEffect(() => {
     const pageTitles: Record<ViewName, string> = {
@@ -342,6 +356,20 @@ function AppContent() {
 
   return (
     <main className="app-main-layout">
+      {googleAuth.status === 'finishing' && (
+        <div className="alert-box success" role="status" style={{ margin: '12px auto', maxWidth: '1200px' }}>
+          {googleAuth.message}
+        </div>
+      )}
+      {googleAuth.status === 'error' && !isAuthModalOpen && activeView !== 'login' && (
+        <div className="alert-box error" role="alert" style={{ margin: '12px auto', maxWidth: '1200px', display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
+          <span>{googleAuth.message}</span>
+          <button type="button" onClick={clearGoogleAuthMessage} style={{ background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700 }}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {paymongoNotice && (
         <div className="alert-box success" role="status" style={{ margin: '12px auto', maxWidth: '1200px' }}>
           {paymongoNotice}
@@ -405,6 +433,10 @@ function AppContent() {
                 <span className="nav-booking-pill-badge">{userBookingsCount}</span>
               )}
             </button>
+          )}
+
+          {currentUser && currentUser.role !== 'admin' && (
+            <ClientNotificationBell onOpenBookings={() => navigateTo('client')} />
           )}
 
           <button type="button" onClick={() => handleStartBooking()} className="btn-hero-primary nav-book-cta">
@@ -634,6 +666,17 @@ function AppContent() {
           )}
         </div>
       </div>
+
+      {needsTermsAcceptance && currentUser && (
+        <TermsGateModal
+          userName={currentUser.name}
+          onAccept={acceptTerms}
+          onDecline={async () => {
+            await logout()
+            setActiveView('landing')
+          }}
+        />
+      )}
 
       <LoginModal
         isOpen={isAuthModalOpen}

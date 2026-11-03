@@ -18,7 +18,16 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undef
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey)
 
 export const supabase = isSupabaseConfigured
-  ? createClient(supabaseUrl!, supabaseAnonKey!)
+  ? createClient(supabaseUrl!, supabaseAnonKey!, {
+      auth: {
+        // Google sign-in uses Supabase Auth only to verify the Google account
+        // (PKCE: the redirect comes back with ?code=...). The app then signs the
+        // user into its own users table and closes the Supabase Auth session.
+        flowType: 'pkce',
+        detectSessionInUrl: true,
+        persistSession: true,
+      },
+    })
   : null
 
 export async function createInquiry(inquiry: CateringInquiry) {

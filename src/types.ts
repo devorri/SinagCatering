@@ -4,6 +4,10 @@ export interface User {
   email: string
   phone?: string
   role: 'client' | 'admin'
+  termsAcceptedAt?: string | null
+  termsVersion?: string | null
+  authProvider?: 'email' | 'google'
+  createdAt?: string
 }
 
 export interface PackageTier {
@@ -64,8 +68,17 @@ export interface Booking {
   extraPaxFee: number
   addOns: AddOnItem
   totalPrice: number
-  paymentTerm?: 'downpayment' | 'full'
+  paymentTerm?: 'downpayment' | 'full' | 'reserve'
   downpaymentAmount?: number
+  holdExpiresAt?: string | null
+  cancellationReason?: string | null
+  cancellationNotes?: string | null
+  refundPercentage?: number | null
+  refundAmount?: number | null
+  refundStatus?: 'none' | 'pending' | 'processed' | 'not_applicable'
+  cancelledAt?: string | null
+  refundProcessedAt?: string | null
+  reminderSentAt?: string | null
   bookingStatus: 'pending' | 'approved' | 'confirmed' | 'completed' | 'cancelled' | 'forfeit'
   paymentStatus: 'unpaid' | 'pending_verification' | 'partially_paid' | 'downpayment_paid' | 'fully_paid'
   paymentMethod?: 'qrph' | 'gcash' | 'maya' | 'bank_transfer' | 'paymongo'
@@ -118,13 +131,59 @@ export interface NotificationLog {
   referenceId?: string
 }
 
+export type AdminNotificationType =
+  | 'booking_new'
+  | 'booking_confirmed'
+  | 'booking_completed'
+  | 'booking_cancelled'
+  | 'inquiry_new'
+  | 'review_new'
+  | 'refund_request'
+  | 'event_reminder'
+  | 'hold_created'
+  | 'hold_expired'
+  | 'payment_uploaded'
+
 export interface AdminNotification {
   id: string
-  type: 'booking_new' | 'booking_confirmed' | 'booking_completed' | 'booking_cancelled' | 'inquiry_new' | 'review_new'
+  type: AdminNotificationType
   title: string
   message: string
   bookingId?: string
   timestamp: string
   read: boolean
+}
+
+export type ClientNotificationType =
+  | 'hold_created'
+  | 'hold_expired'
+  | 'payment_submitted'
+  | 'payment_confirmed'
+  | 'event_reminder'
+  | 'refund_requested'
+  | 'refund_processed'
+  | 'booking_update'
+
+export interface ClientNotification {
+  id: string
+  type: ClientNotificationType
+  title: string
+  message: string
+  bookingId?: string
+  recipientEmail: string
+  userId?: string
+  timestamp: string
+  read: boolean
+}
+
+export interface CustomerAccount {
+  id: string
+  name: string
+  email: string
+  phone?: string
+  createdAt?: string
+  authProvider?: 'email' | 'google'
+  termsAcceptedAt?: string | null
+  isGuest?: boolean
 }
 

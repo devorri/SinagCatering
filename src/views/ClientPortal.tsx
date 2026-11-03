@@ -1,35 +1,42 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import {
   Calendar,
   Trash2,
   AlertCircle,
+  AlertTriangle,
   FileText,
   CheckCircle,
   Printer,
   X,
-  CreditCard,
   Copy,
   Check,
-  UploadCloud,
   LogOut,
   Users,
-  Receipt,
   Clock,
-  ArrowUpRight,
   Lock,
   CalendarDays,
   User as UserIcon,
-  Maximize2,
-  Loader2,
   Utensils,
+  RotateCcw,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import type { Booking } from '../types'
 import { formatMoney } from '../data/packages'
-import { uploadImageToStorage } from '../lib/storage'
 import { EmbeddedCheckoutModal } from '../components/EmbeddedCheckoutModal'
 import { useConfirm } from '../context/ConfirmContext'
 import { UserProfileModal } from '../components/UserProfileModal'
+import { CancelBookingModal } from '../components/CancelBookingModal'
+import { PaymentStatusPanel } from '../components/PaymentStatusPanel'
+import type { QrZoomInfo } from '../components/PaymentStatusPanel'
+import {
+  formatCountdown,
+  getBookingStatusLabel,
+  getHoldRemainingMs,
+  getPaymentStatusLabel,
+  getRemainingBalance,
+  isHoldExpired,
+  isReserveHold,
+} from '../lib/bookingRules'
 import { LoginPage } from './LoginPage'
 
 export const ClientPortal: React.FC = () => {
@@ -44,78 +51,50 @@ export const ClientPortal: React.FC = () => {
 
   const { confirm } = useConfirm()
 
-  const [paymentRefInput, setPaymentRefInput] = useState('')
-  const [paymentProofError, setPaymentProofError] = useState('')
   const [showProfileModal, setShowProfileModal] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
 
   // Action states
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null)
   const [showRebookModal, setShowRebookModal] = useState(false)
   const [rebookDate, setRebookDate] = useState('')
-  const [showCancelModal, setShowCancelModal] = useState(false)
-  const [cancelRefundResult, setCancelRefundResult] = useState<{ refundPercentage: number; refundAmount: number } | null>(null)
+  const [cancelTarget, setCancelTarget] = useState<Booking | null>(null)
+  const [portalNotice, setPortalNotice] = useState<{ tone: 'success' | 'info'; text: string } | null>(null)
 
   // Contract/Invoice modal states
   const [showInvoiceModal, setShowInvoiceModal] = useState(false)
   const [showContractModal, setShowContractModal] = useState(false)
 
-  // Copy and upload states
   const [copiedRefId, setCopiedRefId] = useState<string | null>(null)
-  const [copiedGcash, setCopiedGcash] = useState(false)
-  const [copiedMaribank, setCopiedMaribank] = useState(false)
-  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null)
-  const [isUploadingReceipt, setIsUploadingReceipt] = useState(false)
-  const [portalQrMethod, setPortalQrMethod] = useState<'gcash' | 'maribank'>('gcash')
-  const [portalQrZoom, setPortalQrZoom] = useState<{ title: string; imageSrc: string; name: string; acc: string } | null>(null)
+  const [portalQrZoom, setPortalQrZoom] = useState<QrZoomInfo | null>(null)
+  const [checkout, setCheckout] = useState<{ booking: Booking; amount: number } | null>(null)
+
+  // Keep hold countdowns fresh
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 30 * 1000)
+    return () => window.clearInterval(t)
+  }, [])
 
   const handleCopyRef = (id: string) => {
-    navigator.clipboard.writeText(id)
+    navigator.clipboard?.writeText(id).catch(() => {})
     setCopiedRefId(id)
     setTimeout(() => setCopiedRefId(null), 2000)
   }
 
-  const handleCopyGcash = (phone: string) => {
-    navigator.clipboard.writeText(phone)
-    setCopiedGcash(true)
-    setTimeout(() => setCopiedGcash(false), 2000)
-  }
+  // Filter bookings for current logged in client (newest first)
+  const clientBookings = bookings
+    .filter((b) => b.email?.toLowerCase().trim() === currentUser?.email?.toLowerCase().trim())
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 
-  // Filter bookings for current logged in client
-  const clientBookings = bookings.filter((b) => b.email?.toLowerCase().trim() === currentUser?.email?.toLowerCase().trim())
+  const isOpenBooking = (b: Booking) =>
+    b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit' && !isHoldExpired(b, now)
+
   const activeBooking =
-    clientBookings.find(
-      (b) =>
-        b.bookingStatus === 'confirmed' ||
-        (b as any).status === 'confirmed' ||
-        (b as any).booking_status === 'confirmed' ||
-        b.paymentStatus === 'downpayment_paid' ||
-        (b as any).payment_status === 'downpayment_paid' ||
-        b.paymentStatus === 'fully_paid',
-    ) ||
-    clientBookings.find((b) => b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit') ||
-    clientBookings[0]
+    clientBookings.find((b) => isOpenBooking(b) && (b.bookingStatus === 'confirmed' || b.paymentStatus === 'downpayment_paid' || b.paymentStatus === 'fully_paid')) ||
+    clientBookings.find(isOpenBooking) ||
+    null
 
-
-
-  const [uploadedReceipt, setUploadedReceipt] = useState<string | null>(null)
-  const [checkoutBooking, setCheckoutBooking] = useState<Booking | null>(null)
-
-  const handlePaymentUpload = (bookingId: string) => {
-    const ref = paymentRefInput.trim()
-    if (!ref || !uploadedReceipt) {
-      setPaymentProofError('Please provide both the payment reference number and screenshot proof before submitting.')
-      return
-    }
-    uploadPayment(bookingId, uploadedReceipt, ref)
-    setPaymentRefInput('')
-    setUploadedReceipt(null)
-    setUploadedFileName(null)
-    setPaymentProofError('')
-  }
-
-  const handlePayMongoCheckout = (booking: Booking) => {
-    setCheckoutBooking(booking)
-  }
+  const activeHolds = clientBookings.filter((b) => isReserveHold(b) && !isHoldExpired(b, now))
 
   const openRebook = (booking: Booking) => {
     setSelectedBooking(booking)
@@ -136,41 +115,21 @@ export const ClientPortal: React.FC = () => {
     }
   }
 
-  const openCancel = (booking: Booking) => {
-    setSelectedBooking(booking)
-    
-    const eventTime = new Date(booking.eventDate).getTime()
-    const nowTime = new Date().getTime()
-    const diffDays = Math.ceil((eventTime - nowTime) / (1000 * 60 * 60 * 24))
-
-    const refundPercentage = diffDays >= 30 ? 100 : diffDays >= 14 ? 50 : 0
-
-    const amountPaid = booking.paymentStatus === 'fully_paid' ? booking.totalPrice : (booking.totalPrice * 0.5)
-    const refundAmount = booking.paymentStatus === 'unpaid' ? 0 : amountPaid * (refundPercentage / 100)
-
-    setCancelRefundResult({ refundPercentage, refundAmount })
-    setShowCancelModal(true)
-  }
-
-  const handleCancelConfirm = async () => {
-    if (!selectedBooking) return
-    const refundText = cancelRefundResult && cancelRefundResult.refundAmount > 0
-      ? `Based on our cancellation policy, your estimated refund is ${formatMoney(cancelRefundResult.refundAmount, selectedBooking.currency)} (${cancelRefundResult.refundPercentage}%).`
-      : 'Under our cancellation policy, no refund applies for this notice period.'
-    const ok = await confirm({
-      title: 'Confirm Booking Cancellation',
-      message: `Are you sure you want to cancel booking #${selectedBooking.id} (${selectedBooking.eventType} on ${selectedBooking.eventDate})?\n\n${refundText}`,
-      confirmText: 'Yes, Cancel Reservation',
-      cancelText: 'Keep My Booking',
-      variant: 'danger',
+  const handleCancelConfirm = (reason: string, notes: string) => {
+    if (!cancelTarget) return
+    const result = cancelBooking(cancelTarget.id, reason, notes)
+    setCancelTarget(null)
+    setPortalNotice({
+      tone: 'info',
+      text: result.refundStatus === 'pending'
+        ? `Booking cancelled. Your refund request of ${formatMoney(result.refundAmount, cancelTarget.currency)} (${result.refundPercentage}% tier) was sent to Sinag Catering for manual review and payout.`
+        : 'Booking cancelled. Under our cancellation policy, no refund applies for this notice period.',
     })
-    if (!ok) return
-    cancelBooking(selectedBooking.id)
-    setShowCancelModal(false)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const handleClientLogout = async () => {
-    const hasActiveCheckout = Boolean(checkoutBooking)
+    const hasActiveCheckout = Boolean(checkout)
     const ok = await confirm({
       title: hasActiveCheckout ? 'Discard Payment & Sign Out?' : 'Confirm Sign Out',
       message: hasActiveCheckout
@@ -197,6 +156,29 @@ export const ClientPortal: React.FC = () => {
   if (!currentUser) {
     return <LoginPage onLoginSuccess={() => {}} />
   }
+
+  const summaryStatus = (() => {
+    if (!activeBooking) return { color: 'var(--muted)', icon: null as React.ReactNode, text: 'No Active Booking', sub: 'No active reservation' }
+    if (isReserveHold(activeBooking)) {
+      return { color: '#B45309', icon: <AlertTriangle size={16} />, text: 'Temporary Hold', sub: `${formatCountdown(getHoldRemainingMs(activeBooking, now))} left to pay` }
+    }
+    switch (activeBooking.paymentStatus) {
+      case 'fully_paid':
+        return { color: '#059669', icon: <CheckCircle size={16} />, text: 'Fully Paid', sub: 'Reservation status active' }
+      case 'downpayment_paid':
+      case 'partially_paid':
+        return { color: '#059669', icon: <CheckCircle size={16} />, text: 'Downpayment Verified', sub: `Balance: ${formatMoney(getRemainingBalance(activeBooking), activeBooking.currency)}` }
+      case 'pending_verification':
+        return { color: '#D97706', icon: <Clock size={16} />, text: 'Under Verification', sub: 'Receipt submitted' }
+      default:
+        return {
+          color: '#DC2626',
+          icon: <AlertCircle size={16} />,
+          text: activeBooking.paymentTerm === 'full' ? 'Full Payment Due' : '50% Downpayment Due',
+          sub: 'Upload your receipt in My Bookings',
+        }
+    }
+  })()
 
   // Dashboard Screen
   return (
@@ -242,6 +224,32 @@ export const ClientPortal: React.FC = () => {
         </div>
       </header>
 
+      {portalNotice && (
+        <div className={`alert-box ${portalNotice.tone === 'success' ? 'success' : ''}`} role="status" style={{ marginBottom: '20px', display: 'flex', alignItems: 'flex-start', gap: '10px', background: portalNotice.tone === 'info' ? '#EFF6FF' : undefined, border: portalNotice.tone === 'info' ? '1px solid #BFDBFE' : undefined }}>
+          <RotateCcw size={16} style={{ flexShrink: 0, marginTop: '2px', color: '#1D4ED8' }} />
+          <span style={{ flex: 1 }}>{portalNotice.text}</span>
+          <button type="button" onClick={() => setPortalNotice(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }} aria-label="Dismiss">
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
+      {/* Prominent temporary hold alert */}
+      {activeHolds.map((b) => (
+        <div key={`hold-banner-${b.id}`} className="hold-alert-banner" role="alert">
+          <div className="hold-alert-icon"><AlertTriangle size={22} /></div>
+          <div className="hold-alert-text">
+            <strong>Your date is temporarily held!</strong>
+            <span>
+              Please pay the <b>{formatMoney(b.downpaymentAmount || 2000, b.currency)} reservation fee</b> within <b>2 days (48 hours)</b> to lock in your reservation, or your booking will automatically expire. Upload the receipt in the payment box below.
+            </span>
+            <span className="hold-alert-meta">
+              Booking {b.id.slice(0, 16)}… · {b.eventDate} · <b>{formatCountdown(getHoldRemainingMs(b, now))} remaining</b>
+            </span>
+          </div>
+        </div>
+      ))}
+
       {/* Summary Stats Strip */}
       <div className="portal-summary-strip">
         <div className="portal-summary-card">
@@ -259,41 +267,13 @@ export const ClientPortal: React.FC = () => {
           </span>
         </div>
         <div className="portal-summary-card">
-          <span className="portal-summary-lbl">Downpayment Status</span>
+          <span className="portal-summary-lbl">Payment Status</span>
           <div className="portal-summary-val" style={{ fontSize: '1.1rem' }}>
-            {!activeBooking ? (
-              <span style={{ color: 'var(--muted)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                No Active Booking
-              </span>
-            ) : activeBooking.paymentStatus === 'fully_paid' || (activeBooking as any).payment_status === 'fully_paid' ? (
-              <span style={{ color: '#059669', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                <CheckCircle size={16} /> Fully Paid
-              </span>
-            ) : activeBooking.paymentStatus === 'downpayment_paid' || (activeBooking as any).payment_status === 'downpayment_paid' || activeBooking.bookingStatus === 'confirmed' || (activeBooking as any).status === 'confirmed' || (activeBooking as any).booking_status === 'confirmed' ? (
-              <span style={{ color: '#059669', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                <CheckCircle size={16} /> Downpayment Verified
-              </span>
-            ) : activeBooking.paymentStatus === 'partially_paid' ? (
-              <span style={{ color: '#2563EB', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                <CheckCircle size={16} /> 50% Settled
-              </span>
-            ) : activeBooking.paymentStatus === 'pending_verification' ? (
-              <span style={{ color: '#D97706', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                <Clock size={16} /> Under Verification
-              </span>
-            ) : (
-              <span style={{ color: '#DC2626', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                <AlertCircle size={16} /> 50% Downpayment Due
-              </span>
-            )}
+            <span style={{ color: summaryStatus.color, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              {summaryStatus.icon} {summaryStatus.text}
+            </span>
           </div>
-          <span className="portal-summary-sub">
-            {!activeBooking
-              ? 'No active reservation'
-              : activeBooking.paymentStatus === 'unpaid' && activeBooking.bookingStatus !== 'confirmed' && (activeBooking as any).booking_status !== 'confirmed'
-              ? 'Required to lock calendar date'
-              : 'Reservation status active'}
-          </span>
+          <span className="portal-summary-sub">{summaryStatus.sub}</span>
         </div>
       </div>
 
@@ -308,16 +288,13 @@ export const ClientPortal: React.FC = () => {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           {clientBookings.map((booking) => {
-            const downpaymentRequired = booking.totalPrice * 0.5
-            const balanceAmount =
-              booking.paymentStatus === 'fully_paid'
-                ? 0
-                : booking.paymentStatus === 'partially_paid' || booking.paymentStatus === 'downpayment_paid'
-                ? booking.totalPrice - (booking.downpaymentAmount || booking.totalPrice * 0.5)
-                : booking.totalPrice
+            const balanceAmount = getRemainingBalance(booking)
+            const isClosed = booking.bookingStatus === 'cancelled' || booking.bookingStatus === 'forfeit' || isHoldExpired(booking, now)
+            const statusLabel = getBookingStatusLabel(booking, now)
+            const statusClass = isReserveHold(booking) && !isHoldExpired(booking, now) ? 'hold' : booking.bookingStatus
 
             return (
-              <div key={booking.id} className="portal-booking-card">
+              <div key={booking.id} className={`portal-booking-card ${isClosed ? 'is-closed' : ''}`}>
                 {/* Header Info */}
                 <div className="portal-booking-top">
                   <div className="portal-booking-info">
@@ -362,15 +339,13 @@ export const ClientPortal: React.FC = () => {
                   </div>
 
                   <div className="portal-booking-status-col">
-                    <span className={`portal-status-badge badge-${booking.bookingStatus}`}>
+                    <span className={`portal-status-badge badge-${statusClass}`}>
                       <span className="status-dot" />
-                      <span style={{ textTransform: 'capitalize' }}>Status: {booking.bookingStatus}</span>
+                      <span>Status: {statusLabel}</span>
                     </span>
                     <span className={`portal-status-badge badge-payment-${booking.paymentStatus}`}>
                       <span className="status-dot" />
-                      <span style={{ textTransform: 'capitalize' }}>
-                        Payment: {booking.paymentStatus === 'unpaid' ? '50% Unpaid' : booking.paymentStatus.replace('_', ' ')}
-                      </span>
+                      <span>Payment: {getPaymentStatusLabel(booking)}</span>
                     </span>
                   </div>
                 </div>
@@ -511,373 +486,19 @@ export const ClientPortal: React.FC = () => {
                   )}
                 </div>
 
-                {/* Payment Actions Box */}
-                {booking.paymentStatus === 'unpaid' && booking.bookingStatus !== 'confirmed' && (activeBooking as any).booking_status !== 'confirmed' && (
-                  <div className="portal-checkout-panel">
-                    <div className="portal-checkout-grid">
-                      {/* Left Column: QR & Instant Payment */}
-                      <div className="portal-checkout-col-left">
-                        <div className="portal-checkout-badge-row">
-                          <span className="portal-step-pill">STEP 01</span>
-                          <span className="portal-checkout-kicker">50% Downpayment Required</span>
-                        </div>
-                        <div className="portal-checkout-amount font-number">
-                          {formatMoney(downpaymentRequired, booking.currency)}
-                        </div>
-                        <p className="portal-checkout-sub">
-                          To lock your reservation date on our official catering schedule, scan the verified QR Ph code or pay via PayMongo.
-                        </p>
-
-                        {/* QR Method Toggle */}
-                        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                          <button
-                            type="button"
-                            onClick={() => setPortalQrMethod('gcash')}
-                            style={{
-                              flex: 1,
-                              padding: '8px 12px',
-                              borderRadius: '6px',
-                              border: portalQrMethod === 'gcash' ? '1.5px solid #005CE6' : '1px solid #E2E8F0',
-                              background: portalQrMethod === 'gcash' ? '#EFF6FF' : '#FFFFFF',
-                              color: portalQrMethod === 'gcash' ? '#1D4ED8' : 'var(--ink)',
-                              fontWeight: 700,
-                              fontSize: '0.78rem',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            GCash (QR Ph)
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPortalQrMethod('maribank')}
-                            style={{
-                              flex: 1,
-                              padding: '8px 12px',
-                              borderRadius: '6px',
-                              border: portalQrMethod === 'maribank' ? '1.5px solid #EA580C' : '1px solid #E2E8F0',
-                              background: portalQrMethod === 'maribank' ? '#FFF7ED' : '#FFFFFF',
-                              color: portalQrMethod === 'maribank' ? '#C2410C' : 'var(--ink)',
-                              fontWeight: 700,
-                              fontSize: '0.78rem',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            MariBank (InstaPay)
-                          </button>
-                        </div>
-
-                        {portalQrMethod === 'gcash' ? (
-                          <div className="portal-qr-showcase" style={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
-                            <div
-                              className="portal-qr-frame"
-                              onClick={() => setPortalQrZoom({
-                                title: 'GCash / QR Ph Code',
-                                imageSrc: '/sinag_gcash_qr.png',
-                                name: 'SU*****E C.',
-                                acc: '0928 714 4597',
-                              })}
-                              style={{ width: '240px', height: '240px', cursor: 'pointer', position: 'relative', background: '#FFF', padding: '10px', borderRadius: '10px', border: '1.5px solid #BFDBFE' }}
-                              title="Click to enlarge GCash QR"
-                            >
-                              <img
-                                src="/sinag_gcash_qr.png"
-                                alt="Scan GCash / QR Ph"
-                                className="portal-qr-img"
-                                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                              />
-                              <div style={{ position: 'absolute', bottom: '10px', right: '10px', background: 'rgba(0, 92, 230, 0.9)', color: '#FFF', borderRadius: '4px', padding: '3px 6px', fontSize: '0.65rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                <Maximize2 size={10} /> Fullscreen
-                              </div>
-                            </div>
-                            <div className="portal-qr-details" style={{ minWidth: '220px' }}>
-                              <span className="portal-qr-account-lbl" style={{ color: '#005CE6', fontSize: '0.74rem' }}>Official GCash InstaPay QR</span>
-                              <strong className="portal-qr-account-name" style={{ fontSize: '1.05rem' }}>SU*****E C. (Sinag Catering)</strong>
-                              <div className="portal-qr-copy-row">
-                                <span className="portal-qr-phone" style={{ fontSize: '1rem' }}>0928 714 4597</span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCopyGcash('09287144597')}
-                                  className="portal-copy-pill"
-                                >
-                                  {copiedGcash ? (
-                                    <>
-                                      <Check size={11} style={{ color: '#059669' }} />
-                                      <span style={{ color: '#059669' }}>Copied</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Copy size={11} />
-                                      <span>Copy</span>
-                                    </>
-                                  )}
-                                </button>
-                              </div>
-                              <span className="portal-qr-hint" style={{ fontSize: '0.8rem', lineHeight: 1.4 }}>Scan with GCash, Maya, BDO, BPI, or any mobile bank app via QR Ph.</span>
-                              <button
-                                type="button"
-                                onClick={() => setPortalQrZoom({
-                                  title: 'GCash / QR Ph Code',
-                                  imageSrc: '/sinag_gcash_qr.png',
-                                  name: 'SU*****E C.',
-                                  acc: '0928 714 4597',
-                                })}
-                                style={{ marginTop: '8px', background: '#DBEAFE', border: '1px solid #BFDBFE', padding: '6px 12px', borderRadius: '6px', color: '#1E40AF', fontSize: '0.76rem', fontWeight: 700, cursor: 'pointer', textAlign: 'left', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
-                              >
-                                <Maximize2 size={12} /> View Large Fullscreen QR
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="portal-qr-showcase" style={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
-                            <div
-                              className="portal-qr-frame"
-                              onClick={() => setPortalQrZoom({
-                                title: 'MariBank / InstaPay QR Code',
-                                imageSrc: '/sinag_maribank_qr.png',
-                                name: 'SUNSHINE CRUZ (MariBank ****2765)',
-                                acc: '0928 714 4597',
-                              })}
-                              style={{ width: '240px', height: '240px', cursor: 'pointer', position: 'relative', background: '#FFF', padding: '10px', borderRadius: '10px', border: '1.5px solid #FED7AA' }}
-                              title="Click to enlarge MariBank QR"
-                            >
-                              <img
-                                src="/sinag_maribank_qr.png"
-                                alt="Scan MariBank / InstaPay QR"
-                                className="portal-qr-img"
-                                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                              />
-                              <div style={{ position: 'absolute', bottom: '10px', right: '10px', background: 'rgba(234, 88, 12, 0.9)', color: '#FFF', borderRadius: '4px', padding: '3px 6px', fontSize: '0.65rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                <Maximize2 size={10} /> Fullscreen
-                              </div>
-                            </div>
-                            <div className="portal-qr-details" style={{ minWidth: '220px' }}>
-                              <span className="portal-qr-account-lbl" style={{ color: '#EA580C', fontSize: '0.74rem' }}>Official MariBank InstaPay QR</span>
-                              <strong className="portal-qr-account-name" style={{ fontSize: '1.05rem' }}>SUNSHINE CRUZ - MariBank(****2765)</strong>
-                              <div className="portal-qr-copy-row">
-                                <span className="portal-qr-phone" style={{ fontSize: '1rem' }}>0928 714 4597</span>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    navigator.clipboard.writeText('09287144597')
-                                    setCopiedMaribank(true)
-                                    setTimeout(() => setCopiedMaribank(false), 2000)
-                                  }}
-                                  className="portal-copy-pill"
-                                >
-                                  {copiedMaribank ? (
-                                    <>
-                                      <Check size={11} style={{ color: '#059669' }} />
-                                      <span style={{ color: '#059669' }}>Copied</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Copy size={11} />
-                                      <span>Copy</span>
-                                    </>
-                                  )}
-                                </button>
-                              </div>
-                              <span className="portal-qr-hint">Scan with MariBank, GCash, Maya, or any bank via InstaPay.</span>
-                              <button
-                                type="button"
-                                onClick={() => setPortalQrZoom({
-                                  title: 'MariBank / InstaPay QR Code',
-                                  imageSrc: '/sinag_maribank_qr.png',
-                                  name: 'SUNSHINE CRUZ (MariBank ****2765)',
-                                  acc: '0928 714 4597',
-                                })}
-                                style={{ marginTop: '6px', background: 'none', border: 'none', padding: 0, color: '#EA580C', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', textAlign: 'left', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                              >
-                                <Maximize2 size={11} /> View Fullscreen QR
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() => handlePayMongoCheckout(booking)}
-                          className="portal-paymongo-btn"
-                        >
-                          <CreditCard size={15} />
-                          <span>Pay Online (GCash / Card / Maya)</span>
-                        </button>
-                      </div>
-
-                      {/* Right Column: Reference & File Upload Verification */}
-                      <div className="portal-checkout-col-right">
-                        <div className="portal-checkout-badge-row">
-                          <span className="portal-step-pill">STEP 02</span>
-                          <span className="portal-checkout-kicker">Payment Verification</span>
-                        </div>
-                        <h4 className="portal-proof-title">Submit Transaction Proof</h4>
-                        <p className="portal-checkout-sub">
-                          Enter your GCash / Bank reference number and attach your payment receipt screenshot.
-                        </p>
-
-                        <div className="portal-upload-form">
-                          <div className="portal-input-group">
-                            <label className="portal-input-label">
-                              <Receipt size={13} />
-                              <span>Reference Number <strong style={{ color: '#DC2626' }}>*</strong></span>
-                            </label>
-                            <input
-                              type="text"
-                              className={`portal-text-input ${paymentProofError && !paymentRefInput.trim() ? 'input-error' : ''}`}
-                              placeholder="Enter Reference No. (e.g. 902148923019)"
-                              value={paymentRefInput}
-                              onChange={(e) => setPaymentRefInput(e.target.value)}
-                            />
-                            {paymentProofError && !paymentRefInput.trim() && (
-                              <span className="portal-field-error">Transaction reference number is required.</span>
-                            )}
-                          </div>
-
-                          <div className="portal-input-group">
-                            <label className="portal-input-label">
-                              <UploadCloud size={13} />
-                              <span>Screenshot Proof <strong style={{ color: '#DC2626' }}>*</strong></span>
-                            </label>
-
-                            <label
-                              htmlFor={`receipt-upload-${booking.id}`}
-                              className={`portal-dropzone ${uploadedReceipt ? 'has-file' : ''} ${paymentProofError && !uploadedReceipt ? 'dropzone-error' : ''}`}
-                            >
-                              <input
-                                id={`receipt-upload-${booking.id}`}
-                                type="file"
-                                accept="image/*"
-                                style={{ display: 'none' }}
-                                onChange={async (e) => {
-                                  const file = e.target.files?.[0]
-                                  if (file) {
-                                    setUploadedFileName(file.name)
-                                    setIsUploadingReceipt(true)
-                                    try {
-                                      const res = await uploadImageToStorage(file, 'receipts')
-                                      if (res.url) {
-                                        setUploadedReceipt(res.url)
-                                      }
-                                    } catch {
-                                      const reader = new FileReader()
-                                      reader.onloadend = () => setUploadedReceipt(reader.result as string)
-                                      reader.readAsDataURL(file)
-                                    } finally {
-                                      setIsUploadingReceipt(false)
-                                    }
-                                  }
-                                }}
-                              />
-                              {uploadedReceipt ? (
-                                <div className="portal-dropzone-selected">
-                                  {uploadedReceipt.startsWith('data:image') || uploadedReceipt.includes('http') ? (
-                                    <img src={uploadedReceipt} alt="Receipt thumbnail" className="portal-receipt-thumbnail" />
-                                  ) : null}
-                                  <div className="portal-dropzone-fileinfo">
-                                    <span className="portal-dropzone-filename">{uploadedFileName || 'receipt_screenshot.png'}</span>
-                                    <span className="portal-dropzone-change"><CheckCircle size={12} /> Ready to submit · Click to change file</span>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="portal-dropzone-empty">
-                                  {isUploadingReceipt ? (
-                                    <>
-                                      <div className="portal-upload-icon-circle" style={{ background: '#FFF7ED' }}>
-                                        <Loader2 size={18} style={{ color: 'var(--terracotta)' }} className="animate-spin" />
-                                      </div>
-                                      <div className="portal-dropzone-text">
-                                        <strong style={{ color: 'var(--terracotta)' }}>Uploading receipt to storage...</strong>
-                                        <span>Saving into Files bucket</span>
-                                      </div>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <div className="portal-upload-icon-circle">
-                                        <UploadCloud size={18} />
-                                      </div>
-                                      <div className="portal-dropzone-text">
-                                        <strong>Click or tap to upload screenshot proof</strong>
-                                        <span>PNG, JPG, or WEBP up to 10MB</span>
-                                      </div>
-                                    </>
-                                  )}
-                                </div>
-                              )}
-                            </label>
-                            {paymentProofError && !uploadedReceipt && (
-                              <span className="portal-field-error">Screenshot image proof is required.</span>
-                            )}
-                          </div>
-
-                          {paymentProofError && (
-                            <div className="portal-alert-error" role="alert">
-                              <AlertCircle size={15} />
-                              <span>{paymentProofError}</span>
-                            </div>
-                          )}
-
-                          <button
-                            type="button"
-                            onClick={() => handlePaymentUpload(booking.id)}
-                            disabled={!paymentRefInput.trim() || !uploadedReceipt}
-                            className="portal-btn-submit-proof"
-                          >
-                            <CheckCircle size={15} />
-                            <span>Submit Payment Proof</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {booking.paymentStatus === 'pending_verification' && (
-                  <div className="portal-verification-notice">
-                    <div className="portal-notice-left">
-                      <div className="portal-notice-icon-circle">
-                        <Clock size={20} />
-                      </div>
-                      <div>
-                        <h4 className="portal-notice-title">Downpayment Submitted & Pending Admin Verification</h4>
-                        <p className="portal-notice-desc">
-                          Reference No: <strong>{booking.gcashRefNumber || 'Receipt uploaded'}</strong> · Your calendar date is temporarily locked.
-                        </p>
-                      </div>
-                    </div>
-                    {booking.proofOfPaymentUrl && (
-                      <a
-                        href={booking.proofOfPaymentUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="portal-notice-link"
-                      >
-                        <span>View Uploaded Receipt</span>
-                        <ArrowUpRight size={14} />
-                      </a>
-                    )}
-                  </div>
-                )}
-
-                {(booking.paymentStatus === 'fully_paid' || booking.paymentStatus === 'downpayment_paid') && (
-                  <div className="portal-paid-notice">
-                    <div className="portal-notice-left">
-                      <div className="portal-notice-icon-circle paid">
-                        <CheckCircle size={20} />
-                      </div>
-                      <div>
-                        <h4 className="portal-notice-title">
-                          {booking.paymentStatus === 'fully_paid' ? 'Full Payment Completed' : 'Reservation Downpayment Completed'}
-                        </h4>
-                        <p className="portal-notice-desc">
-                          Your reservation is locked in our master catering calendar. You may download your official contract and invoice anytime.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                {/* Payment status container (optional receipt upload lives here) */}
+                <PaymentStatusPanel
+                  booking={booking}
+                  onUpload={(proofUrl, refNumber, options) => {
+                    uploadPayment(booking.id, proofUrl, refNumber || undefined, options)
+                    setPortalNotice({ tone: 'success', text: 'Receipt submitted! Our team will verify your payment and notify you once confirmed.' })
+                  }}
+                  onPayOnline={(amount) => setCheckout({ booking, amount })}
+                  onZoomQr={setPortalQrZoom}
+                />
 
                 {/* Modification Actions */}
-                {booking.bookingStatus !== 'cancelled' && (
+                {!isClosed && booking.bookingStatus !== 'completed' && (
                   <div className="portal-card-footer">
                     <span className="portal-footer-note">
                       Modifications can be requested up to 14 days before your scheduled date.
@@ -887,9 +508,9 @@ export const ClientPortal: React.FC = () => {
                         <CalendarDays size={14} />
                         <span>Rebook Date</span>
                       </button>
-                      <button type="button" onClick={() => openCancel(booking)} className="portal-btn-destructive">
+                      <button type="button" onClick={() => setCancelTarget(booking)} className="portal-btn-destructive">
                         <Trash2 size={14} />
-                        <span>Cancel Reservation</span>
+                        <span>Cancel Booking</span>
                       </button>
                     </div>
                   </div>
@@ -933,40 +554,13 @@ export const ClientPortal: React.FC = () => {
         </div>
       )}
 
-      {/* CANCELLATION MODAL */}
-      {showCancelModal && selectedBooking && cancelRefundResult && (
-        <div className="modal-overlay">
-          <div className="modal-card">
-            <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.8rem', margin: '0 0 10px' }}>Confirm Cancellation</h3>
-            <p style={{ color: 'var(--muted)', fontSize: '0.9rem', marginBottom: '20px' }}>Booking Reference: {selectedBooking.id}</p>
-
-            <div style={{ background: 'var(--paper-warm)', padding: '20px', borderRadius: 'var(--radius-md)', marginBottom: '24px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', margin: '8px 0', fontSize: '0.9rem' }}>
-                <span>Total Package Price:</span>
-                <strong>{formatMoney(selectedBooking.totalPrice, selectedBooking.currency)}</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', margin: '8px 0', fontSize: '0.9rem' }}>
-                <span>Refund Tier:</span>
-                <strong style={{ color: cancelRefundResult.refundPercentage > 0 ? 'var(--emerald)' : 'var(--terracotta)' }}>
-                  {cancelRefundResult.refundPercentage}% Refund
-                </strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', margin: '12px 0 0', paddingTop: '12px', borderTop: '1px solid var(--line)', fontSize: '1.1rem' }}>
-                <span>Refund Amount:</span>
-                <strong className="font-number" style={{ color: 'var(--terracotta)' }}>{formatMoney(cancelRefundResult.refundAmount, selectedBooking.currency)}</strong>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-              <button type="button" onClick={() => setShowCancelModal(false)} className="btn-nav-logout">
-                Back
-              </button>
-              <button onClick={handleCancelConfirm} className="btn-submit-primary" style={{ width: 'auto', background: 'var(--terracotta)' }}>
-                Confirm Cancellation
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* CANCELLATION & REFUND REQUEST MODAL */}
+      {cancelTarget && (
+        <CancelBookingModal
+          booking={cancelTarget}
+          onClose={() => setCancelTarget(null)}
+          onConfirm={handleCancelConfirm}
+        />
       )}
 
       {/* INVOICE BREAKDOWN MODAL */}
@@ -1066,7 +660,8 @@ export const ClientPortal: React.FC = () => {
               {selectedBooking.addOns?.selectedDrinks && selectedBooking.addOns.selectedDrinks.length > 0 && (
                 <p>4. <strong>Included Refreshment:</strong> {selectedBooking.addOns.selectedDrinks.join(', ')}.</p>
               )}
-              <p>5. <strong>Payment Terms:</strong> 50% downpayment received; remaining balance payable on or before event setup date.</p>
+              <p>5. <strong>Payment Terms:</strong> {selectedBooking.paymentStatus === 'fully_paid' ? '100% full payment received; zero balance on event day.' : `${formatMoney(selectedBooking.downpaymentAmount || Math.round(selectedBooking.totalPrice * 0.5), selectedBooking.currency)} downpayment received; remaining balance payable on or before event setup date.`}</p>
+              <p>6. <strong>Terms &amp; Conditions:</strong> The client has accepted Sinag Catering&apos;s Terms &amp; Conditions and Cancellation Policy (30+ days: full refund; 14–29 days: 50% refund; less than 14 days: no refund).</p>
             </div>
 
             <div style={{ marginTop: '24px', textAlign: 'right' }}>
@@ -1079,21 +674,21 @@ export const ClientPortal: React.FC = () => {
       )}
 
       {/* EMBEDDED CHECKOUT MODAL (No external PayMongo redirect, 100% Sinag Branded) */}
-      {checkoutBooking && (
+      {checkout && (
         <EmbeddedCheckoutModal
-          isOpen={!!checkoutBooking}
-          onClose={() => setCheckoutBooking(null)}
-          bookingId={checkoutBooking.id}
-          packageName={checkoutBooking.packageName}
-          guestCount={checkoutBooking.guestCount}
-          eventDate={checkoutBooking.eventDate}
-          amount={checkoutBooking.downpaymentAmount || Math.round(checkoutBooking.totalPrice * 0.5)}
-          totalPrice={checkoutBooking.totalPrice}
-          customerName={currentUser?.name || checkoutBooking.customerName}
-          customerEmail={currentUser?.email || checkoutBooking.email}
-          customerPhone={currentUser?.phone || checkoutBooking.phone}
-          onPaymentSuccess={(_ref) => {
-            // Updated directly in database & AppContext
+          isOpen={!!checkout}
+          onClose={() => setCheckout(null)}
+          bookingId={checkout.booking.id}
+          packageName={checkout.booking.packageName}
+          guestCount={checkout.booking.guestCount}
+          eventDate={checkout.booking.eventDate}
+          amount={checkout.amount}
+          totalPrice={checkout.booking.totalPrice}
+          customerName={currentUser?.name || checkout.booking.customerName}
+          customerEmail={currentUser?.email || checkout.booking.email}
+          customerPhone={currentUser?.phone || checkout.booking.phone}
+          onPaymentSuccess={() => {
+            setPortalNotice({ tone: 'success', text: 'Online payment received! Your reservation is confirmed and your date is locked.' })
           }}
         />
       )}

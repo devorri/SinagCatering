@@ -41,6 +41,11 @@ import {
   UtensilsCrossed,
   TrendingUp,
   BarChart3,
+  UserCheck,
+  RotateCcw,
+  ChevronDown,
+  ChevronUp,
+  Clock3,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useConfirm } from '../context/ConfirmContext'
@@ -55,8 +60,24 @@ import { formatMoney } from '../data/packages'
 import { ForgotPasswordModal } from '../components/ForgotPasswordModal'
 import { UserProfileModal } from '../components/UserProfileModal'
 import { AdminCatalogManager } from '../components/AdminCatalogManager'
+import { CustomersTab } from '../components/admin/CustomersTab'
+import { RefundsTab } from '../components/admin/RefundsTab'
+import {
+  PAYMENT_TERM_LABELS,
+  RESERVATION_FEE,
+  getPaymentStatusLabel,
+  formatCountdown,
+  getBookingStatusLabel,
+  getHoldExpiry,
+  getHoldRemainingMs,
+  getPaymentTerm,
+  isHoldExpired,
+  isReserveHold,
+  monthKey,
+  monthLabel,
+} from '../lib/bookingRules'
 
-type AdminTabType = 'analytics' | 'bookings' | 'calendar' | 'staff' | 'reviews' | 'inquiries' | 'notifications' | 'catalog'
+type AdminTabType = 'analytics' | 'bookings' | 'customers' | 'refunds' | 'calendar' | 'staff' | 'reviews' | 'inquiries' | 'notifications' | 'catalog'
 
 interface AdminDashboardProps {
   onLogout?: () => void
@@ -89,6 +110,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     markAllNotificationsAsRead,
     clearAdminNotifications,
     playNotificationSound,
+    markRefundProcessed,
+    fetchCustomers,
   } = useApp()
 
   const { confirm } = useConfirm()
@@ -418,7 +441,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
   // Admin Notification Activity Sub-tab and Filtering
   const [notifSubTab, setNotifSubTab] = useState<'activity' | 'gateway'>('activity')
-  const [notifFilter, setNotifFilter] = useState<'all' | 'new' | 'completed' | 'confirmed' | 'inquiries' | 'unread'>('all')
+  const [notifFilter, setNotifFilter] = useState<'all' | 'new' | 'completed' | 'confirmed' | 'inquiries' | 'unread' | 'refunds' | 'reminders' | 'holds'>('all')
 
   const unreadNotifCount = adminNotifications.filter((n) => !n.read).length
 
@@ -429,6 +452,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       if (notifFilter === 'completed') return n.type === 'booking_completed'
       if (notifFilter === 'confirmed') return n.type === 'booking_confirmed'
       if (notifFilter === 'inquiries') return n.type === 'inquiry_new'
+      if (notifFilter === 'refunds') return n.type === 'refund_request' || n.type === 'booking_cancelled'
+      if (notifFilter === 'reminders') return n.type === 'event_reminder'
+      if (notifFilter === 'holds') return n.type === 'hold_created' || n.type === 'hold_expired'
       return true
     })
   }, [adminNotifications, notifFilter])
@@ -990,7 +1016,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     const remainingBalance = booking.totalPrice - (booking.downpaymentAmount || (booking.totalPrice * 0.5))
     const ok = await confirm({
       title: 'Record Full Settlement',
-      message: `Confirm receipt of remaining 50% balance (${formatMoney(remainingBalance, booking.currency)}) for Booking #${booking.id} (${booking.customerName})?\n\nThis will mark the reservation as Fully Paid and move status to Completed.`,
+      message: `Confirm receipt of the remaining balance (${formatMoney(remainingBalance, booking.currency)}) for Booking #${booking.id} (${booking.customerName})?\n\nThis will mark the reservation as Fully Paid and move status to Completed.`,
       confirmText: 'Confirm Settlement',
       cancelText: 'Cancel',
       variant: 'success',
@@ -1028,7 +1054,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   // Handle booking approval with downpayment requirement
   const handleApproveBooking = (booking: Booking) => {
     setDownpaymentBooking(booking)
-    setDownpaymentAmount(booking.totalPrice * 0.5)
+    // Pre-fill with what the client says they paid (e.g. ₱2,000 reservation fee or 100%)
+    setDownpaymentAmount(
+      booking.paymentStatus === 'pending_verification' && booking.downpaymentAmount
+        ? booking.downpaymentAmount
+        : getPaymentTerm(booking) === 'reserve'
+        ? Math.min(booking.totalPrice, booking.downpaymentAmount || RESERVATION_FEE)
+        : getPaymentTerm(booking) === 'full'
+        ? booking.totalPrice
+        : Math.round(booking.totalPrice * 0.5),
+    )
     setShowDownpaymentModal(true)
   }
 
@@ -1038,7 +1073,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
     const ok = await confirm({
       title: 'Verify Downpayment & Confirm Booking',
-      message: `Verify downpayment of ${formatMoney(downpaymentAmount, downpaymentBooking.currency)} for Booking #${downpaymentBooking.id} (${downpaymentBooking.customerName})? This will lock the event date (${downpaymentBooking.eventDate}) and dispatch Semaphore SMS confirmation.`,
+      message: `Verify payment of ${formatMoney(downpaymentAmount, downpaymentBooking.currency)} for Booking #${downpaymentBooking.id} (${downpaymentBooking.customerName})? This will lock the event date (${downpaymentBooking.eventDate}) and dispatch Semaphore SMS confirmation.`,
       confirmText: 'Confirm & Lock Date',
       cancelText: 'Review Again',
       variant: 'success',
@@ -1178,6 +1213,52 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     return sortedBookings.slice(start, start + rowsPerPage)
   }, [sortedBookings, safeBookingPage, rowsPerPage])
 
+  // Monthly Breakdown (Chronological) register mode
+  const [registerView, setRegisterView] = useState<'flat' | 'monthly'>('flat')
+  const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(() => new Set())
+  const monthlyGroups = useMemo(() => {
+    const groups = new Map<string, Booking[]>()
+    ;[...filteredBookings]
+      .sort((a, b) => a.eventDate.localeCompare(b.eventDate) || a.createdAt.localeCompare(b.createdAt))
+      .forEach((b) => {
+        const key = monthKey(b.eventDate)
+        const list = groups.get(key) || []
+        list.push(b)
+        groups.set(key, list)
+      })
+    return [...groups.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, list]) => ({
+        key,
+        label: monthLabel(key),
+        bookings: list,
+        revenue: list
+          .filter((b) => b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit')
+          .reduce((sum, b) => sum + (Number(b.totalPrice) || 0), 0),
+        confirmed: list.filter((b) => b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed').length,
+        pending: list.filter((b) => b.bookingStatus === 'pending').length,
+      }))
+  }, [filteredBookings])
+
+  const toggleMonth = (key: string) =>
+    setCollapsedMonths((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+
+  const handleMarkRefundProcessed = async (booking: Booking) => {
+    const ok = await confirm({
+      title: 'Mark Refund as Processed',
+      message: `Confirm you have manually sent the refund of ${formatMoney(booking.refundAmount || 0, booking.currency)} to ${booking.customerName} for booking #${booking.id}?\n\nThe client will be notified by SMS and in their notification feed.`,
+      confirmText: 'Mark Refunded',
+      cancelText: 'Cancel',
+      variant: 'success',
+    })
+    if (ok) markRefundProcessed(booking.id)
+  }
+
   // Sorted inquiries
   const sortedInquiries = useMemo(() => {
     return [...inquiries].sort((a, b) => {
@@ -1308,6 +1389,98 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     )
   }
 
+  const renderBookingRow = (b: Booking) => (
+                        <tr key={b.id}>
+                          <td className="font-number" style={{ fontWeight: 700, fontSize: '0.8rem', color: '#78716C' }}>
+                            #{b.id.slice(0, 14)}...
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: 700, color: '#18181B' }}>{b.customerName}</div>
+                            <div style={{ fontSize: '0.8rem', color: '#71717A' }}>{b.email}</div>
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: 600, color: '#18181B' }}>{b.eventType} ({b.guestCount} pax)</div>
+                            <div style={{ fontSize: '0.82rem', color: '#71717A' }}>{b.eventDate}</div>
+                          </td>
+                          <td className="font-number" style={{ fontWeight: 700, color: '#9A3412' }}>
+                            {formatMoney(b.totalPrice, b.currency)}
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', gap: '4px', flexDirection: 'column' }}>
+                              <span className={`portal-status-badge badge-payment-${b.paymentStatus}`} style={{ width: 'fit-content' }}>
+                                <span className="status-dot" />
+                                <span style={{ textTransform: 'capitalize' }}>
+                                  {b.paymentStatus === 'downpayment_paid' ? 'Downpayment' : getPaymentStatusLabel(b)}
+                                </span>
+                              </span>
+                              {(b.paymentStatus === 'downpayment_paid' || b.paymentStatus === 'partially_paid' || b.paymentStatus === 'pending_verification') && b.downpaymentAmount && (
+                                <span style={{ fontSize: '0.72rem', color: '#71717A' }}>
+                                  {formatMoney(b.downpaymentAmount, b.currency)}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td>
+                            <span className={`portal-status-badge badge-${isReserveHold(b) && !isHoldExpired(b) ? 'hold' : b.bookingStatus}`} style={{ width: 'fit-content' }}>
+                              <span className="status-dot" />
+                              <span>{getBookingStatusLabel(b)}</span>
+                            </span>
+                            {isReserveHold(b) && !isHoldExpired(b) && (
+                              <div style={{ fontSize: '0.72rem', color: '#B45309', marginTop: '4px', fontWeight: 600 }}>
+                                <Clock3 size={11} style={{ verticalAlign: 'middle' }} /> {formatCountdown(getHoldRemainingMs(b))} left
+                              </div>
+                            )}
+                            <div style={{ fontSize: '0.7rem', color: '#A1A1AA', marginTop: '3px' }}>{PAYMENT_TERM_LABELS[getPaymentTerm(b)]}</div>
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                              <button
+                                onClick={() => handleOpenBookingDetails(b)}
+                                className="btn-action-view"
+                              >
+                                <Eye size={13} /> View
+                              </button>
+
+                              {b.bookingStatus === 'pending' && (
+                                <>
+                                  <button
+                                    onClick={() => handleApproveBooking(b)}
+                                    className="btn-action-approve"
+                                  >
+                                    <Check size={13} /> Approve
+                                  </button>
+                                  <button
+                                    onClick={() => handleRejectBooking(b.id)}
+                                    className="btn-action-forfeit"
+                                    style={{ color: '#DC2626' }}
+                                  >
+                                    <X size={13} /> Reject
+                                  </button>
+                                </>
+                              )}
+
+                              {b.bookingStatus === 'confirmed' && (b.paymentStatus === 'downpayment_paid' || b.paymentStatus === 'partially_paid') && (
+                                <button
+                                  onClick={() => handleFullPayment(b)}
+                                  className="btn-action-fullpay"
+                                >
+                                  <CreditCard size={13} /> Settle Full
+                                </button>
+                              )}
+
+                              {(b.bookingStatus === 'pending' || b.bookingStatus === 'confirmed') && (
+                                <button
+                                  onClick={() => handleForfeitBooking(b.id, b.eventDate)}
+                                  className="btn-action-forfeit"
+                                >
+                                  <Ban size={13} /> Forfeit
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+  )
+
   const navSections: {
     group: string
     items: { id: AdminTabType; label: string; icon: React.ReactNode; badge?: number }[]
@@ -1316,7 +1489,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         group: 'OVERVIEW',
         items: [
           { id: 'analytics', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
-          { id: 'bookings', label: 'Bookings Register', icon: <BookOpen size={18} />, badge: bookings.filter(b => b.bookingStatus === 'pending').length },
+          { id: 'bookings', label: 'Bookings Register', icon: <BookOpen size={18} />, badge: bookings.filter(b => b.bookingStatus === 'pending' && !isHoldExpired(b)).length },
+          { id: 'customers', label: 'Customers', icon: <UserCheck size={18} /> },
+          { id: 'refunds', label: 'Cancellations & Refunds', icon: <RotateCcw size={18} />, badge: bookings.filter(b => b.bookingStatus === 'cancelled' && b.refundStatus === 'pending').length },
           { id: 'calendar', label: 'Date Availability', icon: <Calendar size={18} /> },
         ],
       },
@@ -1501,6 +1676,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   ? 'Executive Overview'
                   : activeTab === 'bookings'
                   ? 'Master Reservations'
+                  : activeTab === 'customers'
+                  ? 'Customers & History'
+                  : activeTab === 'refunds'
+                  ? 'Cancellations & Refunds'
                   : activeTab === 'calendar'
                   ? 'Operations Calendar'
                   : activeTab === 'staff'
@@ -2349,6 +2528,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   <span style={{ fontSize: '0.84rem', color: '#71717A' }}>Filter, verify deposits, allocate event staff, and download contracts</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                  <div className="admin-register-search">
+                    <Search size={14} style={{ color: '#A1A1AA' }} />
+                    <input
+                      type="text"
+                      placeholder="Search client name…"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      aria-label="Search reservations by client name"
+                    />
+                    {searchQuery && (
+                      <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search">
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
                   <div className="admin-filter-bar">
                     {(['all', 'pending', 'confirmed', 'completed', 'cancelled', 'forfeit'] as const).map((filter) => {
                       const count = filter === 'all'
@@ -2373,8 +2567,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     <select
                       className="admin-sort-select"
                       aria-label="Sort bookings register"
-                      value={`${bookingSortCol}-${bookingSortDir}`}
+                      value={registerView === 'monthly' ? 'monthly' : `${bookingSortCol}-${bookingSortDir}`}
                       onChange={(e) => {
+                        if (e.target.value === 'monthly') {
+                          setRegisterView('monthly')
+                          return
+                        }
+                        setRegisterView('flat')
                         const [col, dir] = e.target.value.split('-') as [BookingSortCol, 'asc' | 'desc']
                         setBookingSortCol(col)
                         setBookingSortDir(dir)
@@ -2382,6 +2581,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     >
                       <option value="eventDate-desc">Date (Newest First)</option>
                       <option value="eventDate-asc">Date (Oldest First)</option>
+                      <option value="monthly">Monthly Breakdown (Chronological)</option>
                       <option value="totalPrice-desc">Total Amount (Highest)</option>
                       <option value="totalPrice-asc">Total Amount (Lowest)</option>
                       <option value="customerName-asc">Client Name (A–Z)</option>
@@ -2393,6 +2593,59 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                 </div>
               </div>
 
+              {registerView === 'monthly' ? (
+                <div>
+                  {monthlyGroups.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '36px', color: '#94A3B8' }}>
+                      No reservations match the selected filter or search query.
+                    </div>
+                  ) : (
+                    monthlyGroups.map((group) => {
+                      const isCollapsed = collapsedMonths.has(group.key)
+                      return (
+                        <div key={group.key} className="month-group">
+                          <button
+                            type="button"
+                            className="month-group-head"
+                            onClick={() => toggleMonth(group.key)}
+                            aria-expanded={!isCollapsed}
+                          >
+                            <span className="month-group-title">
+                              {isCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+                              {group.label}
+                            </span>
+                            <span className="month-group-stats">
+                              <span className="month-group-stat">{group.bookings.length} booking{group.bookings.length === 1 ? '' : 's'}</span>
+                              <span className="month-group-stat">{group.confirmed} confirmed</span>
+                              {group.pending > 0 && <span className="month-group-stat">{group.pending} pending</span>}
+                              <span className="month-group-stat rev">{formatMoney(group.revenue)}</span>
+                            </span>
+                          </button>
+                          {!isCollapsed && (
+                            <div className="table-responsive">
+                              <table className="admin-table">
+                                <thead>
+                                  <tr>
+                                    <th>REF ID</th>
+                                    <th>Client</th>
+                                    <th>Event & Date</th>
+                                    <th>Total Amount</th>
+                                    <th>Payment</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                  </tr>
+                                </thead>
+                                <tbody>{group.bookings.map((b) => renderBookingRow(b))}</tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              ) : (
+              <>
               <div className="table-responsive">
                 <table className="admin-table">
                   <thead>
@@ -2492,93 +2745,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         </td>
                       </tr>
                     ) : (
-                      paginatedBookings.map((b) => (
-                        <tr key={b.id}>
-                          <td className="font-number" style={{ fontWeight: 700, fontSize: '0.8rem', color: '#78716C' }}>
-                            #{b.id.slice(0, 14)}...
-                          </td>
-                          <td>
-                            <div style={{ fontWeight: 700, color: '#18181B' }}>{b.customerName}</div>
-                            <div style={{ fontSize: '0.8rem', color: '#71717A' }}>{b.email}</div>
-                          </td>
-                          <td>
-                            <div style={{ fontWeight: 600, color: '#18181B' }}>{b.eventType} ({b.guestCount} pax)</div>
-                            <div style={{ fontSize: '0.82rem', color: '#71717A' }}>{b.eventDate}</div>
-                          </td>
-                          <td className="font-number" style={{ fontWeight: 700, color: '#9A3412' }}>
-                            {formatMoney(b.totalPrice, b.currency)}
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', gap: '4px', flexDirection: 'column' }}>
-                              <span className={`portal-status-badge badge-payment-${b.paymentStatus}`} style={{ width: 'fit-content' }}>
-                                <span className="status-dot" />
-                                <span style={{ textTransform: 'capitalize' }}>
-                                  {b.paymentStatus === 'downpayment_paid' ? 'Downpayment' : b.paymentStatus.replace('_', ' ')}
-                                </span>
-                              </span>
-                              {b.paymentStatus === 'downpayment_paid' && b.downpaymentAmount && (
-                                <span style={{ fontSize: '0.72rem', color: '#71717A' }}>
-                                  {formatMoney(b.downpaymentAmount, b.currency)}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td>
-                            <span className={`portal-status-badge badge-${b.bookingStatus}`} style={{ width: 'fit-content' }}>
-                              <span className="status-dot" />
-                              <span style={{ textTransform: 'capitalize' }}>
-                                {b.bookingStatus === 'forfeit' ? 'Forfeited' : b.bookingStatus}
-                              </span>
-                            </span>
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                              <button
-                                onClick={() => handleOpenBookingDetails(b)}
-                                className="btn-action-view"
-                              >
-                                <Eye size={13} /> View
-                              </button>
-
-                              {b.bookingStatus === 'pending' && (
-                                <>
-                                  <button
-                                    onClick={() => handleApproveBooking(b)}
-                                    className="btn-action-approve"
-                                  >
-                                    <Check size={13} /> Approve
-                                  </button>
-                                  <button
-                                    onClick={() => handleRejectBooking(b.id)}
-                                    className="btn-action-forfeit"
-                                    style={{ color: '#DC2626' }}
-                                  >
-                                    <X size={13} /> Reject
-                                  </button>
-                                </>
-                              )}
-
-                              {b.bookingStatus === 'confirmed' && b.paymentStatus === 'downpayment_paid' && (
-                                <button
-                                  onClick={() => handleFullPayment(b)}
-                                  className="btn-action-fullpay"
-                                >
-                                  <CreditCard size={13} /> Settle Full
-                                </button>
-                              )}
-
-                              {(b.bookingStatus === 'pending' || b.bookingStatus === 'confirmed') && (
-                                <button
-                                  onClick={() => handleForfeitBooking(b.id, b.eventDate)}
-                                  className="btn-action-forfeit"
-                                >
-                                  <Ban size={13} /> Forfeit
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))
+                      paginatedBookings.map((b) => renderBookingRow(b))
                     )}
                   </tbody>
                 </table>
@@ -2747,7 +2914,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   </button>
                 </div>
               </div>
+              </>
+              )}
             </div>
+          )}
+
+          {activeTab === 'customers' && (
+            <CustomersTab
+              bookings={bookings}
+              fetchCustomers={fetchCustomers}
+              onOpenBooking={handleOpenBookingDetails}
+            />
+          )}
+
+          {activeTab === 'refunds' && (
+            <RefundsTab
+              bookings={bookings}
+              onMarkProcessed={handleMarkRefundProcessed}
+              onOpenBooking={handleOpenBookingDetails}
+            />
           )}
 
           {/* Tab 3: Calendar Date Availability & Blocking Coordinator (Item 10) */}
@@ -2798,12 +2983,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     const isBlocked = blockedDates.includes(item.dateStr)
                     const dayBookings = bookings.filter((booking) => booking.eventDate === item.dateStr)
                     const confirmedBookings = dayBookings.filter((b) => b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed')
-                    const pendingBookings = dayBookings.filter((b) => b.bookingStatus === 'pending')
+                    const holdBookings = dayBookings.filter((b) => isReserveHold(b) && !isHoldExpired(b))
+                    const pendingBookings = dayBookings.filter((b) => b.bookingStatus === 'pending' && !isReserveHold(b))
 
                     let cellState = 'available'
-                    if (isBlocked) cellState = 'blocked'
-                    else if (confirmedBookings.length > 0) cellState = 'booked'
-                    else if (pendingBookings.length > 0) cellState = 'pending-booking'
+                    if (confirmedBookings.length > 0) cellState = 'booked'
+                    else if (isBlocked || holdBookings.length > 0) cellState = 'blocked'
+                    else if (pendingBookings.length > 0) cellState = 'booked'
 
                     return (
                       <button
@@ -2813,8 +2999,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         style={{ minHeight: '82px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'flex-start', padding: '8px', cursor: 'pointer' }}
                         onClick={() => {
                           setNewBlockDate(item.dateStr)
-                          if (dayBookings.length > 0) {
-                            handleOpenBookingDetails(dayBookings[0])
+                          const activeDay = dayBookings.find((b) => b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit') || dayBookings[0]
+                          if (activeDay) {
+                            handleOpenBookingDetails(activeDay)
                           } else if (isBlocked) {
                             handleManualUnblock(item.dateStr)
                           }
@@ -2828,17 +3015,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         }
                       >
                         <span className="calendar-day-number" style={{ fontWeight: 700 }}>{item.day}</span>
-                        {isBlocked ? (
-                          <span className="calendar-blocked-tag" style={{ marginTop: 'auto' }}>
-                            Blocked
-                          </span>
-                        ) : confirmedBookings.length > 0 ? (
+                        {confirmedBookings.length > 0 ? (
                           <span className="calendar-count-tag" style={{ marginTop: 'auto' }}>
                             {confirmedBookings.length} Confirmed
                           </span>
+                        ) : holdBookings.length > 0 ? (
+                          <span className="calendar-blocked-tag" style={{ marginTop: 'auto' }}>
+                            48h Hold
+                          </span>
+                        ) : isBlocked ? (
+                          <span className="calendar-blocked-tag" style={{ marginTop: 'auto' }}>
+                            Blocked
+                          </span>
                         ) : pendingBookings.length > 0 ? (
-                          <span className="calendar-pending-tag" style={{ marginTop: 'auto' }}>
-                            {pendingBookings.length} Pending
+                          <span className="calendar-count-tag" style={{ marginTop: 'auto' }}>
+                            Reserved · {pendingBookings.length} Pending
                           </span>
                         ) : (
                           <span style={{ fontSize: '0.65rem', color: '#10B981', marginTop: 'auto', fontWeight: 600 }}>
@@ -3192,13 +3383,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         <span style={{ background: '#ECFDF5', color: '#065F46', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 700 }}>
                           100% Full Upfront Payment (Zero Balance)
                         </span>
+                      ) : selectedBooking.paymentTerm === 'reserve' ? (
+                        <span style={{ background: '#FFFBEB', color: '#92400E', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 700, border: '1px solid #FCD34D' }}>
+                          Reserve Only – 48-Hour Temporary Hold
+                        </span>
                       ) : (
                         <span style={{ background: '#FEF3C7', color: '#92400E', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 700 }}>
                           50% Downpayment (Remaining 50% Due on Event Day)
                         </span>
                       )}
                     </p>
-                    <p style={{ margin: '0 0 10px' }}><strong>Payment Status:</strong> {selectedBooking.paymentStatus.replace('_', ' ')}</p>
+                    {isReserveHold(selectedBooking) && (
+                      <p style={{ margin: '0 0 4px', color: isHoldExpired(selectedBooking) ? '#DC2626' : '#B45309', fontWeight: 600 }}>
+                        <Clock3 size={13} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
+                        {isHoldExpired(selectedBooking)
+                          ? 'Hold expired — will be forfeited automatically.'
+                          : `Hold expires ${new Date(getHoldExpiry(selectedBooking) || Date.now()).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })} (${formatCountdown(getHoldRemainingMs(selectedBooking))} left)`}
+                      </p>
+                    )}
+                    <p style={{ margin: '0 0 4px' }}><strong>Payment Status:</strong> {selectedBooking.paymentStatus.replace('_', ' ')}</p>
+                    <p style={{ margin: '0 0 10px' }}><strong>Booking Status:</strong> {getBookingStatusLabel(selectedBooking)}</p>
+                    {selectedBooking.bookingStatus === 'cancelled' && (
+                      <div style={{ background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: '8px', padding: '10px 12px', marginBottom: '12px', fontSize: '0.82rem', color: '#312E81' }}>
+                        <div><strong>Cancellation Reason:</strong> {selectedBooking.cancellationReason || '—'}</div>
+                        {selectedBooking.cancellationNotes && <div><strong>Notes:</strong> {selectedBooking.cancellationNotes}</div>}
+                        <div><strong>Refund:</strong> {formatMoney(selectedBooking.refundAmount || 0, selectedBooking.currency)} ({selectedBooking.refundPercentage ?? 0}% tier) — {selectedBooking.refundStatus === 'processed' ? 'Refunded' : selectedBooking.refundStatus === 'pending' ? 'Pending manual payout' : 'Not applicable'}</div>
+                      </div>
+                    )}
 
                     {/* Checklist Item 8: Detailed Menu Breakdown */}
                     <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '14px', marginBottom: '16px' }}>
@@ -3662,6 +3873,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         { id: 'completed', label: 'Completed' },
                         { id: 'confirmed', label: 'Confirmed' },
                         { id: 'inquiries', label: 'Inquiries' },
+                        { id: 'refunds', label: 'Refund Requests' },
+                        { id: 'reminders', label: '1-Week Reminders' },
+                        { id: 'holds', label: '48h Holds' },
                       ] as const
                     ).map((chip) => (
                       <button
@@ -3725,7 +3939,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         const isCompleted = notif.type === 'booking_completed'
                         const isConfirmed = notif.type === 'booking_confirmed'
                         const isInquiry = notif.type === 'inquiry_new'
-                        const isCancelled = notif.type === 'booking_cancelled'
+                        const isCancelled = notif.type === 'booking_cancelled' || notif.type === 'refund_request' || notif.type === 'hold_expired'
 
                         const iconBg = isCompleted
                           ? '#D1FAE5'
@@ -4140,7 +4354,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                 </div>
 
                 <div className="form-group" style={{ marginBottom: '14px' }}>
-                  <label>Verified Downpayment Amount (PHP)</label>
+                  <label>Verified Payment Amount (PHP)</label>
                   <input
                     type="number"
                     className="input-field"
@@ -4149,7 +4363,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     required
                   />
                   <span style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '2px' }}>
-                    Required 50% amount: {formatMoney(downpaymentBooking.totalPrice * 0.5, downpaymentBooking.currency)}
+                    {getPaymentTerm(downpaymentBooking) === 'reserve'
+                      ? `Reservation fee: ${formatMoney(Math.min(downpaymentBooking.totalPrice, RESERVATION_FEE), downpaymentBooking.currency)} · 50%: ${formatMoney(downpaymentBooking.totalPrice * 0.5, downpaymentBooking.currency)} · Full: ${formatMoney(downpaymentBooking.totalPrice, downpaymentBooking.currency)}`
+                      : `Required 50% amount: ${formatMoney(downpaymentBooking.totalPrice * 0.5, downpaymentBooking.currency)}`}
                   </span>
                 </div>
 

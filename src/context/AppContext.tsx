@@ -1,6 +1,17 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react'
 import type { ReactNode } from 'react'
-import type { User, Booking, Review, Staff, Inquiry, AdminNotification, MenuItem, CateringAddon } from '../types'
+import type {
+  User,
+  Booking,
+  Review,
+  Staff,
+  Inquiry,
+  AdminNotification,
+  MenuItem,
+  CateringAddon,
+  ClientNotification,
+  CustomerAccount,
+} from '../types'
 import { supabase } from '../lib/supabase'
 import { mapDatabasePackage, formatMoney, STORAGE_FILES_BASE } from '../data/packages'
 import type { CateringPackage } from '../data/packages'
@@ -15,7 +26,22 @@ import {
   sendPasswordResetEmailOTP,
   sendPasswordResetSMSOTP,
   normalizePhPhoneNumber,
+  sendSemaphoreSMS,
+  sendTransactionalEmail,
 } from '../lib/notifications'
+import {
+  ADMIN_ALERT_PHONE,
+  EVENT_REMINDER_DAYS,
+  RESERVATION_FEE,
+  RESERVE_HOLD_MS,
+  computeRefundQuote,
+  daysUntilEvent,
+  getPaymentTerm,
+  isBookingOccupyingDate,
+  isHoldExpired,
+  isReserveHold,
+} from '../lib/bookingRules'
+import { TERMS_VERSION, getLocalTermsAcceptance, setLocalTermsAcceptance } from '../lib/terms'
 import { playNotificationSound } from '../lib/sound'
 import { getPasswordValidationError } from '../components/PasswordStrengthIndicator'
 
@@ -55,13 +81,36 @@ interface AppContextType {
   signIn: (email: string, password: string) => Promise<{ user: User | null; error: string | null; confirmationRequired?: boolean }>
   signUp: (name: string, email: string, phone: string, password: string) => Promise<{ user: User | null; error: string | null; confirmationRequired?: boolean }>
   logout: () => Promise<void>
+  signInWithGoogle: (returnView?: 'client' | 'booking') => Promise<{ error: string | null }>
+  googleAuth: { status: 'idle' | 'redirecting' | 'finishing' | 'error'; message: string }
+  clearGoogleAuthMessage: () => void
   requestPasswordResetOTP: (identifier: string, method: 'email' | 'sms') => Promise<{ success: boolean; maskedTarget?: string; error?: string; simulatedOtp?: string }>
   verifyAndResetPassword: (otpCode: string, newPassword: string) => Promise<{ success: boolean; error?: string }>
   changeUserPassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>
   updateUserProfile: (name: string, phone: string) => Promise<{ success: boolean; error?: string }>
-  createBooking: (bookingData: Omit<Booking, 'id' | 'userId' | 'createdAt' | 'bookingStatus' | 'paymentStatus' | 'staffIds'> & { proofOfPaymentUrl?: string | null }, bookingId?: string) => Booking
-  uploadPayment: (bookingId: string, proofUrl: string, refNumber?: string) => void
-  cancelBooking: (bookingId: string) => { refundPercentage: number; refundAmount: number }
+  createBooking: (
+    bookingData: Omit<Booking, 'id' | 'userId' | 'createdAt' | 'bookingStatus' | 'paymentStatus' | 'staffIds'> & { proofOfPaymentUrl?: string | null },
+    bookingId?: string,
+    options?: { paidOnline?: boolean },
+  ) => Booking
+  uploadPayment: (
+    bookingId: string,
+    proofUrl: string,
+    refNumber?: string,
+    options?: { amount?: number; paymentTerm?: 'downpayment' | 'full' | 'reserve' },
+  ) => void
+  cancelBooking: (
+    bookingId: string,
+    reason: string,
+    notes?: string,
+  ) => { refundPercentage: number; refundAmount: number; refundStatus: 'pending' | 'not_applicable' }
+  markRefundProcessed: (bookingId: string) => void
+  clientNotifications: ClientNotification[]
+  markClientNotificationRead: (id: string) => void
+  markAllClientNotificationsRead: () => void
+  needsTermsAcceptance: boolean
+  acceptTerms: () => Promise<void>
+  fetchCustomers: () => Promise<CustomerAccount[]>
   rebookEvent: (bookingId: string, newDate: string) => { success: boolean; message: string }
   addReview: (rating: number, comment: string, imageUrl: string | null) => void
   replyReview: (reviewId: string, reply: string) => void
@@ -96,6 +145,7 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined)
 const SESSION_TOKEN_KEY = 'sinag_session_token'
 const LOCAL_USER_BACKUP_KEY = 'sinag_local_user'
+const OAUTH_PENDING_KEY = 'sinag_oauth_return_view'
 
 const mapDbBooking = (row: any): Booking => ({
   id: row.id,
@@ -117,9 +167,22 @@ const mapDbBooking = (row: any): Booking => ({
     : { extraMainCount: 0, extraPastaCount: 0, extraDessertCount: 0 },
   totalPrice: Number(row.total_price) || 0,
   downpaymentAmount: Number(row.downpayment_amount) || 0,
-  paymentTerm: (Number(row.downpayment_amount) >= Number(row.total_price) && Number(row.total_price) > 0) || (row.notes && /100% full payment/i.test(row.notes))
+  paymentTerm: row.payment_term === 'reserve' || row.payment_term === 'full' || row.payment_term === 'downpayment'
+    ? (row.payment_term === 'downpayment' && Number(row.total_price) > 0 && Number(row.downpayment_amount) >= Number(row.total_price) ? 'full' : row.payment_term)
+    : (Number(row.downpayment_amount) >= Number(row.total_price) && Number(row.total_price) > 0) || (row.notes && /100% full payment/i.test(row.notes))
     ? 'full'
+    : row.notes && /RESERVE ONLY/i.test(row.notes)
+    ? 'reserve'
     : 'downpayment',
+  holdExpiresAt: row.hold_expires_at ?? null,
+  cancellationReason: row.cancellation_reason ?? null,
+  cancellationNotes: row.cancellation_notes ?? null,
+  refundPercentage: row.refund_percentage === null || row.refund_percentage === undefined ? null : Number(row.refund_percentage),
+  refundAmount: row.refund_amount === null || row.refund_amount === undefined ? null : Number(row.refund_amount),
+  refundStatus: row.refund_status || 'none',
+  cancelledAt: row.cancelled_at ?? null,
+  refundProcessedAt: row.refund_processed_at ?? null,
+  reminderSentAt: row.reminder_sent_at ?? null,
   bookingStatus: row.booking_status || 'pending',
   paymentStatus: row.payment_status || 'unpaid',
   paymentMethod: row.payment_method,
@@ -163,7 +226,127 @@ const mapToDbBooking = (b: Booking) => ({
   notes: b.notes,
   created_at: b.createdAt,
   updated_at: new Date().toISOString(),
+  payment_term: b.paymentTerm || 'downpayment',
+  hold_expires_at: b.holdExpiresAt || null,
+  cancellation_reason: b.cancellationReason || null,
+  cancellation_notes: b.cancellationNotes || null,
+  refund_percentage: b.refundPercentage ?? null,
+  refund_amount: b.refundAmount ?? null,
+  refund_status: b.refundStatus || 'none',
+  cancelled_at: b.cancelledAt || null,
+  refund_processed_at: b.refundProcessedAt || null,
+  reminder_sent_at: b.reminderSentAt || null,
 })
+
+// ---------------------------------------------------------------------------
+// Revision 6 schema fallback: if the 20261104_revision_6.sql migration has not
+// been applied yet, writes are retried without the new columns so the app
+// keeps working (new data is kept in memory / localStorage only).
+// ---------------------------------------------------------------------------
+const REV6_BOOKING_COLUMNS = [
+  'payment_term',
+  'hold_expires_at',
+  'cancellation_reason',
+  'cancellation_notes',
+  'refund_percentage',
+  'refund_amount',
+  'refund_status',
+  'cancelled_at',
+  'refund_processed_at',
+  'reminder_sent_at',
+]
+let rev6BookingColumnsMissing = false
+let notificationsTableMissing = false
+
+type DbError = { message?: string; code?: string; details?: string } | null
+
+const isMissingColumnError = (err: DbError) => {
+  if (!err) return false
+  const msg = `${err.message || ''} ${err.details || ''}`
+  return err.code === 'PGRST204' || err.code === '42703' || (/column/i.test(msg) && /(does not exist|could not find|schema cache)/i.test(msg))
+}
+
+const isMissingTableError = (err: DbError) => {
+  if (!err) return false
+  const msg = `${err.message || ''}`
+  return err.code === '42P01' || err.code === 'PGRST205' || /relation .* does not exist|could not find the table/i.test(msg)
+}
+
+const stripRev6Columns = <T extends Record<string, unknown>>(payload: T): Partial<T> => {
+  const copy: Record<string, unknown> = { ...payload }
+  REV6_BOOKING_COLUMNS.forEach((col) => delete copy[col])
+  return copy as Partial<T>
+}
+
+/** Runs a bookings write, retrying without revision-6 columns when they don't exist yet. */
+const writeBookingRow = async (
+  payload: Record<string, unknown>,
+  run: (row: Record<string, unknown>) => PromiseLike<{ error: DbError }>,
+): Promise<DbError> => {
+  const hasRev6 = REV6_BOOKING_COLUMNS.some((c) => c in payload)
+  const first = rev6BookingColumnsMissing ? stripRev6Columns(payload) : payload
+  if (rev6BookingColumnsMissing && Object.keys(first).length === 0) return null
+  const { error } = await run(first)
+  if (error && hasRev6 && !rev6BookingColumnsMissing && isMissingColumnError(error)) {
+    rev6BookingColumnsMissing = true
+    console.warn('Revision 6 booking columns missing — run supabase/migrations/20261104_revision_6.sql. Retrying without them.')
+    const stripped = stripRev6Columns(payload)
+    if (Object.keys(stripped).length === 0) return null
+    const retry = await run(stripped)
+    return retry.error
+  }
+  return error
+}
+
+const mapDbClientNotification = (row: any): ClientNotification => ({
+  id: row.id,
+  type: row.type,
+  title: row.title,
+  message: row.message,
+  bookingId: row.booking_id || undefined,
+  recipientEmail: row.recipient_email || '',
+  userId: row.user_id || undefined,
+  timestamp: row.created_at || new Date().toISOString(),
+  read: Boolean(row.read),
+})
+
+const mapDbAdminNotification = (row: any): AdminNotification => ({
+  id: row.id,
+  type: row.type,
+  title: row.title,
+  message: row.message,
+  bookingId: row.booking_id || undefined,
+  timestamp: row.created_at || new Date().toISOString(),
+  read: Boolean(row.read),
+})
+
+const CLIENT_NOTIF_STORAGE_PREFIX = 'sinag_client_notifications_'
+const readLocalClientNotifs = (email: string): ClientNotification[] => {
+  try {
+    const raw = localStorage.getItem(`${CLIENT_NOTIF_STORAGE_PREFIX}${email.toLowerCase()}`)
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+const writeLocalClientNotifs = (email: string, list: ClientNotification[]) => {
+  try {
+    localStorage.setItem(`${CLIENT_NOTIF_STORAGE_PREFIX}${email.toLowerCase()}`, JSON.stringify(list.slice(0, 100)))
+  } catch {
+    // ignore
+  }
+}
+
+const mergeById = <T extends { id: string; timestamp: string }>(a: T[], b: T[]): T[] => {
+  const map = new Map<string, T>()
+  ;[...a, ...b].forEach((n) => {
+    const existing = map.get(n.id)
+    // a "read" flag from either copy wins
+    map.set(n.id, existing ? { ...existing, ...n, read: (existing as any).read || (n as any).read } : n)
+  })
+  return [...map.values()].sort((x, y) => new Date(y.timestamp).getTime() - new Date(x.timestamp).getTime())
+}
 
 const mapDbReview = (r: any): Review => ({
   id: r.id,
@@ -191,6 +374,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const ADDONS_STORAGE_KEY = 'sinag_catalog_addons'
 
   const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const currentUserRef = React.useRef<User | null>(null)
+  useEffect(() => {
+    currentUserRef.current = currentUser
+  }, [currentUser])
   const [packages, setPackages] = useState<CateringPackage[]>(() => {
     try {
       const stored = localStorage.getItem(PACKAGES_STORAGE_KEY)
@@ -287,30 +474,139 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [adminNotifications])
 
-  const addAdminNotification = (notif: Omit<AdminNotification, 'id' | 'timestamp' | 'read'>) => {
+  // ---------------------------------------------------------------------------
+  // In-app notifications (persisted to public.notifications when available)
+  // ---------------------------------------------------------------------------
+  const insertNotificationRow = (row: Record<string, unknown>) => {
+    if (!supabase || notificationsTableMissing) return
+    void supabase
+      .from('notifications')
+      .upsert(row, { onConflict: 'id', ignoreDuplicates: true })
+      .then(({ error }) => {
+        if (error) {
+          if (isMissingTableError(error)) notificationsTableMissing = true
+          console.warn('Could not save notification:', error.message)
+        }
+      })
+  }
+
+  const addAdminNotification = (
+    notif: Omit<AdminNotification, 'id' | 'timestamp' | 'read'> & { id?: string },
+  ) => {
     const newNotif: AdminNotification = {
       ...notif,
-      id: `an-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: notif.id || `an-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       timestamp: new Date().toISOString(),
       read: false,
     }
-    setAdminNotifications((prev) => [newNotif, ...prev])
+    setAdminNotifications((prev) => (prev.some((n) => n.id === newNotif.id) ? prev : [newNotif, ...prev]))
     playNotificationSound()
+    insertNotificationRow({
+      id: newNotif.id,
+      audience: 'admin',
+      booking_id: newNotif.bookingId || null,
+      type: newNotif.type,
+      title: newNotif.title,
+      message: newNotif.message,
+      read: false,
+      created_at: newNotif.timestamp,
+    })
   }
 
   const markNotificationAsRead = (id: string) => {
     setAdminNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n))
     )
+    if (supabase && !notificationsTableMissing) {
+      void supabase.from('notifications').update({ read: true }).eq('id', id).then(() => {})
+    }
   }
 
   const markAllNotificationsAsRead = () => {
     setAdminNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
+    if (supabase && !notificationsTableMissing) {
+      void supabase.from('notifications').update({ read: true }).eq('audience', 'admin').eq('read', false).then(() => {})
+    }
   }
 
   const clearAdminNotifications = () => {
     setAdminNotifications([])
     localStorage.removeItem(ADMIN_NOTIF_STORAGE_KEY)
+    if (supabase && !notificationsTableMissing) {
+      void supabase.from('notifications').delete().eq('audience', 'admin').then(() => {})
+    }
+  }
+
+  // Client notification feed (for the signed-in client). The feed is the merge
+  // of the local cache and what was loaded from / pushed to the database.
+  const [clientNotifStore, setClientNotifStore] = useState<{ email: string; list: ClientNotification[] }>({ email: '', list: [] })
+  const activeClientEmail = currentUser && currentUser.role === 'client' ? currentUser.email.toLowerCase().trim() : ''
+  const clientNotifications = useMemo(() => {
+    if (!activeClientEmail) return []
+    const fromStore = clientNotifStore.email === activeClientEmail ? clientNotifStore.list : []
+    return mergeById(readLocalClientNotifs(activeClientEmail), fromStore)
+  }, [activeClientEmail, clientNotifStore])
+  const setClientNotifications = (updater: (prev: ClientNotification[]) => ClientNotification[]) => {
+    const email = currentUserRef.current?.email.toLowerCase().trim() || ''
+    if (!email) return
+    setClientNotifStore((prev) => {
+      const base = mergeById(readLocalClientNotifs(email), prev.email === email ? prev.list : [])
+      return { email, list: updater(base) }
+    })
+  }
+
+  const pushClientNotification = (
+    notif: Omit<ClientNotification, 'id' | 'timestamp' | 'read'> & { id?: string },
+  ) => {
+    const newNotif: ClientNotification = {
+      ...notif,
+      id: notif.id || `cn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      read: false,
+    }
+    const email = newNotif.recipientEmail.toLowerCase().trim()
+    if (email) {
+      const local = readLocalClientNotifs(email)
+      if (!local.some((n) => n.id === newNotif.id)) writeLocalClientNotifs(email, [newNotif, ...local])
+    }
+    if (currentUserRef.current && currentUserRef.current.email.toLowerCase().trim() === email) {
+      setClientNotifications((prev) => (prev.some((n) => n.id === newNotif.id) ? prev : [newNotif, ...prev]))
+    }
+    insertNotificationRow({
+      id: newNotif.id,
+      audience: 'client',
+      user_id: newNotif.userId || null,
+      recipient_email: email,
+      booking_id: newNotif.bookingId || null,
+      type: newNotif.type,
+      title: newNotif.title,
+      message: newNotif.message,
+      read: false,
+      created_at: newNotif.timestamp,
+    })
+  }
+
+  const markClientNotificationRead = (id: string) => {
+    setClientNotifications((prev) => {
+      const next = prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+      if (currentUserRef.current) writeLocalClientNotifs(currentUserRef.current.email, next)
+      return next
+    })
+    if (supabase && !notificationsTableMissing) {
+      void supabase.from('notifications').update({ read: true }).eq('id', id).then(() => {})
+    }
+  }
+
+  const markAllClientNotificationsRead = () => {
+    const email = currentUserRef.current?.email.toLowerCase().trim()
+    setClientNotifications((prev) => {
+      const next = prev.map((n) => ({ ...n, read: true }))
+      if (email) writeLocalClientNotifs(email, next)
+      return next
+    })
+    if (email && supabase && !notificationsTableMissing) {
+      void supabase.from('notifications').update({ read: true }).eq('audience', 'client').eq('recipient_email', email).eq('read', false).then(() => {})
+    }
   }
 
   // Seed initial notification history from bookings if storage is empty
@@ -520,6 +816,194 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       })
   }, [])
 
+  // ---------------------------------------------------------------------------
+  // Notification feeds: initial load + realtime for the signed-in user
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!currentUser) return
+    const client = supabase
+    const email = currentUser.email.toLowerCase().trim()
+
+    if (!client) return
+    let cancelled = false
+
+    if (currentUser.role === 'admin') {
+      client
+        .from('notifications')
+        .select('*')
+        .eq('audience', 'admin')
+        .order('created_at', { ascending: false })
+        .limit(200)
+        .then(({ data, error }) => {
+          if (cancelled) return
+          if (error) {
+            if (isMissingTableError(error)) notificationsTableMissing = true
+            return
+          }
+          if (data) setAdminNotifications((prev) => mergeById(prev, data.map(mapDbAdminNotification)))
+        })
+    } else {
+      client
+        .from('notifications')
+        .select('*')
+        .eq('audience', 'client')
+        .ilike('recipient_email', email)
+        .order('created_at', { ascending: false })
+        .limit(100)
+        .then(({ data, error }) => {
+          if (cancelled) return
+          if (error) {
+            if (isMissingTableError(error)) notificationsTableMissing = true
+            return
+          }
+          if (data) {
+            setClientNotifications((prev) => {
+              const merged = mergeById(prev, data.map(mapDbClientNotification))
+              writeLocalClientNotifs(email, merged)
+              return merged
+            })
+          }
+        })
+    }
+
+    const channel = client
+      .channel(`sinag-notifications-${currentUser.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload: any) => {
+        const row = payload?.new
+        if (!row) return
+        if (row.audience === 'admin' && currentUser.role === 'admin') {
+          const n = mapDbAdminNotification(row)
+          setAdminNotifications((prev) => {
+            if (prev.some((x) => x.id === n.id)) return prev
+            playNotificationSound()
+            return [n, ...prev]
+          })
+        } else if (row.audience === 'client' && currentUser.role === 'client' && String(row.recipient_email || '').toLowerCase() === email) {
+          const n = mapDbClientNotification(row)
+          setClientNotifications((prev) => {
+            if (prev.some((x) => x.id === n.id)) return prev
+            playNotificationSound()
+            const next = [n, ...prev]
+            writeLocalClientNotifs(email, next)
+            return next
+          })
+        }
+      })
+      .subscribe()
+
+    return () => {
+      cancelled = true
+      client.removeChannel(channel)
+    }
+  }, [currentUser?.id, currentUser?.role, currentUser?.email])
+
+  // ---------------------------------------------------------------------------
+  // Terms & Conditions gate (clients must scroll + accept once per version)
+  // ---------------------------------------------------------------------------
+  const [termsCheck, setTermsCheck] = useState<{ userId: string; status: 'accepted' | 'required' } | null>(null)
+  const termsStatus: 'unknown' | 'accepted' | 'required' =
+    !currentUser || currentUser.role !== 'client'
+      ? 'accepted'
+      : getLocalTermsAcceptance(currentUser.id)
+      ? 'accepted'
+      : termsCheck && termsCheck.userId === currentUser.id
+      ? termsCheck.status
+      : !supabase
+      ? 'required'
+      : 'unknown'
+
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'client' || !supabase) return
+    if (getLocalTermsAcceptance(currentUser.id)) return
+    const userId = currentUser.id
+    let cancelled = false
+    supabase
+      .from('users')
+      .select('terms_accepted_at, terms_version')
+      .eq('id', userId)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return
+        if (error || !data) {
+          // Column not migrated yet or user row not found: rely on the local record
+          setTermsCheck({ userId, status: getLocalTermsAcceptance(userId) ? 'accepted' : 'required' })
+          return
+        }
+        const accepted = Boolean(data.terms_accepted_at) && data.terms_version === TERMS_VERSION
+        if (accepted) setLocalTermsAcceptance(userId)
+        setTermsCheck({ userId, status: accepted ? 'accepted' : 'required' })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [currentUser?.id, currentUser?.role])
+
+  const acceptTerms = async () => {
+    const user = currentUserRef.current
+    if (!user) return
+    setLocalTermsAcceptance(user.id)
+    setTermsCheck({ userId: user.id, status: 'accepted' })
+    const acceptedAt = new Date().toISOString()
+    const updatedUser: User = { ...user, termsAcceptedAt: acceptedAt, termsVersion: TERMS_VERSION }
+    setCurrentUser(updatedUser)
+    sessionStorage.setItem(LOCAL_USER_BACKUP_KEY, JSON.stringify(updatedUser))
+    if (supabase) {
+      const { error } = await supabase
+        .from('users')
+        .update({ terms_accepted_at: acceptedAt, terms_version: TERMS_VERSION })
+        .eq('id', user.id)
+      if (error) console.warn('Terms acceptance saved locally only:', error.message)
+    }
+  }
+
+  const needsTermsAcceptance = Boolean(currentUser && currentUser.role === 'client' && termsStatus === 'required')
+
+  // ---------------------------------------------------------------------------
+  // Customer directory for the admin "Customers" tab
+  // ---------------------------------------------------------------------------
+  const fetchCustomers = async (): Promise<CustomerAccount[]> => {
+    const fromBookings = (): CustomerAccount[] => {
+      const map = new Map<string, CustomerAccount>()
+      bookings.forEach((b) => {
+        const key = b.email.toLowerCase().trim()
+        if (!key || map.has(key)) return
+        map.set(key, { id: b.userId && b.userId !== 'guest' ? b.userId : key, name: b.customerName, email: b.email, phone: b.phone, createdAt: b.createdAt, isGuest: true })
+      })
+      return [...map.values()]
+    }
+    if (!supabase) return fromBookings()
+    const full = await supabase
+      .from('users')
+      .select('id, full_name, email, phone, role, created_at, auth_provider, terms_accepted_at')
+      .eq('role', 'client')
+      .order('created_at', { ascending: false })
+    let rows: any[] | null = full.data
+    if (full.error) {
+      const basic = await supabase
+        .from('users')
+        .select('id, full_name, email, phone, role, created_at')
+        .eq('role', 'client')
+        .order('created_at', { ascending: false })
+      rows = basic.error ? null : basic.data
+    }
+    if (!rows) return fromBookings()
+    const accounts: CustomerAccount[] = rows.map((r) => ({
+      id: r.id,
+      name: r.full_name,
+      email: r.email,
+      phone: r.phone || undefined,
+      createdAt: r.created_at,
+      authProvider: r.auth_provider === 'google' ? 'google' : 'email',
+      termsAcceptedAt: r.terms_accepted_at ?? null,
+    }))
+    // Include guests who booked without a registered account
+    const known = new Set(accounts.map((a) => a.email.toLowerCase().trim()))
+    fromBookings().forEach((g) => {
+      if (!known.has(g.email.toLowerCase().trim())) accounts.push(g)
+    })
+    return accounts
+  }
+
   // Derive staff status based on active confirmed bookings
   const staff = useMemo<Staff[]>(() => {
     const busyStaffIds = new Set<string>()
@@ -668,6 +1152,149 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     return { user: null, error: 'Unable to complete registration.' }
   }
+
+
+  // ---------------------------------------------------------------------------
+  // Google sign-in / sign-up (Supabase Auth OAuth → app users table)
+  // ---------------------------------------------------------------------------
+  const [googleAuth, setGoogleAuth] = useState<{ status: 'idle' | 'redirecting' | 'finishing' | 'error'; message: string }>(() => {
+    if (typeof window === 'undefined') return { status: 'idle', message: '' }
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('error_description')) {
+      return { status: 'error', message: `Google sign-in was cancelled or failed: ${params.get('error_description')}` }
+    }
+    if (params.get('code') && sessionStorage.getItem(OAUTH_PENDING_KEY)) {
+      return { status: 'finishing', message: 'Finishing Google sign-in…' }
+    }
+    return { status: 'idle', message: '' }
+  })
+  const googleLinkInFlightRef = React.useRef(false)
+
+  const clearGoogleAuthMessage = () => setGoogleAuth({ status: 'idle', message: '' })
+
+  const signInWithGoogle = async (returnView: 'client' | 'booking' = 'client'): Promise<{ error: string | null }> => {
+    if (!supabase) return { error: 'Google sign-in is unavailable: the database is not configured.' }
+    sessionStorage.setItem(OAUTH_PENDING_KEY, returnView)
+    setGoogleAuth({ status: 'redirecting', message: 'Redirecting to Google…' })
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/`,
+        queryParams: { prompt: 'select_account' },
+      },
+    })
+    if (error) {
+      sessionStorage.removeItem(OAUTH_PENDING_KEY)
+      const message = /provider is not enabled|Unsupported provider/i.test(error.message)
+        ? 'Google sign-in is not enabled yet in Supabase (Authentication → Providers → Google).'
+        : error.message
+      setGoogleAuth({ status: 'error', message })
+      return { error: message }
+    }
+    return { error: null }
+  }
+
+  const stripOAuthParamsFromUrl = () => {
+    const url = new URL(window.location.href)
+    let changed = false
+    ;['code', 'error', 'error_code', 'error_description', 'state'].forEach((k) => {
+      if (url.searchParams.has(k)) {
+        url.searchParams.delete(k)
+        changed = true
+      }
+    })
+    if (changed) window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+  }
+
+  // Turns a verified Google identity into an app user (existing account by
+  // email, or a brand-new client account) and starts the normal app session.
+  const completeGoogleLogin = async (authUser: { email?: string | null; user_metadata?: Record<string, unknown> }) => {
+    const client = supabase
+    if (!client || googleLinkInFlightRef.current) return
+    googleLinkInFlightRef.current = true
+    try {
+      const email = (authUser.email || '').trim().toLowerCase()
+      if (!email) throw new Error('Your Google account did not share an email address.')
+      const meta = authUser.user_metadata || {}
+      const fullName = String(meta.full_name || meta.name || email.split('@')[0]).trim().slice(0, 120)
+
+      let { data: row, error } = await client
+        .from('users')
+        .select('id, full_name, email, phone, role')
+        .ilike('email', email)
+        .limit(1)
+        .maybeSingle()
+      if (error) throw new Error(error.message)
+
+      if (!row) {
+        const inserted = await client
+          .from('users')
+          .insert({
+            full_name: fullName || 'Sinag Client',
+            email,
+            phone: null,
+            // Google accounts never sign in with a password; this random value
+            // cannot be guessed. "Forgot password" can still set a real one later.
+            password: `google-oauth:${crypto.randomUUID()}:${crypto.randomUUID()}`,
+            role: 'client',
+            auth_provider: 'google',
+          })
+          .select('id, full_name, email, phone, role')
+          .single()
+        if (inserted.error) throw new Error(inserted.error.message)
+        row = inserted.data
+      }
+
+      const user: User = {
+        id: row.id,
+        name: row.full_name || fullName,
+        email: row.email,
+        phone: row.phone || undefined,
+        role: row.role === 'admin' ? 'admin' : 'client',
+        authProvider: 'google',
+      }
+      const sessionToken = `session_${user.id}_${Date.now()}`
+      sessionStorage.setItem(SESSION_TOKEN_KEY, sessionToken)
+      sessionStorage.setItem(LOCAL_USER_BACKUP_KEY, JSON.stringify(user))
+      setCurrentUser(user)
+      void client.from('user_sessions').insert({
+        user_id: user.id,
+        token_hash: sessionToken,
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      })
+      setGoogleAuth({ status: 'idle', message: '' })
+    } catch (err) {
+      sessionStorage.removeItem(OAUTH_PENDING_KEY)
+      setGoogleAuth({
+        status: 'error',
+        message: `Google sign-in failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+      })
+    } finally {
+      // The Supabase Auth session was only needed to verify the Google account.
+      await client.auth.signOut({ scope: 'local' }).catch(() => {})
+      stripOAuthParamsFromUrl()
+      googleLinkInFlightRef.current = false
+    }
+  }
+
+  useEffect(() => {
+    const client = supabase
+    if (!client) return
+    if (new URLSearchParams(window.location.search).get('error_description')) {
+      sessionStorage.removeItem(OAUTH_PENDING_KEY)
+      stripOAuthParamsFromUrl()
+    }
+    const handle = (session: { user?: { email?: string | null; user_metadata?: Record<string, unknown>; app_metadata?: Record<string, unknown> } } | null) => {
+      const authUser = session?.user
+      if (!authUser) return
+      const provider = String(authUser.app_metadata?.provider || '')
+      if (provider !== 'google' && !sessionStorage.getItem(OAUTH_PENDING_KEY)) return
+      // Defer: Supabase recommends not awaiting other client calls inside the callback
+      window.setTimeout(() => void completeGoogleLogin(authUser), 0)
+    }
+    const { data: sub } = client.auth.onAuthStateChange((_event, session) => handle(session))
+    return () => sub.subscription.unsubscribe()
+  }, [])
 
   const logout = async () => {
     const token = sessionStorage.getItem(SESSION_TOKEN_KEY)
@@ -886,8 +1513,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return { success: true }
   }
 
-  const createBooking = (bookingData: Omit<Booking, 'id' | 'userId' | 'createdAt' | 'bookingStatus' | 'paymentStatus' | 'staffIds'> & { proofOfPaymentUrl?: string | null }, bookingId?: string): Booking => {
+  const createBooking = (
+    bookingData: Omit<Booking, 'id' | 'userId' | 'createdAt' | 'bookingStatus' | 'paymentStatus' | 'staffIds'> & { proofOfPaymentUrl?: string | null },
+    bookingId?: string,
+    options?: { paidOnline?: boolean },
+  ): Booking => {
     const id = bookingId ?? `bk-${crypto.randomUUID()}`
+    const nowIso = new Date().toISOString()
+    const term = bookingData.paymentTerm ?? 'downpayment'
     const isPaymentSubmitted = Boolean((bookingData.gcashRefNumber && bookingData.gcashRefNumber.trim()) || bookingData.proofOfPaymentUrl)
     const isFullEntertainment =
       bookingData.packageId === 'full-blast' ||
@@ -896,24 +1529,35 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       ? ['Event Host', 'Clown / Entertainer', 'Photo Booth', 'Photographer', 'Lights and Sounds']
       : []
 
+    const paidOnline = Boolean(options?.paidOnline)
+    const paymentStatus: Booking['paymentStatus'] = paidOnline
+      ? (term === 'full' ? 'fully_paid' : term === 'reserve' ? 'partially_paid' : 'downpayment_paid')
+      : isPaymentSubmitted
+      ? 'pending_verification'
+      : 'unpaid'
+
     const newBooking: Booking = {
       ...bookingData,
       id,
       userId: currentUser?.id || 'guest',
-      createdAt: new Date().toISOString(),
-      bookingStatus: 'pending',
-      paymentStatus: isPaymentSubmitted ? 'pending_verification' : 'unpaid',
+      createdAt: nowIso,
+      paymentTerm: term,
+      holdExpiresAt: term === 'reserve' ? new Date(Date.now() + RESERVE_HOLD_MS).toISOString() : null,
+      bookingStatus: paidOnline ? 'confirmed' : 'pending',
+      paymentStatus,
       proofOfPaymentUrl: bookingData.proofOfPaymentUrl || null,
       staffIds: [],
       assignedServices: (bookingData.assignedServices && bookingData.assignedServices.length > 0) ? bookingData.assignedServices : defaultServices,
+      refundStatus: 'none',
     }
 
     setBookings((prev) => [newBooking, ...prev])
 
     // Persist to Supabase Database
     if (supabase) {
+      const client = supabase
       const dbPayload = mapToDbBooking(newBooking)
-      supabase.from('bookings').insert(dbPayload).then(({ error }) => {
+      void writeBookingRow(dbPayload, (row) => client.from('bookings').insert(row)).then((error) => {
         if (error) console.error('Error inserting booking into Supabase:', error.message)
       })
     }
@@ -921,87 +1565,355 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Trigger live Semaphore SMS and transactional email alerts
     sendBookingSubmissionNotifications(newBooking).catch(console.error)
 
-    addAdminNotification({
-      type: 'booking_new',
-      title: 'New Booking Request',
-      message: `${newBooking.customerName} submitted a ${newBooking.eventType} reservation for ${newBooking.eventDate} (${newBooking.guestCount} pax). Ref: #${newBooking.id}`,
-      bookingId: newBooking.id,
-    })
+    if (term === 'reserve' && paymentStatus === 'unpaid') {
+      addAdminNotification({
+        type: 'hold_created',
+        title: 'New 48-Hour Temporary Hold',
+        message: `${newBooking.customerName} placed a Reserve Only hold on ${newBooking.eventDate} (${newBooking.eventType}, ${newBooking.guestCount} pax). Ref: #${newBooking.id}. Auto-expires in 48 hours without payment.`,
+        bookingId: newBooking.id,
+      })
+      pushClientNotification({
+        id: `nt-hold-${newBooking.id}`,
+        type: 'hold_created',
+        title: 'Your date is temporarily held!',
+        message: `Booking ${newBooking.id} on ${newBooking.eventDate} is held for 48 hours. Please pay the ${formatMoney(newBooking.downpaymentAmount || RESERVATION_FEE, 'PHP')} reservation fee within 2 days (48 hours) to lock in your reservation, or your booking will automatically expire.`,
+        bookingId: newBooking.id,
+        recipientEmail: newBooking.email,
+        userId: currentUser?.id,
+      })
+    } else {
+      addAdminNotification({
+        type: 'booking_new',
+        title: paidOnline ? 'New Booking Paid Online' : 'New Booking Request',
+        message: `${newBooking.customerName} submitted a ${newBooking.eventType} reservation for ${newBooking.eventDate} (${newBooking.guestCount} pax). Ref: #${newBooking.id}`,
+        bookingId: newBooking.id,
+      })
+      pushClientNotification({
+        id: `nt-new-${newBooking.id}`,
+        type: paidOnline ? 'payment_confirmed' : 'booking_update',
+        title: paidOnline ? 'Payment received – date reserved' : 'Reservation submitted',
+        message: paidOnline
+          ? `Your online payment for booking ${newBooking.id} (${newBooking.eventDate}) was received. Your date is locked.`
+          : `Your ${term === 'full' ? '100% full payment' : term === 'reserve' ? 'reservation-fee' : '50% downpayment'} booking for ${newBooking.eventDate} is locked on our calendar. ${isPaymentSubmitted ? 'Your payment proof is pending verification.' : 'You can upload your payment receipt anytime from My Bookings.'}`,
+        bookingId: newBooking.id,
+        recipientEmail: newBooking.email,
+        userId: currentUser?.id,
+      })
+    }
 
     return newBooking
   }
 
-  const uploadPayment = (bookingId: string, proofUrl: string, refNumber?: string) => {
+  const uploadPayment = (
+    bookingId: string,
+    proofUrl: string,
+    refNumber?: string,
+    options?: { amount?: number; paymentTerm?: 'downpayment' | 'full' | 'reserve' },
+  ) => {
+    const target = bookings.find((b) => b.id === bookingId)
+    const nextTerm = options?.paymentTerm ?? (target ? getPaymentTerm(target) : undefined)
+    const nextAmount = options?.amount
+
     setBookings((prev) =>
       prev.map((bk) =>
         bk.id === bookingId
           ? {
               ...bk,
               proofOfPaymentUrl: proofUrl,
-              paymentStatus: 'pending_verification',
+              paymentStatus: bk.paymentStatus === 'downpayment_paid' || bk.paymentStatus === 'partially_paid' ? bk.paymentStatus : 'pending_verification',
               ...(refNumber ? { gcashRefNumber: refNumber } : {}),
+              ...(nextTerm && bk.paymentStatus !== 'downpayment_paid' && bk.paymentStatus !== 'partially_paid' ? { paymentTerm: nextTerm } : {}),
+              ...(nextAmount && bk.paymentStatus !== 'downpayment_paid' && bk.paymentStatus !== 'partially_paid' ? { downpaymentAmount: nextAmount } : {}),
             }
           : bk,
       ),
     )
 
+    const isBalancePayment = target?.paymentStatus === 'downpayment_paid' || target?.paymentStatus === 'partially_paid'
     addAdminNotification({
-      type: 'booking_confirmed',
-      title: 'Payment Proof Uploaded',
-      message: `Client submitted 50% downpayment proof (Ref: ${refNumber || 'Receipt Image'}) for Booking #${bookingId}. Pending verification.`,
+      type: 'payment_uploaded',
+      title: isBalancePayment ? 'Balance Payment Receipt Uploaded' : 'Payment Proof Uploaded',
+      message: `${target?.customerName || 'Client'} uploaded a payment receipt${nextAmount ? ` for ${formatMoney(nextAmount, 'PHP')}` : ''} (Ref: ${refNumber || 'Receipt Image'}) for Booking #${bookingId}. Pending verification.`,
       bookingId,
     })
+    if (target) {
+      pushClientNotification({
+        type: 'payment_submitted',
+        title: 'Payment receipt received',
+        message: `We received your payment receipt for booking ${bookingId}. Our team will verify it shortly.`,
+        bookingId,
+        recipientEmail: target.email,
+        userId: currentUser?.id,
+      })
+    }
 
     if (supabase) {
-      supabase.from('bookings').update({
+      const client = supabase
+      const payload: Record<string, unknown> = {
         proof_of_payment_url: proofUrl,
-        payment_status: 'pending_verification',
         ...(refNumber ? { gcash_ref_number: refNumber } : {}),
-      }).eq('id', bookingId).then(({ error }) => {
+      }
+      if (!isBalancePayment) {
+        payload.payment_status = 'pending_verification'
+        if (nextAmount) payload.downpayment_amount = nextAmount
+        if (nextTerm) payload.payment_term = nextTerm
+      }
+      void writeBookingRow(payload, (row) => client.from('bookings').update(row).eq('id', bookingId)).then((error) => {
         if (error) console.error('Error updating payment proof in Supabase:', error.message)
       })
     }
   }
 
-  const cancelBooking = (bookingId: string) => {
+  const cancelBooking = (bookingId: string, reason: string, notes?: string) => {
     const booking = bookings.find((b) => b.id === bookingId)
-    if (!booking) return { refundPercentage: 0, refundAmount: 0 }
+    if (!booking) return { refundPercentage: 0, refundAmount: 0, refundStatus: 'not_applicable' as const }
 
-    const eventTime = new Date(booking.eventDate).getTime()
-    const nowTime = new Date().getTime()
-    const diffMs = eventTime - nowTime
-    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
-
-    const refundPercentage = diffDays >= 30 ? 100 : diffDays >= 14 ? 50 : 0
-    const amountPaid = booking.paymentStatus === 'fully_paid' ? booking.totalPrice : (booking.totalPrice * 0.5)
-    const refundAmount = amountPaid * (refundPercentage / 100)
+    const quote = computeRefundQuote(booking)
+    const refundStatus: 'pending' | 'not_applicable' = quote.refundable ? 'pending' : 'not_applicable'
+    const cancelledAt = new Date().toISOString()
+    const cleanNotes = notes?.trim() || null
 
     setBookings((prev) =>
       prev.map((bk) =>
         bk.id === bookingId
-          ? { ...bk, bookingStatus: 'cancelled', paymentStatus: 'unpaid' }
+          ? {
+              ...bk,
+              bookingStatus: 'cancelled',
+              cancellationReason: reason,
+              cancellationNotes: cleanNotes,
+              refundPercentage: quote.refundPercentage,
+              refundAmount: quote.refundAmount,
+              refundStatus,
+              cancelledAt,
+            }
           : bk,
       ),
     )
 
+    const amountText = formatMoney(quote.refundAmount, booking.currency)
     addAdminNotification({
-      type: 'booking_cancelled',
-      title: 'Booking Cancelled',
-      message: `Booking #${bookingId} (${booking.customerName}) was cancelled. Refund: ${refundPercentage}%.`,
+      type: 'refund_request',
+      title: quote.refundable ? 'New Refund Request / Cancellation' : 'Booking Cancelled (No Refund Due)',
+      message: quote.refundable
+        ? `${booking.customerName} cancelled booking ${bookingId}. Requested manual refund of ${amountText} based on ${quote.tierLabel}. Reason: ${reason}${cleanNotes ? ` – ${cleanNotes}` : ''}.`
+        : `${booking.customerName} cancelled booking ${bookingId}. No refund applies (${quote.tierLabel}). Reason: ${reason}${cleanNotes ? ` – ${cleanNotes}` : ''}.`,
       bookingId,
     })
 
+    pushClientNotification({
+      type: 'refund_requested',
+      title: quote.refundable ? 'Cancellation & refund request received' : 'Booking cancelled',
+      message: quote.refundable
+        ? `Booking ${bookingId} was cancelled. Your refund request of ${amountText} (${quote.tierLabel}) was sent to Sinag Catering for manual review and payout.`
+        : `Booking ${bookingId} was cancelled. Under our cancellation policy no refund applies (${quote.tierLabel}).`,
+      bookingId,
+      recipientEmail: booking.email,
+      userId: currentUser?.id,
+    })
+
+    const adminSms = quote.refundable
+      ? `SINAG ALERT: Booking ${bookingId} cancelled by ${booking.customerName}. Manual refund request of ${amountText} logged. Check admin panel.`
+      : `SINAG ALERT: Booking ${bookingId} cancelled by ${booking.customerName}. No refund due (${quote.refundPercentage}% tier). Check admin panel.`
+    sendSemaphoreSMS(ADMIN_ALERT_PHONE, adminSms, bookingId).catch(console.error)
+
+    // Release the date on the live calendar
+    if (blockedDates.includes(booking.eventDate)) unblockDate(booking.eventDate)
+
     if (supabase) {
-      supabase.from('bookings').update({
-        booking_status: 'cancelled',
-        payment_status: 'unpaid',
-      }).eq('id', bookingId).then(({ error }) => {
+      const client = supabase
+      void writeBookingRow(
+        {
+          booking_status: 'cancelled',
+          cancellation_reason: reason,
+          cancellation_notes: cleanNotes,
+          refund_percentage: quote.refundPercentage,
+          refund_amount: quote.refundAmount,
+          refund_status: refundStatus,
+          cancelled_at: cancelledAt,
+        },
+        (row) => client.from('bookings').update(row).eq('id', bookingId),
+      ).then((error) => {
         if (error) console.error('Error cancelling booking in Supabase:', error.message)
       })
     }
 
-    return { refundPercentage, refundAmount }
+    return { refundPercentage: quote.refundPercentage, refundAmount: quote.refundAmount, refundStatus }
   }
+
+  const markRefundProcessed = (bookingId: string) => {
+    const booking = bookings.find((b) => b.id === bookingId)
+    if (!booking) return
+    const processedAt = new Date().toISOString()
+    setBookings((prev) =>
+      prev.map((bk) => (bk.id === bookingId ? { ...bk, refundStatus: 'processed', refundProcessedAt: processedAt } : bk)),
+    )
+    const amountText = formatMoney(booking.refundAmount || 0, booking.currency)
+    pushClientNotification({
+      type: 'refund_processed',
+      title: 'Refund processed',
+      message: `Your refund of ${amountText} for cancelled booking ${bookingId} has been processed by Sinag Catering.`,
+      bookingId,
+      recipientEmail: booking.email,
+    })
+    sendSemaphoreSMS(
+      booking.phone,
+      `Sinag Catering: Your refund of ${amountText} for booking ${bookingId} has been processed. Salamat po!`,
+      bookingId,
+    ).catch(console.error)
+    if (supabase) {
+      const client = supabase
+      void writeBookingRow(
+        { refund_status: 'processed', refund_processed_at: processedAt },
+        (row) => client.from('bookings').update(row).eq('id', bookingId),
+      ).then((error) => {
+        if (error) console.error('Error marking refund processed:', error.message)
+      })
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 48-hour hold expiry (timestamp check; the DB function / Netlify scheduled
+  // function do the same server-side so holds expire even when nobody is online)
+  // ---------------------------------------------------------------------------
+  const expiringHoldsRef = React.useRef(new Set<string>())
+  useEffect(() => {
+    const sweep = () => {
+      const now = Date.now()
+      const expired = bookings.filter((b) => isHoldExpired(b, now) && !expiringHoldsRef.current.has(b.id))
+      if (expired.length === 0) return
+      expired.forEach((b) => expiringHoldsRef.current.add(b.id))
+      const expiredIds = new Set(expired.map((b) => b.id))
+      setBookings((prev) => prev.map((bk) => (expiredIds.has(bk.id) ? { ...bk, bookingStatus: 'forfeit' } : bk)))
+
+      expired.forEach((b) => {
+        const notify = () => {
+          addAdminNotification({
+            id: `nt-exp-a-${b.id}`,
+            type: 'hold_expired',
+            title: 'Temporary Hold Expired',
+            message: `${b.customerName}'s 48-hour hold (${b.id}) on ${b.eventDate} expired without payment and was forfeited. Date released to the calendar.`,
+            bookingId: b.id,
+          })
+          pushClientNotification({
+            id: `nt-exp-c-${b.id}`,
+            type: 'hold_expired',
+            title: 'Temporary Hold Expired',
+            message: `Your 48-hour temporary hold for booking ${b.id} on ${b.eventDate} expired because no payment was uploaded. The date has been released.`,
+            bookingId: b.id,
+            recipientEmail: b.email,
+            userId: b.userId,
+          })
+        }
+        if (!supabase) {
+          notify()
+          return
+        }
+        // Guarded update: only the first browser to flip the row sends alerts
+        void supabase
+          .from('bookings')
+          .update({ booking_status: 'forfeit' })
+          .eq('id', b.id)
+          .eq('booking_status', 'pending')
+          .eq('payment_status', 'unpaid')
+          .select('id')
+          .then(({ data, error }) => {
+            if (error) {
+              console.warn('Hold expiry update failed:', error.message)
+              return
+            }
+            if (data && data.length > 0) notify()
+          })
+      })
+    }
+    sweep()
+    const timer = window.setInterval(sweep, 60 * 1000)
+    return () => window.clearInterval(timer)
+  }, [bookings])
+
+  // ---------------------------------------------------------------------------
+  // Automated 1-week event reminder (client SMS + email + in-app, admin in-app)
+  // ---------------------------------------------------------------------------
+  const reminderInFlightRef = React.useRef(new Set<string>())
+  useEffect(() => {
+    if (!currentUser || bookings.length === 0) return
+    const REMINDER_LOCAL_KEY = 'sinag_event_reminders_sent'
+    const readSent = (): string[] => {
+      try {
+        return JSON.parse(localStorage.getItem(REMINDER_LOCAL_KEY) || '[]')
+      } catch {
+        return []
+      }
+    }
+    const markSentLocal = (id: string) => {
+      try {
+        localStorage.setItem(REMINDER_LOCAL_KEY, JSON.stringify([...new Set([...readSent(), id])]))
+      } catch {
+        // ignore
+      }
+    }
+
+    const due = bookings.filter((b) => {
+      if (b.reminderSentAt) return false
+      if (b.bookingStatus === 'cancelled' || b.bookingStatus === 'forfeit' || b.bookingStatus === 'completed') return false
+      if (isReserveHold(b)) return false
+      const days = daysUntilEvent(b.eventDate)
+      return days >= 0 && days <= EVENT_REMINDER_DAYS
+    })
+    // Clients only process their own bookings; admins process all
+    const scoped = currentUser.role === 'admin'
+      ? due
+      : due.filter((b) => b.email.toLowerCase().trim() === currentUser.email.toLowerCase().trim())
+
+    scoped.forEach((b) => {
+      if (reminderInFlightRef.current.has(b.id) || readSent().includes(b.id)) return
+      reminderInFlightRef.current.add(b.id)
+      const sentAt = new Date().toISOString()
+
+      const dispatch = () => {
+        markSentLocal(b.id)
+        setBookings((prev) => prev.map((bk) => (bk.id === b.id ? { ...bk, reminderSentAt: sentAt } : bk)))
+        const clientText = `Sinag Catering Reminder: Your event is coming up in 1 week! Booking Reference: ${b.id} on ${b.eventDate}. We are excited to serve you. Check your portal for full details.`
+        sendSemaphoreSMS(b.phone, clientText, b.id).catch(console.error)
+        sendTransactionalEmail(b.email, `Sinag Catering Reminder: Your event is in 1 week (#${b.id})`, clientText, b.id).catch(console.error)
+        pushClientNotification({
+          id: `nt-rem-c-${b.id}`,
+          type: 'event_reminder',
+          title: 'Your event is 1 week away!',
+          message: clientText,
+          bookingId: b.id,
+          recipientEmail: b.email,
+          userId: b.userId,
+        })
+        addAdminNotification({
+          id: `nt-rem-a-${b.id}`,
+          type: 'event_reminder',
+          title: 'Upcoming Event Alert',
+          message: `Upcoming Event Alert: Booking ${b.id} (${b.customerName}) is scheduled in 7 days on ${b.eventDate}. Please coordinate final preparations.`,
+          bookingId: b.id,
+        })
+      }
+
+      if (!supabase) {
+        dispatch()
+        return
+      }
+      // Claim the reminder atomically so it is only sent once across sessions
+      void supabase
+        .from('bookings')
+        .update({ reminder_sent_at: sentAt })
+        .eq('id', b.id)
+        .is('reminder_sent_at', null)
+        .select('id')
+        .then(({ data, error }) => {
+          if (error) {
+            // Column not migrated: only the admin session sends (once per browser)
+            if (isMissingColumnError(error) && currentUser.role === 'admin') dispatch()
+            return
+          }
+          if (data && data.length > 0) dispatch()
+        })
+    })
+  }, [bookings, currentUser?.id, currentUser?.role])
 
   const rebookEvent = (bookingId: string, newDate: string): { success: boolean; message: string } => {
     if (blockedDates.includes(newDate)) {
@@ -1009,7 +1921,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     const dateConflict = bookings.some(
-      (b) => b.eventDate === newDate && b.id !== bookingId && b.bookingStatus !== 'cancelled',
+      (b) => b.eventDate === newDate && b.id !== bookingId && isBookingOccupyingDate(b),
     )
     if (dateConflict) {
       return { success: false, message: 'This date is already fully reserved. Please pick another date.' }
@@ -1217,6 +2129,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             bookingId: bk.id,
           })
         }
+        if (paymentStatus === 'downpayment_paid' || paymentStatus === 'fully_paid') {
+          if (getPaymentTerm(bk) === 'reserve') {
+            updated.paymentTerm = paymentStatus === 'fully_paid' ? 'full' : 'downpayment'
+            updated.holdExpiresAt = null
+          }
+          pushClientNotification({
+            type: 'payment_confirmed',
+            title: paymentStatus === 'fully_paid' ? 'Full payment confirmed' : 'Downpayment confirmed',
+            message: paymentStatus === 'fully_paid'
+              ? `Booking ${bk.id} (${bk.eventDate}) is now fully paid. Thank you!`
+              : `Your downpayment for booking ${bk.id} (${bk.eventDate}) was confirmed. Your date is locked.`,
+            bookingId: bk.id,
+            recipientEmail: bk.email,
+            userId: bk.userId,
+          })
+        }
         if (paymentStatus === 'downpayment_paid') {
           updated.downpaymentAmount = amount ?? bk.downpaymentAmount ?? bk.totalPrice * 0.5
           addAdminNotification({
@@ -1231,11 +2159,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     )
 
     if (supabase) {
-      supabase.from('bookings').update({
-        payment_status: paymentStatus,
-        ...(paymentStatus === 'fully_paid' ? { booking_status: 'completed' } : {}),
-        ...(amount ? { downpayment_amount: amount } : {}),
-      }).eq('id', bookingId).then(({ error }) => {
+      const client = supabase
+      const target = bookings.find((b) => b.id === bookingId)
+      const wasReserve = target ? getPaymentTerm(target) === 'reserve' : false
+      void writeBookingRow(
+        {
+          payment_status: paymentStatus,
+          ...(paymentStatus === 'fully_paid' ? { booking_status: 'completed' } : {}),
+          ...(amount ? { downpayment_amount: amount } : {}),
+          ...(wasReserve && (paymentStatus === 'downpayment_paid' || paymentStatus === 'fully_paid')
+            ? { payment_term: paymentStatus === 'fully_paid' ? 'full' : 'downpayment', hold_expires_at: null }
+            : {}),
+        },
+        (row) => client.from('bookings').update(row).eq('id', bookingId),
+      ).then((error) => {
         if (error) console.error('Error updating payment status in Supabase:', error.message)
       })
     }
@@ -1296,12 +2233,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       prev.map((bk) => {
         if (bk.id === bookingId) {
           const finalAmount = verifiedAmount ?? bk.downpaymentAmount ?? bk.totalPrice * 0.5
-          const isFull = bk.paymentTerm === 'full' || finalAmount >= bk.totalPrice
+          const isFull = finalAmount >= bk.totalPrice || (bk.paymentTerm === 'full' && verifiedAmount === undefined)
+          // Anything below the 50% downpayment (e.g. the ₱2,000 reservation fee) is a partial payment
+          const isPartial = !isFull && finalAmount < Math.round(bk.totalPrice * 0.5)
           targetBooking = {
             ...bk,
             bookingStatus: 'confirmed',
-            paymentStatus: isFull ? 'fully_paid' : 'downpayment_paid',
+            paymentStatus: isFull ? 'fully_paid' : isPartial ? 'partially_paid' : 'downpayment_paid',
             downpaymentAmount: finalAmount,
+            paymentTerm: isFull ? 'full' : isPartial ? (bk.paymentTerm ?? 'reserve') : 'downpayment',
+            holdExpiresAt: null,
           }
           return targetBooking
         }
@@ -1313,19 +2254,36 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       blockDate((targetBooking as Booking).eventDate)
       sendPaymentVerificationNotifications(targetBooking as Booking).catch(console.error)
       const isFull = (targetBooking as Booking).paymentStatus === 'fully_paid'
+      const isFee = (targetBooking as Booking).paymentStatus === 'partially_paid'
+      const payLabel = isFull ? 'full payment' : isFee ? 'reservation fee' : 'downpayment'
       addAdminNotification({
         type: 'booking_confirmed',
-        title: isFull ? 'Full Payment Verified & Confirmed' : 'Downpayment Verified & Confirmed',
+        title: isFull ? 'Full Payment Verified & Confirmed' : isFee ? 'Reservation Fee Verified & Confirmed' : 'Downpayment Verified & Confirmed',
         message: `Booking #${targetBooking.id} (${targetBooking.customerName}) confirmed for ${targetBooking.eventDate}. SMS and email notifications dispatched.`,
         bookingId: targetBooking.id,
       })
+      const verified = targetBooking as Booking
+      pushClientNotification({
+        type: 'payment_confirmed',
+        title: `${payLabel.charAt(0).toUpperCase()}${payLabel.slice(1)} verified – booking confirmed`,
+        message: `Your ${payLabel} of ${formatMoney(verified.downpaymentAmount || 0, verified.currency)} for booking ${verified.id} was verified. Your date (${verified.eventDate}) is locked.`,
+        bookingId: verified.id,
+        recipientEmail: verified.email,
+        userId: verified.userId,
+      })
 
       if (supabase) {
-        supabase.from('bookings').update({
-          booking_status: 'confirmed',
-          payment_status: targetBooking.paymentStatus,
-          downpayment_amount: targetBooking.downpaymentAmount,
-        }).eq('id', bookingId).then(({ error }) => {
+        const client = supabase
+        void writeBookingRow(
+          {
+            booking_status: 'confirmed',
+            payment_status: verified.paymentStatus,
+            downpayment_amount: verified.downpaymentAmount,
+            payment_term: verified.paymentTerm,
+            hold_expires_at: null,
+          },
+          (row) => client.from('bookings').update(row).eq('id', bookingId),
+        ).then((error) => {
           if (error) console.error('Error verifying downpayment in Supabase:', error.message)
         })
       }
@@ -1511,6 +2469,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         signIn,
         signUp,
         logout,
+        signInWithGoogle,
+        googleAuth,
+        clearGoogleAuthMessage,
         requestPasswordResetOTP,
         verifyAndResetPassword,
         changeUserPassword,
@@ -1518,6 +2479,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         createBooking,
         uploadPayment,
         cancelBooking,
+        markRefundProcessed,
+        clientNotifications,
+        markClientNotificationRead,
+        markAllClientNotificationsRead,
+        needsTermsAcceptance,
+        acceptTerms,
+        fetchCustomers,
         rebookEvent,
         addReview,
         replyReview,
