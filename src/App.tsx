@@ -16,6 +16,7 @@ import { LoginModal } from './components/LoginModal'
 import { PublicAvailabilityModal } from './components/PublicAvailabilityModal'
 import { ClientNotificationBell } from './components/ClientNotificationBell'
 import { TermsGateModal } from './components/TermsGateModal'
+import { DemoTimeMachineBar } from './components/DemoTimeMachineBar'
 import type { AIFormData } from './lib/ai'
 import { supabase } from './lib/supabase'
 
@@ -51,9 +52,10 @@ function AppContent() {
   // After returning from Google sign-in, continue where the user started
   useEffect(() => {
     if (!currentUser) return
-    const pending = sessionStorage.getItem('sinag_oauth_return_view')
+    const pending = sessionStorage.getItem('sinag_oauth_return_view') || localStorage.getItem('sinag_oauth_return_view')
     if (!pending) return
     sessionStorage.removeItem('sinag_oauth_return_view')
+    localStorage.removeItem('sinag_oauth_return_view')
     setIsAuthModalOpen(false)
     if (currentUser.role === 'admin') setActiveView('admin')
     else setActiveView(pending === 'booking' ? 'booking' : 'client')
@@ -120,12 +122,31 @@ function AppContent() {
   }
 
   useEffect(() => {
-    if (isMobileMenuOpen) {
-      document.body.style.overflow = 'hidden'
-    } else {
-      document.body.style.overflow = ''
+    const syncBodyScrollLock = () => {
+      const overlays = document.querySelectorAll<HTMLElement>(
+        '.modal-overlay, .login-modal-overlay, .terms-gate-overlay, [aria-modal="true"]',
+      )
+      overlays.forEach((el) => {
+        if (!el.hasAttribute('data-lenis-prevent')) {
+          el.setAttribute('data-lenis-prevent', 'true')
+        }
+      })
+      const hasActiveModal = isMobileMenuOpen || overlays.length > 0
+      const lenis = (window as unknown as { __lenis?: { stop: () => void; start: () => void } }).__lenis
+      if (hasActiveModal) {
+        document.body.style.overflow = 'hidden'
+        lenis?.stop()
+      } else {
+        document.body.style.overflow = ''
+        lenis?.start()
+      }
     }
+
+    syncBodyScrollLock()
+    const obs = new MutationObserver(syncBodyScrollLock)
+    obs.observe(document.body, { childList: true, subtree: true })
     return () => {
+      obs.disconnect()
       document.body.style.overflow = ''
     }
   }, [isMobileMenuOpen])
@@ -350,6 +371,7 @@ function AppContent() {
     return (
       <main className="app-admin-standalone">
         <AdminDashboard onLogout={() => { logout(); navigateTo('landing'); }} />
+        <DemoTimeMachineBar />
       </main>
     )
   }
@@ -746,6 +768,7 @@ function AppContent() {
           <span>&copy; {new Date().getFullYear()} Sinag's Catering Services. Planning and event coordination.</span>
         </div>
       </footer>
+      <DemoTimeMachineBar />
     </main>
   )
 }

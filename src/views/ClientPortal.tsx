@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Calendar,
   Trash2,
@@ -522,8 +523,8 @@ export const ClientPortal: React.FC = () => {
       )}
 
       {/* REBOOK MODAL */}
-      {showRebookModal && selectedBooking && (
-        <div className="modal-overlay">
+      {showRebookModal && selectedBooking && typeof document !== 'undefined' && createPortal(
+        <div className="modal-overlay" data-lenis-prevent="true">
           <div className="modal-card">
             <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.8rem', margin: '0 0 10px' }}>Rebook Event Schedule</h3>
             <p style={{ color: 'var(--muted)', fontSize: '0.9rem', marginBottom: '24px' }}>Updating event date for Booking Reference {selectedBooking.id}</p>
@@ -551,7 +552,8 @@ export const ClientPortal: React.FC = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* CANCELLATION & REFUND REQUEST MODAL */}
@@ -564,8 +566,8 @@ export const ClientPortal: React.FC = () => {
       )}
 
       {/* INVOICE BREAKDOWN MODAL */}
-      {showInvoiceModal && selectedBooking && (
-        <div className="modal-overlay">
+      {showInvoiceModal && selectedBooking && typeof document !== 'undefined' && createPortal(
+        <div className="modal-overlay" data-lenis-prevent="true">
           <div className="modal-card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.8rem', margin: 0 }}>Official Quotation Invoice</h3>
@@ -635,12 +637,13 @@ export const ClientPortal: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* SERVICE CONTRACT MODAL */}
-      {showContractModal && selectedBooking && (
-        <div className="modal-overlay">
+      {showContractModal && selectedBooking && typeof document !== 'undefined' && createPortal(
+        <div className="modal-overlay" data-lenis-prevent="true">
           <div className="modal-card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.8rem', margin: 0 }}>Catering Service Contract</h3>
@@ -670,7 +673,8 @@ export const ClientPortal: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* EMBEDDED CHECKOUT MODAL (No external PayMongo redirect, 100% Sinag Branded) */}
@@ -702,10 +706,11 @@ export const ClientPortal: React.FC = () => {
       )}
 
       {/* FULLSCREEN QR CODE MODAL */}
-      {portalQrZoom && (
+      {portalQrZoom && typeof document !== 'undefined' && createPortal(
         <div
           role="dialog"
           aria-modal="true"
+          data-lenis-prevent="true"
           onClick={() => setPortalQrZoom(null)}
           style={{
             position: 'fixed',
@@ -795,7 +800,8 @@ export const ClientPortal: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )

@@ -29,7 +29,25 @@ export interface CateringAddon {
   description?: string
 }
 
-export const STORAGE_FILES_BASE = 'https://wldhvmbcvjbnwkgiafpg.supabase.co/storage/v1/object/public/Files'
+export const STORAGE_FILES_BASE = 'https://lwgejivunwohzzpckwbb.supabase.co/storage/v1/object/public/Files'
+
+/**
+ * Normalizes storage image URLs to point to the current project's lightweight WebP assets.
+ */
+export const normalizeStorageImageUrl = (rawUrl?: string | null): string | undefined => {
+  if (!rawUrl || typeof rawUrl !== 'string') return undefined
+  let url = rawUrl.trim()
+  if (!url) return undefined
+  url = url.replace('wldhvmbcvjbnwkgiafpg.supabase.co', 'lwgejivunwohzzpckwbb.supabase.co')
+  if (url.startsWith('/gallery/')) {
+    const filename = url.split('/').pop()?.replace(/\.(jpg|jpeg|png)$/i, '.webp')
+    return `${STORAGE_FILES_BASE}/menu/${filename}`
+  }
+  if (url.includes('/storage/v1/object/public/Files/')) {
+    url = url.replace(/\.(jpg|jpeg)$/i, '.webp')
+  }
+  return url
+}
 
 export const SINAG_PACKAGES: CateringPackage[] = [
   {
@@ -37,7 +55,7 @@ export const SINAG_PACKAGES: CateringPackage[] = [
     name: 'Budgetarian Celebration Package',
     shortName: 'Budgetarian Basic',
     bestFor: 'celebrations and gatherings with full food and event setup',
-    imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_budget_basic.jpg`,
+    imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_budget_basic.webp`,
     description: 'Complete food buffet, table styling, service crew, and celebration freebies without entertainment add-ons.',
     tiers: [
       { pax: 50, price: 35000 },
@@ -75,7 +93,7 @@ export const SINAG_PACKAGES: CateringPackage[] = [
     name: 'Budgetarian Package with Freebies and Entertainment',
     shortName: 'Budgetarian Plus',
     bestFor: 'parties and celebrations that need entertainers and photo coverage',
-    imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_budget_entertainment.jpg`,
+    imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_budget_entertainment.webp`,
     description: 'Budgetarian inclusions plus entertainment coverage for a lively celebration.',
     tiers: [
       { pax: 50, price: 47000 },
@@ -113,7 +131,7 @@ export const SINAG_PACKAGES: CateringPackage[] = [
     name: 'Full Blast Package with Freebies',
     shortName: 'Full Blast',
     bestFor: 'premium celebrations with stage styling, balloon ceiling, and complete entertainment',
-    imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_full_blast.jpg`,
+    imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_full_blast.webp`,
     description: 'The most complete Sinag celebration setup with premium styling and entertainment coverage.',
     tiers: [
       { pax: 50, price: 55000 },
@@ -150,10 +168,46 @@ export const SINAG_PACKAGES: CateringPackage[] = [
 ]
 
 export const AI_CATALOG_ADDONS: CateringAddon[] = [
-  { id: 'ADD-CANDY-01', name: 'Chocolate Fountain & Candy Buffet', price: 1500, currency: 'PHP' },
-  { id: 'ADD-HOST-02', name: 'Party Emcee & Games Host', price: 2000, currency: 'PHP' },
-  { id: 'ADD-DESSERT-03', name: 'Assorted Dessert Station', price: 1000, currency: 'PHP' },
+  { id: 'ADD-MAIN-04', name: 'Extra Main Dish Course', price: 100, currency: 'PHP', rateType: 'per_head', description: 'Additional luxury entrée selection served buffet style per guest' },
+  { id: 'ADD-PASTA-05', name: 'Extra Gourmet Pasta Station', price: 80, currency: 'PHP', rateType: 'per_head', description: 'Fresh hot pasta prepared with choice of white or red sauce' },
+  { id: 'ADD-DESSERT-06', name: 'Extra Sweet Dessert Course', price: 50, currency: 'PHP', rateType: 'per_head', description: 'Additional pastry or sweet treat per head' },
+  { id: 'ADD-CANDY-01', name: 'Chocolate Fountain & Candy Buffet', price: 1500, currency: 'PHP', rateType: 'flat', description: 'Multi-tier Belgian chocolate fountain with marshmallows, cookies, and candy jars' },
+  { id: 'ADD-HOST-02', name: 'Party Emcee & Games Host', price: 2000, currency: 'PHP', rateType: 'flat', description: 'Professional energetic host with party parlor games and sound effects' },
+  { id: 'ADD-DESSERT-03', name: 'Assorted Dessert Station', price: 1000, currency: 'PHP', rateType: 'flat', description: 'Mini cupcakes, mango tartlets, chocolate mousse cups, and fruit platters' },
 ]
+
+/** Identifies which Blue-Box per-guest food counter an addon row powers (if any). */
+export const getBlueBoxFoodSlot = (addon: Pick<CateringAddon, 'id' | 'name' | 'rateType'>): 'main' | 'pasta' | 'dessert' | null => {
+  const id = (addon.id || '').toUpperCase()
+  if (id === 'ADD-MAIN-04') return 'main'
+  if (id === 'ADD-PASTA-05') return 'pasta'
+  if (id === 'ADD-DESSERT-06') return 'dessert'
+  if (addon.rateType === 'per_head') {
+    const nm = (addon.name || '').toLowerCase()
+    if (/\bmain\b/.test(nm)) return 'main'
+    if (/\bpasta\b/.test(nm)) return 'pasta'
+    if (/\bdessert\b/.test(nm)) return 'dessert'
+  }
+  return null
+}
+
+export const isBlueBoxFoodAddon = (addon: Pick<CateringAddon, 'id' | 'name' | 'rateType'>): boolean =>
+  getBlueBoxFoodSlot(addon) !== null
+
+export const resolvePerGuestFoodRates = (addonsList?: CateringAddon[]) => {
+  const list = addonsList && addonsList.length > 0 ? addonsList : AI_CATALOG_ADDONS
+  const mainAddon = list.find((a) => getBlueBoxFoodSlot(a) === 'main')
+  const pastaAddon = list.find((a) => getBlueBoxFoodSlot(a) === 'pasta')
+  const dessertAddon = list.find((a) => getBlueBoxFoodSlot(a) === 'dessert')
+  return {
+    extraMainRate: mainAddon && Number(mainAddon.price) > 0 ? Number(mainAddon.price) : EXTRA_MAIN_RATE,
+    extraPastaRate: pastaAddon && Number(pastaAddon.price) > 0 ? Number(pastaAddon.price) : EXTRA_PASTA_RATE,
+    extraDessertRate: dessertAddon && Number(dessertAddon.price) > 0 ? Number(dessertAddon.price) : EXTRA_DESSERT_RATE,
+    mainAddon,
+    pastaAddon,
+    dessertAddon,
+  }
+}
 
 export const mapDatabasePackage = (record: any): CateringPackage => {
   const details = record.details && typeof record.details === 'object' ? record.details : {}
@@ -171,7 +225,7 @@ export const mapDatabasePackage = (record: any): CateringPackage => {
     inclusions: Array.isArray(details.inclusions) ? details.inclusions : (Array.isArray(record.included_menu) ? record.included_menu : []),
     entertainment: Array.isArray(details.entertainment) ? details.entertainment : [],
     freebies: Array.isArray(details.freebies) ? details.freebies : [],
-    imageUrl: details.image_url || record.image_url || undefined,
+    imageUrl: normalizeStorageImageUrl(details.image_url || record.image_url) || undefined,
     details,
   }
 }
@@ -202,70 +256,70 @@ export const DISH_DETAILS: Record<string, DishMetadata> = {
     category: 'main',
     tag: 'Signature Beef',
     description: 'Tender beef strips simmered in savory garlic soy sauce with crisp broccoli.',
-    image: `${STORAGE_FILES_BASE}/menu/food_beef_broccoli.jpg`,
+    image: `${STORAGE_FILES_BASE}/menu/food_beef_broccoli.webp`,
   },
   'Cordon Bleu': {
     name: 'Cordon Bleu',
     category: 'main',
     tag: 'Poultry Favorite',
     description: 'Crispy breaded chicken breast stuffed with savory ham and molten cheese.',
-    image: `${STORAGE_FILES_BASE}/menu/food_cordon_bleu.jpg`,
+    image: `${STORAGE_FILES_BASE}/menu/food_cordon_bleu.webp`,
   },
   'Menudo': {
     name: 'Menudo',
     category: 'main',
     tag: 'Fiesta Classic',
     description: 'Tender pork cubes and liver simmered in spiced tomato stew with vegetables.',
-    image: `${STORAGE_FILES_BASE}/menu/food_menudo.jpg`,
+    image: `${STORAGE_FILES_BASE}/menu/food_menudo.webp`,
   },
   'Caldereta': {
     name: 'Caldereta',
     category: 'main',
     tag: 'Hearty Braised Beef',
     description: 'Slow-braised beef in a rich liver-infused tomato gravy with bell peppers.',
-    image: `${STORAGE_FILES_BASE}/menu/food_caldereta.jpg`,
+    image: `${STORAGE_FILES_BASE}/menu/food_caldereta.webp`,
   },
   'Mixed Veggies': {
     name: 'Mixed Veggies',
     category: 'main',
     tag: 'Buttered Medley',
     description: 'Fresh seasonal vegetables sautéed in butter and garlic, paired with quail eggs.',
-    image: `${STORAGE_FILES_BASE}/menu/food_mixed_veggies_quail_egg.jpg`,
+    image: `${STORAGE_FILES_BASE}/menu/food_mixed_veggies_quail_egg.webp`,
   },
   'Chicken Curry': {
     name: 'Chicken Curry',
     category: 'main',
     tag: 'Aromatic Curry',
     description: 'Tender chicken braised in fragrant yellow coconut curry with tender potatoes.',
-    image: `${STORAGE_FILES_BASE}/menu/food_chicken_curry.jpg`,
+    image: `${STORAGE_FILES_BASE}/menu/food_chicken_curry.webp`,
   },
   'Fish Fillet': {
     name: 'Fish Fillet',
     category: 'main',
     tag: 'Crispy Seafood',
     description: 'Golden-crusted dory fish fillets served with homemade tartar dipping sauce.',
-    image: `${STORAGE_FILES_BASE}/menu/food_fish_fillet.jpg`,
+    image: `${STORAGE_FILES_BASE}/menu/food_fish_fillet.webp`,
   },
   'Pancit': {
     name: 'Pancit',
     category: 'pasta',
     tag: 'Traditional Feast',
     description: 'Sautéed bihon and canton noodles tossed with shredded vegetables and meat.',
-    image: `${STORAGE_FILES_BASE}/menu/food_pancit.jpg`,
+    image: `${STORAGE_FILES_BASE}/menu/food_pancit.webp`,
   },
   'Spaghetti': {
     name: 'Spaghetti',
     category: 'pasta',
     tag: 'Sweet-Style Pinoy',
     description: 'Party-favorite sweet-savory ground meat sauce topped with shredded cheddar.',
-    image: `${STORAGE_FILES_BASE}/menu/food_spag.jpg`,
+    image: `${STORAGE_FILES_BASE}/menu/food_spag.webp`,
   },
   'Carbonara': {
     name: 'Carbonara',
     category: 'pasta',
     tag: 'Creamy Bacon',
     description: 'Al dente pasta coated in luscious garlic cream with crispy smoked bacon.',
-    image: `${STORAGE_FILES_BASE}/menu/food_carbonara.jpg`,
+    image: `${STORAGE_FILES_BASE}/menu/food_carbonara.webp`,
   },
 }
 
@@ -286,7 +340,7 @@ export const DRINK_DETAILS: Record<string, DrinkMetadata> = {
     name: 'Blue Lemonade',
     tag: 'Citrus Cooler',
     description: 'Vibrant chilled sweet-tangy blue lemonade garnished with fresh lemon slices and mint leaves.',
-    image: `${STORAGE_FILES_BASE}/menu/drink_blue_lemonade.jpg`,
+    image: `${STORAGE_FILES_BASE}/menu/drink_blue_lemonade.webp`,
     color: '#0284C7',
     accentColor: '#F0F9FF',
   },
@@ -294,7 +348,7 @@ export const DRINK_DETAILS: Record<string, DrinkMetadata> = {
     name: 'Iced Tea',
     tag: 'Signature House Blend',
     description: 'Crisp and refreshing house-blend sweet iced tea brewed fresh and served ice-chilled.',
-    image: `${STORAGE_FILES_BASE}/menu/drink_iced_tea.jpg`,
+    image: `${STORAGE_FILES_BASE}/menu/drink_iced_tea.webp`,
     color: '#D97706',
     accentColor: '#FFFBEB',
   },
@@ -302,7 +356,7 @@ export const DRINK_DETAILS: Record<string, DrinkMetadata> = {
     name: 'Cucumber',
     tag: 'Crisp Refresher',
     description: 'Cooling cucumber-infused lemon refreshment with crisp fresh cucumber ribbon slices.',
-    image: `${STORAGE_FILES_BASE}/menu/drink_cucumber.jpg`,
+    image: `${STORAGE_FILES_BASE}/menu/drink_cucumber.webp`,
     color: '#059669',
     accentColor: '#ECFDF5',
   },
@@ -337,24 +391,28 @@ export function recommendPackage(
   guestCount: number,
   budget: number,
   needsEntertainment?: boolean,
-  packagesList?: CateringPackage[]
+  packagesList?: CateringPackage[],
+  addonsList?: CateringAddon[]
 ): RecommendedPackageResult
 export function recommendPackage(
   packagesList: CateringPackage[],
   guestCount: number,
   budget: number,
-  needsEntertainment?: boolean
+  needsEntertainment?: boolean,
+  addonsList?: CateringAddon[]
 ): RecommendedPackageResult
 export function recommendPackage(
   arg1: number | CateringPackage[],
   arg2: number,
   arg3?: number | boolean,
-  arg4?: boolean | CateringPackage[]
+  arg4?: boolean | CateringPackage[],
+  arg5?: CateringAddon[]
 ): RecommendedPackageResult {
   let pkgList = SINAG_PACKAGES
   let guestCount = 50
   let budget = 50000
   let needsEntertainment: boolean | undefined = undefined
+  let addonsList: CateringAddon[] | undefined = arg5
 
   if (Array.isArray(arg1)) {
     pkgList = arg1.length > 0 ? arg1 : SINAG_PACKAGES
@@ -362,6 +420,8 @@ export function recommendPackage(
     budget = Number(arg3 || 50000)
     if (typeof arg4 === 'boolean') {
       needsEntertainment = arg4
+    } else if (Array.isArray(arg4)) {
+      addonsList = arg4 as unknown as CateringAddon[]
     }
   } else {
     guestCount = arg1
@@ -373,6 +433,9 @@ export function recommendPackage(
       pkgList = arg4
     }
   }
+
+  const { extraMainRate, extraPastaRate, extraDessertRate } = resolvePerGuestFoodRates(addonsList)
+  const effectiveAddons = addonsList && addonsList.length > 0 ? addonsList : AI_CATALOG_ADDONS
 
   // 1. Evaluate each package base configuration solely based on Guest Count and Budget
   const evaluatedPackages = pkgList.map((pkg) => {
@@ -430,8 +493,8 @@ export function recommendPackage(
   // 2. Optimal Value Matching: utilize remaining headroom up to the user budget
   let remainingBudget = budget - currentTotal
 
-  // If we have headroom for extra main dishes (up to 3 dishes, +₱100/pax)
-  const extraMainCostPerDish = guestCount * EXTRA_MAIN_RATE
+  // If we have headroom for extra main dishes (up to 3 dishes)
+  const extraMainCostPerDish = guestCount * extraMainRate
   while (suggestedAddons.extraMain < 3 && remainingBudget >= extraMainCostPerDish) {
     suggestedAddons.extraMain += 1
     remainingBudget -= extraMainCostPerDish
@@ -441,8 +504,8 @@ export function recommendPackage(
     customizationNotes.push(`+${suggestedAddons.extraMain} Extra Main Dish${suggestedAddons.extraMain > 1 ? 'es' : ''} (+₱${(suggestedAddons.extraMain * extraMainCostPerDish).toLocaleString()})`)
   }
 
-  // If we have headroom for extra pasta (up to 2 dishes, +₱80/pax)
-  const extraPastaCost = guestCount * EXTRA_PASTA_RATE
+  // If we have headroom for extra pasta (up to 2 dishes)
+  const extraPastaCost = guestCount * extraPastaRate
   while (suggestedAddons.extraPasta < 2 && remainingBudget >= extraPastaCost) {
     suggestedAddons.extraPasta += 1
     remainingBudget -= extraPastaCost
@@ -452,8 +515,8 @@ export function recommendPackage(
     customizationNotes.push(`+${suggestedAddons.extraPasta} Extra Pasta Dish${suggestedAddons.extraPasta > 1 ? 'es' : ''} (+₱${(suggestedAddons.extraPasta * extraPastaCost).toLocaleString()})`)
   }
 
-  // If we have headroom for extra dessert (up to 2 dishes, +₱50/pax)
-  const extraDessertCost = guestCount * EXTRA_DESSERT_RATE
+  // If we have headroom for extra dessert (up to 2 dishes)
+  const extraDessertCost = guestCount * extraDessertRate
   while (suggestedAddons.extraDessert < 2 && remainingBudget >= extraDessertCost) {
     suggestedAddons.extraDessert += 1
     remainingBudget -= extraDessertCost
@@ -464,12 +527,13 @@ export function recommendPackage(
   }
 
   // Include flat catalog add-ons if headroom allows (Candy Station, Emcee, Dessert Station)
-  for (const addon of AI_CATALOG_ADDONS) {
-    if (remainingBudget >= addon.price) {
+  for (const addon of effectiveAddons.filter((a) => !isBlueBoxFoodAddon(a))) {
+    const addonCost = addon.rateType === 'per_head' ? addon.price * guestCount : addon.price
+    if (remainingBudget >= addonCost) {
       suggestedAddons.addonIds.push(addon.id)
-      remainingBudget -= addon.price
-      currentTotal += addon.price
-      customizationNotes.push(`+${addon.name} (+₱${addon.price.toLocaleString()})`)
+      remainingBudget -= addonCost
+      currentTotal += addonCost
+      customizationNotes.push(`+${addon.name} (+₱${addonCost.toLocaleString()})`)
     }
   }
 

@@ -2,15 +2,14 @@ import { supabase } from './supabase'
 import {
   AI_CATALOG_ADDONS,
   EXCESS_PAX_RATE,
-  EXTRA_DESSERT_RATE,
-  EXTRA_MAIN_RATE,
-  EXTRA_PASTA_RATE,
   FOOD_BUFFER_PAX,
   mapDatabasePackage,
   findTierForGuestCount,
   formatMoney,
   recommendPackage,
   SINAG_PACKAGES,
+  resolvePerGuestFoodRates,
+  isBlueBoxFoodAddon,
 } from '../data/packages'
 import type { CateringPackage } from '../data/packages'
 
@@ -100,19 +99,30 @@ export const calculateTotalForPackage = (
   const excessGuests = isPerHead ? 0 : Math.max(0, guestCount - servicePax)
   const excessPaxFee = excessGuests * EXCESS_PAX_RATE
 
-  const extraMainCost = extraMain * EXTRA_MAIN_RATE * guestCount
-  const extraPastaCost = extraPasta * EXTRA_PASTA_RATE * guestCount
-  const extraDessertCost = extraDessert * EXTRA_DESSERT_RATE * guestCount
+  const normalizedLiveAddons = liveAddons.map((a) => ({
+    id: a.id,
+    name: a.name,
+    price: Number(a.price) || 0,
+    currency: 'PHP' as const,
+    rateType: (a.rate_type === 'per_head' || a.rateType === 'per_head' ? 'per_head' : 'flat') as 'flat' | 'per_head',
+    description: a.description,
+  }))
+  const { extraMainRate, extraPastaRate, extraDessertRate } = resolvePerGuestFoodRates(normalizedLiveAddons)
+
+  const extraMainCost = extraMain * extraMainRate * guestCount
+  const extraPastaCost = extraPasta * extraPastaRate * guestCount
+  const extraDessertCost = extraDessert * extraDessertRate * guestCount
 
   let addonsCost = 0
   for (const addonId of addonIds) {
-    const liveMatch = liveAddons.find((a) => a.id === addonId)
+    const liveMatch = normalizedLiveAddons.find((a) => a.id === addonId)
     if (liveMatch) {
+      if (isBlueBoxFoodAddon(liveMatch)) continue
       const price = Number(liveMatch.price) || 0
-      addonsCost += liveMatch.rate_type === 'per_head' ? price * guestCount : price
+      addonsCost += liveMatch.rateType === 'per_head' ? price * guestCount : price
     } else {
       const fallback = AI_CATALOG_ADDONS.find((a) => a.id === addonId)
-      if (fallback) addonsCost += fallback.price
+      if (fallback && !isBlueBoxFoodAddon(fallback)) addonsCost += fallback.price
     }
   }
 
@@ -378,6 +388,16 @@ export const generateLocalAIResponse = (
     if (reco?.pkg && (!targetBudget || !reco.budgetExceeded)) chosenPkg = reco.pkg
   }
 
+  const normalizedLiveAddons = liveAddons.map((a) => ({
+    id: a.id,
+    name: a.name,
+    price: Number(a.price) || 0,
+    currency: 'PHP' as const,
+    rateType: (a.rate_type === 'per_head' || a.rateType === 'per_head' ? 'per_head' : 'flat') as 'flat' | 'per_head',
+    description: a.description,
+  }))
+  const { extraMainRate, extraPastaRate, extraDessertRate } = resolvePerGuestFoodRates(normalizedLiveAddons)
+
   // BUDGET MAXIMIZER (never above the ceiling):
   // When a user specifies a target budget that exceeds the base tier, bundle upgrades up to — never past — that budget
   const baseCost = calculateTotalForPackage(chosenPkg, count, [], 0, 0, 0, liveAddons)
@@ -390,9 +410,9 @@ export const generateLocalAIResponse = (
 
   if (isBudgetMaximizerActive && targetBudget) {
     selectedAddons = ['ADD-CANDY-01', 'ADD-HOST-02', 'ADD-DESSERT-03']
-    extraMain = Math.min(3, Math.max(1, Math.floor((targetBudget - baseCost) / (EXTRA_MAIN_RATE * count * 2))))
-    extraPasta = Math.min(2, Math.max(1, Math.floor((targetBudget - baseCost) / (EXTRA_PASTA_RATE * count * 3))))
-    extraDessert = Math.min(2, Math.max(1, Math.floor((targetBudget - baseCost) / (EXTRA_DESSERT_RATE * count * 4))))
+    extraMain = Math.min(3, Math.max(1, Math.floor((targetBudget - baseCost) / (extraMainRate * count * 2))))
+    extraPasta = Math.min(2, Math.max(1, Math.floor((targetBudget - baseCost) / (extraPastaRate * count * 3))))
+    extraDessert = Math.min(2, Math.max(1, Math.floor((targetBudget - baseCost) / (extraDessertRate * count * 4))))
   } else {
     if (/candy|chocolate|fountain/i.test(inputLower)) selectedAddons.push('ADD-CANDY-01')
     if (/emcee|games|host/i.test(inputLower) && chosenPkg.id === 'budget-basic') selectedAddons.push('ADD-HOST-02')
@@ -444,9 +464,9 @@ export const generateLocalAIResponse = (
         `• **Base Package Tier:** ${formatMoney(baseCost)} (${count} Pax + ${FOOD_BUFFER_PAX} Buffer Pax)\n` +
         `• **Included Inclusions:** ${chosenPkg.inclusions.slice(0, 4).join(', ')}\n\n` +
         `💎 **Curated Luxury Upgrades Bundled to Maximize Your Budget:**\n` +
-        (extraMain > 0 ? `• **${extraMain} Extra Main Dish${extraMain > 1 ? 'es' : ''} (+PHP 100/pax):** +${formatMoney(extraMain * EXTRA_MAIN_RATE * count)}\n` : '') +
-        (extraPasta > 0 ? `• **${extraPasta} Extra Pasta Course${extraPasta > 1 ? 's' : ''} (+PHP 80/pax):** +${formatMoney(extraPasta * EXTRA_PASTA_RATE * count)}\n` : '') +
-        (extraDessert > 0 ? `• **${extraDessert} Extra Dessert Course${extraDessert > 1 ? 's' : ''} (+PHP 50/pax):** +${formatMoney(extraDessert * EXTRA_DESSERT_RATE * count)}\n` : '') +
+        (extraMain > 0 ? `• **${extraMain} Extra Main Dish${extraMain > 1 ? 'es' : ''} (+PHP ${extraMainRate}/pax):** +${formatMoney(extraMain * extraMainRate * count)}\n` : '') +
+        (extraPasta > 0 ? `• **${extraPasta} Extra Pasta Course${extraPasta > 1 ? 's' : ''} (+PHP ${extraPastaRate}/pax):** +${formatMoney(extraPasta * extraPastaRate * count)}\n` : '') +
+        (extraDessert > 0 ? `• **${extraDessert} Extra Dessert Course${extraDessert > 1 ? 's' : ''} (+PHP ${extraDessertRate}/pax):** +${formatMoney(extraDessert * extraDessertRate * count)}\n` : '') +
         (addonNames.length > 0 ? `• **Celebration Add-ons:** ${addonNames.join(', ')}\n` : '') +
         (stylingSurplus > 0 ? `• **Unused budget:** ${formatMoney(stylingSurplus)} stays with you — the plan is within your ${formatMoney(targetBudget)} ceiling.\n\n` : '\n') +
         `📊 **Calculated Package Total:** **${formatMoney(total)}**\n` +

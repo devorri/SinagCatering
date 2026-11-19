@@ -14,17 +14,18 @@ import {
   Maximize2,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
-import { FOOD_BUFFER_PAX, formatMoney } from '../data/packages'
-import bg1 from '../assets/for-bg/1.jpg'
-import bg2 from '../assets/for-bg/2.jpg'
-import bg3 from '../assets/for-bg/3.jpg'
-import bg4 from '../assets/for-bg/4.jpg'
-import bg5 from '../assets/for-bg/5.jpg'
-import bg6 from '../assets/for-bg/6.jpg'
-import bg7 from '../assets/for-bg/7.jpg'
-import bg8 from '../assets/for-bg/8.jpg'
-import bg9 from '../assets/for-bg/9.jpg'
-import bg10 from '../assets/for-bg/10.jpg'
+import { FOOD_BUFFER_PAX, formatMoney, STORAGE_FILES_BASE } from '../data/packages'
+
+const bg1 = `${STORAGE_FILES_BASE}/showcase/1.webp`
+const bg2 = `${STORAGE_FILES_BASE}/showcase/2.webp`
+const bg3 = `${STORAGE_FILES_BASE}/showcase/3.webp`
+const bg4 = `${STORAGE_FILES_BASE}/showcase/4.webp`
+const bg5 = `${STORAGE_FILES_BASE}/showcase/5.webp`
+const bg6 = `${STORAGE_FILES_BASE}/showcase/6.webp`
+const bg7 = `${STORAGE_FILES_BASE}/showcase/7.webp`
+const bg8 = `${STORAGE_FILES_BASE}/showcase/8.webp`
+const bg9 = `${STORAGE_FILES_BASE}/showcase/9.webp`
+const bg10 = `${STORAGE_FILES_BASE}/showcase/10.webp`
 
 import { ALL_GALLERY_ITEMS, CLIENT_REACTION_SCREENSHOTS } from '../data/galleryData'
 

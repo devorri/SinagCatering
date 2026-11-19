@@ -7,6 +7,7 @@ import {
   DISH_DETAILS,
   DRINK_OPTIONS,
   DRINK_DETAILS,
+  normalizeStorageImageUrl,
 } from '../data/packages'
 
 export const FALLBACK_MENU_ITEMS: MenuItem[] = [
@@ -49,7 +50,7 @@ export const mapDbMenuItem = (row: any): MenuItem => ({
   name: row.name,
   category: row.category,
   description: row.description || '',
-  imageUrl: row.image_url || null,
+  imageUrl: normalizeStorageImageUrl(row.image_url) || null,
   tag: row.tag || null,
   color: row.color || null,
   accentColor: row.accent_color || null,

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Utensils,
   Plus,
@@ -16,7 +17,7 @@ import { useApp } from '../context/AppContext'
 import { useConfirm } from '../context/ConfirmContext'
 import type { MenuItem, CateringAddon } from '../types'
 import type { CateringPackage } from '../data/packages'
-import { formatMoney } from '../data/packages'
+import { formatMoney, isBlueBoxFoodAddon } from '../data/packages'
 import { uploadImageToStorage } from '../lib/storage'
 
 type CatalogSubTab = 'packages' | 'dishes' | 'addons'
@@ -1185,18 +1186,35 @@ export const AdminCatalogManager: React.FC = () => {
                         <div style={{ fontSize: '0.74rem', color: '#71717A' }}>#{addon.id}</div>
                       </td>
                       <td>
-                        <span
-                          style={{
-                            fontSize: '0.74rem',
-                            background: addon.rateType === 'per_head' ? '#EFF6FF' : '#F1F5F9',
-                            color: addon.rateType === 'per_head' ? '#1D4ED8' : '#475569',
-                            padding: '3px 8px',
-                            borderRadius: '4px',
-                            fontWeight: 700,
-                          }}
-                        >
-                          {addon.rateType === 'per_head' ? 'Per Guest' : 'Flat Station'}
-                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
+                          <span
+                            style={{
+                              fontSize: '0.74rem',
+                              background: addon.rateType === 'per_head' ? '#EFF6FF' : '#F1F5F9',
+                              color: addon.rateType === 'per_head' ? '#1D4ED8' : '#475569',
+                              padding: '3px 8px',
+                              borderRadius: '4px',
+                              fontWeight: 700,
+                            }}
+                          >
+                            {addon.rateType === 'per_head' ? 'Per Guest' : 'Flat Station'}
+                          </span>
+                          {isBlueBoxFoodAddon(addon) && (
+                            <span
+                              style={{
+                                fontSize: '0.68rem',
+                                background: '#FEF3C7',
+                                color: '#92400E',
+                                padding: '2px 6px',
+                                borderRadius: '4px',
+                                fontWeight: 700,
+                              }}
+                              title="Controls the per-guest extra dish counter in the Booking Wizard"
+                            >
+                              Extra Food Counter
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="font-number" style={{ fontWeight: 700, color: '#9A3412', fontSize: '0.92rem' }}>
                         {addon.rateType === 'per_head'
@@ -1243,8 +1261,8 @@ export const AdminCatalogManager: React.FC = () => {
       {/* ===================================================================== */}
       {/* MODAL 1: PACKAGE EDITOR */}
       {/* ===================================================================== */}
-      {editingPackage && (
-        <div className="modal-overlay">
+      {editingPackage && typeof document !== 'undefined' && createPortal(
+        <div className="modal-overlay" data-lenis-prevent="true">
           <div className="modal-card" style={{ maxWidth: '640px', maxHeight: '90vh', overflowY: 'auto' }}>
             <div
               style={{
@@ -1678,14 +1696,15 @@ export const AdminCatalogManager: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* ===================================================================== */}
       {/* MODAL 2: MENU ITEM EDITOR */}
       {/* ===================================================================== */}
-      {editingMenuItem && (
-        <div className="modal-overlay">
+      {editingMenuItem && typeof document !== 'undefined' && createPortal(
+        <div className="modal-overlay" data-lenis-prevent="true">
           <div className="modal-card" style={{ maxWidth: '520px' }}>
             <div
               style={{
@@ -1824,14 +1843,15 @@ export const AdminCatalogManager: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* ===================================================================== */}
       {/* MODAL 3: ADD-ON EDITOR */}
       {/* ===================================================================== */}
-      {editingAddon && (
-        <div className="modal-overlay">
+      {editingAddon && typeof document !== 'undefined' && createPortal(
+        <div className="modal-overlay" data-lenis-prevent="true">
           <div className="modal-card" style={{ maxWidth: '480px' }}>
             <div
               style={{
@@ -1947,7 +1967,8 @@ export const AdminCatalogManager: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )

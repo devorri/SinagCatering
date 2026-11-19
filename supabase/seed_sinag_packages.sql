@@ -35,7 +35,7 @@ values
       "food_buffer_pax": 10,
       "service_area": "Within City of Baliwag area",
       "quotation_note": "Upgrades, downgrades, transport fees, crew meals, additional setup, and other miscellaneous requests require a new quotation.",
-      "source_image": "packages/package_budgetarian_freebies_lower.jpg"
+      "source_image": "packages/package_budgetarian_freebies_lower.webp"
     }'::jsonb
   ),
   (
@@ -52,7 +52,7 @@ values
       "food_buffer_pax": 10,
       "service_area": "Within City of Baliwag area",
       "quotation_note": "Upgrades, downgrades, transport fees, crew meals, additional setup, and other miscellaneous requests require a new quotation.",
-      "source_image": "packages/package_budgetarian_freebies.jpg"
+      "source_image": "packages/package_budgetarian_freebies.webp"
     }'::jsonb
   ),
   (
@@ -69,7 +69,7 @@ values
       "food_buffer_pax": 10,
       "service_area": "Within City of Baliwag area",
       "quotation_note": "Upgrades, downgrades, transport fees, crew meals, additional setup, and other miscellaneous requests require a new quotation.",
-      "source_image": "packages/package_fullblast_freebies.jpg"
+      "source_image": "packages/package_fullblast_freebies.webp"
     }'::jsonb
   )
 on conflict (id) do update set

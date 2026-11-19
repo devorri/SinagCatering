@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import {
   CreditCard,
   QrCode,
@@ -155,8 +156,15 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
   const cardRef = React.useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (isOpen) {
-      cardRef.current?.scrollTo(0, 0)
+    if (!isOpen) return
+    cardRef.current?.scrollTo(0, 0)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const lenis = (window as unknown as { __lenis?: { stop: () => void; start: () => void } }).__lenis
+    lenis?.stop()
+    return () => {
+      document.body.style.overflow = prevOverflow
+      lenis?.start()
     }
   }, [isOpen])
 
@@ -210,9 +218,12 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
     onPaymentSuccess(ref)
   }
 
-  return (
+  return createPortal(
     <div
       className="login-modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      data-lenis-prevent="true"
       onClick={isProcessing ? undefined : onClose}
       style={{
         zIndex: 1100,
@@ -226,6 +237,7 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
       <div
         ref={cardRef}
         className="login-modal-card"
+        data-lenis-prevent="true"
         onClick={(e) => e.stopPropagation()}
         style={{
           maxWidth: '520px',
@@ -722,6 +734,7 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

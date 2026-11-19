@@ -33,8 +33,46 @@ export const CANCELLATION_REASONS = [
 export type CancellationReason = (typeof CANCELLATION_REASONS)[number]
 export const OTHER_CANCELLATION_REASON: CancellationReason = 'Others (Please specify)'
 
+// ---------------------------------------------------------------------------
+// Demo Time Machine (Simulated Clock for Panel Presentations)
+// ---------------------------------------------------------------------------
+export const SIM_CLOCK_STORAGE_KEY = 'sinag_demo_simulated_now_ms'
+export const SIM_CLOCK_EVENT = 'sinag-simulated-clock-change'
+
+export const getSimulatedOffsetMs = (): number | null => {
+  try {
+    if (typeof window === 'undefined') return null
+    const raw = localStorage.getItem(SIM_CLOCK_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = Number(raw)
+    return !Number.isNaN(parsed) && parsed > 0 ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+export const getSimulatedNowMs = (): number => {
+  return getSimulatedOffsetMs() ?? Date.now()
+}
+
+export const getSimulatedNowDate = (): Date => new Date(getSimulatedNowMs())
+
+export const setSimulatedNowMs = (ms: number | null) => {
+  try {
+    if (typeof window === 'undefined') return
+    if (ms === null || Number.isNaN(ms)) {
+      localStorage.removeItem(SIM_CLOCK_STORAGE_KEY)
+    } else {
+      localStorage.setItem(SIM_CLOCK_STORAGE_KEY, String(ms))
+    }
+    window.dispatchEvent(new CustomEvent(SIM_CLOCK_EVENT, { detail: { ms } }))
+  } catch {
+    // ignore
+  }
+}
+
 /** Today's date in the business timezone (Asia/Manila) as YYYY-MM-DD. */
-export const manilaToday = (now: Date = new Date()): string => {
+export const manilaToday = (now: Date = getSimulatedNowDate()): string => {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Manila',
     year: 'numeric',
@@ -46,7 +84,7 @@ export const manilaToday = (now: Date = new Date()): string => {
 }
 
 /** Whole calendar days from today (Manila) until a YYYY-MM-DD date. */
-export const daysUntilEvent = (eventDate: string, now: Date = new Date()): number => {
+export const daysUntilEvent = (eventDate: string, now: Date = getSimulatedNowDate()): number => {
   const today = manilaToday(now)
   const a = Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)))
   const [y, m, d] = eventDate.split('-').map(Number)
@@ -77,13 +115,13 @@ export const getHoldExpiry = (b: Booking): number | null => {
   return Number.isNaN(created) ? null : created + RESERVE_HOLD_MS
 }
 
-export const isHoldExpired = (b: Booking, now: number = Date.now()): boolean => {
+export const isHoldExpired = (b: Booking, now: number = getSimulatedNowMs()): boolean => {
   if (!isReserveHold(b)) return false
   const exp = getHoldExpiry(b)
   return exp !== null && exp <= now
 }
 
-export const getHoldRemainingMs = (b: Booking, now: number = Date.now()): number => {
+export const getHoldRemainingMs = (b: Booking, now: number = getSimulatedNowMs()): number => {
   const exp = getHoldExpiry(b)
   return exp === null ? 0 : Math.max(0, exp - now)
 }
@@ -97,14 +135,14 @@ export const formatCountdown = (ms: number): string => {
 }
 
 /** True when this booking currently occupies its event date on the calendar. */
-export const isBookingOccupyingDate = (b: Booking, now: number = Date.now()): boolean => {
+export const isBookingOccupyingDate = (b: Booking, now: number = getSimulatedNowMs()): boolean => {
   if (b.bookingStatus === 'cancelled' || b.bookingStatus === 'forfeit') return false
   if (isHoldExpired(b, now)) return false
   return true
 }
 
 /** Calendar state of a date contributed by a booking. */
-export const getBookingCalendarState = (b: Booking, now: number = Date.now()): 'reserved' | 'hold' | 'pending' | null => {
+export const getBookingCalendarState = (b: Booking, now: number = getSimulatedNowMs()): 'reserved' | 'hold' | 'pending' | null => {
   if (!isBookingOccupyingDate(b, now)) return null
   if (isReserveHold(b)) return 'hold'
   const term = getPaymentTerm(b)
@@ -146,7 +184,7 @@ export interface RefundQuote {
  *  - less than 14 days                → no refund
  * Refund is computed on what the client has actually paid.
  */
-export const computeRefundQuote = (b: Booking, now: Date = new Date()): RefundQuote => {
+export const computeRefundQuote = (b: Booking, now: Date = getSimulatedNowDate()): RefundQuote => {
   const daysBefore = daysUntilEvent(b.eventDate, now)
   const refundPercentage = daysBefore >= 30 ? 100 : daysBefore >= 14 ? 50 : 0
   const tierLabel =
@@ -161,7 +199,7 @@ export const computeRefundQuote = (b: Booking, now: Date = new Date()): RefundQu
 }
 
 /** Human status label shown in both portals. */
-export const getBookingStatusLabel = (b: Booking, now: number = Date.now()): string => {
+export const getBookingStatusLabel = (b: Booking, now: number = getSimulatedNowMs()): string => {
   if (b.bookingStatus === 'cancelled') {
     if (b.refundStatus === 'pending') return 'Cancelled – Refund Pending'
     if (b.refundStatus === 'processed') return 'Cancelled – Refunded'

@@ -1,6 +1,6 @@
 -- ============================================================================
 -- SINAG CATERING SERVICES — SUPABASE SETUP & PERMISSIONS
--- Run this in the Supabase SQL Editor (https://supabase.com/dashboard/project/wldhvmbcvjbnwkgiafpg/sql)
+-- Run this in the Supabase SQL Editor (https://supabase.com/dashboard/project/lwgejivunwohzzpckwbb/sql)
 -- ============================================================================
 
 -- 1. Enable required extensions

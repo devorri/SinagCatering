@@ -9,22 +9,84 @@ export interface UploadResult {
 }
 
 /**
- * Uploads an image file to Supabase storage bucket 'Files'.
- * Automatically handles public URL generation and falls back to Base64 if storage is unreachable.
+ * Compresses and converts an image File to lightweight WebP in the browser
+ * (max dimension 1400px, quality 0.80) before uploading to Supabase Storage.
+ * Falls back to the original File if the browser cannot decode the image.
+ */
+async function compressImageToWebp(file: File, maxDim = 1400, quality = 0.8): Promise<{ blob: Blob | File; ext: string; contentType: string }> {
+  if (typeof document === 'undefined' || !file.type.startsWith('image/') || file.type === 'image/svg+xml') {
+    const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+    return { blob: file, ext, contentType: file.type || 'image/jpeg' }
+  }
+
+  return new Promise((resolve) => {
+    const img = new Image()
+    const objectUrl = URL.createObjectURL(file)
+
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      try {
+        let { width, height } = img
+        if (Math.max(width, height) > maxDim) {
+          const scale = maxDim / Math.max(width, height)
+          width = Math.max(1, Math.round(width * scale))
+          height = Math.max(1, Math.round(height * scale))
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+          resolve({ blob: file, ext, contentType: file.type || 'image/jpeg' })
+          return
+        }
+        ctx.drawImage(img, 0, 0, width, height)
+        canvas.toBlob(
+          (webpBlob) => {
+            if (webpBlob && webpBlob.size > 0) {
+              resolve({ blob: webpBlob, ext: 'webp', contentType: 'image/webp' })
+            } else {
+              const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+              resolve({ blob: file, ext, contentType: file.type || 'image/jpeg' })
+            }
+          },
+          'image/webp',
+          quality,
+        )
+      } catch {
+        const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+        resolve({ blob: file, ext, contentType: file.type || 'image/jpeg' })
+      }
+    }
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl)
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+      resolve({ blob: file, ext, contentType: file.type || 'image/jpeg' })
+    }
+
+    img.src = objectUrl
+  })
+}
+
+/**
+ * Uploads an image file to Supabase storage bucket 'Files' after converting it to lightweight WebP.
+ * Returns the public URL, or an error if the upload fails (never a base64 data URL).
  *
  * @param file - The browser File object to upload
- * @param folder - Folder namespace within the bucket ('menu' | 'packages' | 'receipts' | 'general')
+ * @param folder - Folder namespace within the bucket ('menu' | 'packages' | 'receipts' | 'gallery' | 'general')
  */
 export async function uploadImageToStorage(
   file: File,
-  folder: 'menu' | 'packages' | 'receipts' | 'general' = 'general',
+  folder: 'menu' | 'packages' | 'receipts' | 'gallery' | 'general' = 'general',
 ): Promise<UploadResult> {
   if (!file) {
     return { url: '', error: 'No file provided.' }
   }
 
-  // Sanitize filename & extension
-  const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+  const { blob, ext, contentType } = await compressImageToWebp(file)
+
   const cleanName = file.name
     .replace(/\.[^/.]+$/, '')
     .toLowerCase()
@@ -35,16 +97,18 @@ export async function uploadImageToStorage(
   if (supabase) {
     try {
       let bucket = STORAGE_BUCKET
-      let res = await supabase.storage.from(bucket).upload(filePath, file, {
-        cacheControl: '3600',
+      let res = await supabase.storage.from(bucket).upload(filePath, blob, {
+        cacheControl: '31536000',
+        contentType,
         upsert: true,
       })
 
       // Fallback to lowercase 'files' if bucket casing differs
       if (res.error && /bucket not found/i.test(res.error.message)) {
         bucket = 'files'
-        res = await supabase.storage.from(bucket).upload(filePath, file, {
-          cacheControl: '3600',
+        res = await supabase.storage.from(bucket).upload(filePath, blob, {
+          cacheControl: '31536000',
+          contentType,
           upsert: true,
         })
       }
@@ -62,15 +126,7 @@ export async function uploadImageToStorage(
     }
   }
 
-  // Graceful fallback to DataURL so workflows are never blocked
-  return new Promise((resolve) => {
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      resolve({ url: reader.result as string })
-    }
-    reader.onerror = () => {
-      resolve({ url: '', error: 'Failed to read file.' })
-    }
-    reader.readAsDataURL(file)
-  })
+  // No base64 fallback: storing images as data URLs inside DB rows bloats every
+  // query and burns Supabase egress. Fail loudly so the user can retry.
+  return { url: '', error: 'Upload failed. Please check your connection and try again.' }
 }

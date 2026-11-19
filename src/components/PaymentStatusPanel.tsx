@@ -22,11 +22,13 @@ import { formatMoney } from '../data/packages'
 import { uploadImageToStorage } from '../lib/storage'
 import {
   RESERVATION_FEE,
+  SIM_CLOCK_EVENT,
   formatCountdown,
   getHoldExpiry,
   getHoldRemainingMs,
   getPaymentTerm,
   getRemainingBalance,
+  getSimulatedNowMs,
   isHoldExpired,
   isReserveHold,
 } from '../lib/bookingRules'
@@ -63,7 +65,7 @@ const MARIBANK_QR: QrZoomInfo = {
  * payment state and an OPTIONAL receipt upload whenever money is still owed.
  */
 export const PaymentStatusPanel: React.FC<PaymentStatusPanelProps> = ({ booking, onUpload, onPayOnline, onZoomQr }) => {
-  const [now, setNow] = useState(() => Date.now())
+  const [now, setNow] = useState(() => getSimulatedNowMs())
   const [isExpanded, setIsExpanded] = useState(false)
   const [qrMethod, setQrMethod] = useState<'gcash' | 'maribank'>('gcash')
   const [refNumber, setRefNumber] = useState('')
@@ -84,9 +86,13 @@ export const PaymentStatusPanel: React.FC<PaymentStatusPanelProps> = ({ booking,
   const [payChoice, setPayChoice] = useState<'reserve' | 'downpayment' | 'full'>(term === 'full' ? 'full' : term === 'reserve' ? 'reserve' : 'downpayment')
 
   useEffect(() => {
-    if (!hold) return
-    const t = window.setInterval(() => setNow(Date.now()), 30 * 1000)
-    return () => window.clearInterval(t)
+    const syncClock = () => setNow(getSimulatedNowMs())
+    window.addEventListener(SIM_CLOCK_EVENT, syncClock)
+    const t = hold ? window.setInterval(syncClock, 30 * 1000) : undefined
+    return () => {
+      window.removeEventListener(SIM_CLOCK_EVENT, syncClock)
+      if (t !== undefined) window.clearInterval(t)
+    }
   }, [hold])
 
   const isClosed = booking.bookingStatus === 'cancelled' || booking.bookingStatus === 'forfeit'
@@ -128,10 +134,10 @@ export const PaymentStatusPanel: React.FC<PaymentStatusPanelProps> = ({ booking,
       } else {
         throw new Error(res.error || 'Upload failed')
       }
-    } catch {
-      const reader = new FileReader()
-      reader.onloadend = () => setReceiptUrl(reader.result as string)
-      reader.readAsDataURL(file)
+    } catch (err) {
+      setReceiptUrl(null)
+      setFileName('')
+      setError(err instanceof Error ? err.message : 'Upload failed. Please try again.')
     } finally {
       setIsUploading(false)
     }

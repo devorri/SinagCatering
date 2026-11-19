@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { AlertCircle, Info, Loader2, X } from 'lucide-react'
 import type { Booking } from '../types'
 import { formatMoney } from '../data/packages'
@@ -32,8 +33,19 @@ export const CancelBookingModal: React.FC<CancelBookingModalProps> = ({ booking,
     onConfirm(reason, isOther ? otherText.trim() : '')
   }
 
-  return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="cancel-modal-title">
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const lenis = (window as unknown as { __lenis?: { stop: () => void; start: () => void } }).__lenis
+    lenis?.stop()
+    return () => {
+      document.body.style.overflow = prevOverflow
+      lenis?.start()
+    }
+  }, [])
+
+  return createPortal(
+    <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="cancel-modal-title" data-lenis-prevent="true">
       <div className="modal-card cancel-modal-card" data-lenis-prevent>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
           <h3 id="cancel-modal-title" style={{ fontFamily: 'var(--font-serif)', fontSize: '1.8rem', margin: '0 0 6px' }}>
@@ -147,6 +159,7 @@ export const CancelBookingModal: React.FC<CancelBookingModalProps> = ({ booking,
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

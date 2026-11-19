@@ -13,7 +13,7 @@ import type {
   CustomerAccount,
 } from '../types'
 import { supabase } from '../lib/supabase'
-import { mapDatabasePackage, formatMoney, STORAGE_FILES_BASE } from '../data/packages'
+import { mapDatabasePackage, formatMoney, STORAGE_FILES_BASE, normalizeStorageImageUrl } from '../data/packages'
 import type { CateringPackage } from '../data/packages'
 import {
   mapDbMenuItem,
@@ -34,12 +34,17 @@ import {
   EVENT_REMINDER_DAYS,
   RESERVATION_FEE,
   RESERVE_HOLD_MS,
+  SIM_CLOCK_EVENT,
   computeRefundQuote,
   daysUntilEvent,
   getPaymentTerm,
+  getSimulatedNowDate,
+  getSimulatedNowMs,
+  getSimulatedOffsetMs,
   isBookingOccupyingDate,
   isHoldExpired,
   isReserveHold,
+  setSimulatedNowMs,
 } from '../lib/bookingRules'
 import { TERMS_VERSION, getLocalTermsAcceptance, setLocalTermsAcceptance } from '../lib/terms'
 import { playNotificationSound } from '../lib/sound'
@@ -140,12 +145,41 @@ interface AppContextType {
   saveAddon: (addon: Partial<CateringAddon> & { name: string; price: number }) => Promise<{ success: boolean; error?: string }>
   deleteAddon: (addonId: string) => Promise<{ success: boolean; error?: string }>
   refreshCatalog: () => Promise<void>
+  simulatedNow: number | null
+  setSimulatedNow: (ms: number | null) => void
+  runSimulateHoldExpiryCheck: (options?: { forceExpireActiveHolds?: boolean }) => Promise<{ count: number; message: string }>
+  runSimulate7DayReminders: (options?: { forceNextUpcoming?: boolean }) => Promise<{ count: number; message: string }>
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined)
 const SESSION_TOKEN_KEY = 'sinag_session_token'
 const LOCAL_USER_BACKUP_KEY = 'sinag_local_user'
 const OAUTH_PENDING_KEY = 'sinag_oauth_return_view'
+
+/**
+ * Applies a Supabase realtime postgres_changes payload to a list held in state.
+ * INSERT prepends (lists are newest-first), UPDATE replaces in place, DELETE removes.
+ * This avoids re-fetching the entire table on every change (egress saver).
+ */
+function applyRealtimeChange<T extends { id: string }>(
+  prev: T[],
+  payload: any,
+  mapRow: (row: any) => T,
+): T[] {
+  const type = payload?.eventType
+  if (type === 'DELETE') {
+    const id = payload?.old?.id
+    return id == null ? prev : prev.filter((item) => item.id !== String(id))
+  }
+  const row = payload?.new
+  if (!row || row.id == null) return prev
+  const next = mapRow(row)
+  const idx = prev.findIndex((item) => item.id === next.id)
+  if (idx === -1) return [next, ...prev]
+  const copy = prev.slice()
+  copy[idx] = next
+  return copy
+}
 
 const mapDbBooking = (row: any): Booking => ({
   id: row.id,
@@ -386,13 +420,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (Array.isArray(parsed) && parsed.length > 0) {
           return parsed.map((p: any) => {
             if (!p.imageUrl && p.id === 'budget-basic') {
-              return { ...p, imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_budget_basic.jpg` }
+              return { ...p, imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_budget_basic.webp` }
             }
             if (!p.imageUrl && p.id === 'budget-entertainment') {
-              return { ...p, imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_budget_entertainment.jpg` }
+              return { ...p, imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_budget_entertainment.webp` }
             }
             if (!p.imageUrl && p.id === 'full-blast') {
-              return { ...p, imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_full_blast.jpg` }
+              return { ...p, imageUrl: `${STORAGE_FILES_BASE}/packages/pkg_full_blast.webp` }
+            }
+            if (p.imageUrl) {
+              return { ...p, imageUrl: normalizeStorageImageUrl(p.imageUrl) }
             }
             return p
           })
@@ -408,9 +445,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const parsed = JSON.parse(stored)
         if (Array.isArray(parsed) && parsed.length > 0) {
           return parsed.map((m: any) => {
-            if (m.imageUrl && m.imageUrl.startsWith('/gallery/')) {
-              const filename = m.imageUrl.split('/').pop()
-              return { ...m, imageUrl: `${STORAGE_FILES_BASE}/menu/${filename}` }
+            if (m.imageUrl) {
+              return { ...m, imageUrl: normalizeStorageImageUrl(m.imageUrl) || null }
             }
             return m
           })
@@ -434,6 +470,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [baseStaff, setBaseStaff] = useState<Staff[]>([])
   const [blockedDates, setBlockedDates] = useState<string[]>([])
   const [inquiries, setInquiries] = useState<Inquiry[]>([])
+  const [simulatedNow, setSimulatedNowState] = useState<number | null>(() => getSimulatedOffsetMs())
+
+  useEffect(() => {
+    const onClockChange = () => setSimulatedNowState(getSimulatedOffsetMs())
+    window.addEventListener(SIM_CLOCK_EVENT, onClockChange)
+    return () => window.removeEventListener(SIM_CLOCK_EVENT, onClockChange)
+  }, [])
+
+  const setSimulatedNow = (ms: number | null) => {
+    if (ms === null) {
+      reminderInFlightRef.current.clear()
+      expiringHoldsRef.current.clear()
+      try {
+        localStorage.removeItem('sinag_event_reminders_sent')
+      } catch {}
+    } else {
+      // Allow re-triggering reminders when jumping to a new simulated date during a live demo
+      reminderInFlightRef.current.clear()
+    }
+    setSimulatedNowMs(ms)
+    setSimulatedNowState(ms)
+  }
 
   // Persist catalog changes to localStorage
   useEffect(() => {
@@ -663,11 +721,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!supabase) return
     const client = supabase
     const channel = client.channel('sinag-live-catalog')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, (payload: any) => {
         playNotificationSound()
-        client.from('bookings').select('*').order('created_at', { ascending: false }).then(({ data }) => {
-          if (data) setBookings(data.map(mapDbBooking))
-        })
+        // Patch only the changed row instead of re-downloading the whole table.
+        setBookings((prev) => applyRealtimeChange(prev, payload, mapDbBooking))
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'blocked_dates' }, () => {
         client.from('blocked_dates').select('date').then(({ data }) => {
@@ -703,15 +760,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           }
         })
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews' }, () => {
-        client.from('reviews').select('*').order('created_at', { ascending: false }).then(({ data }) => {
-          if (data) setReviews(data.map(mapDbReview))
-        })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews' }, (payload: any) => {
+        setReviews((prev) => applyRealtimeChange(prev, payload, mapDbReview))
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'catering_inquiries' }, () => {
-        client.from('catering_inquiries').select('*').order('created_at', { ascending: false }).then(({ data }) => {
-          if (data) setInquiries(data.map(mapDbInquiry))
-        })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'catering_inquiries' }, (payload: any) => {
+        setInquiries((prev) => applyRealtimeChange(prev, payload, mapDbInquiry))
       })
       .subscribe()
     return () => { client.removeChannel(channel) }
@@ -1155,7 +1208,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
 
   // ---------------------------------------------------------------------------
-  // Google sign-in / sign-up (Supabase Auth OAuth → app users table)
+  // Google sign-in / sign-up (Direct Google Identity Services OR Supabase Auth OAuth → app users table)
   // ---------------------------------------------------------------------------
   const [googleAuth, setGoogleAuth] = useState<{ status: 'idle' | 'redirecting' | 'finishing' | 'error'; message: string }>(() => {
     if (typeof window === 'undefined') return { status: 'idle', message: '' }
@@ -1163,7 +1216,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (params.get('error_description')) {
       return { status: 'error', message: `Google sign-in was cancelled or failed: ${params.get('error_description')}` }
     }
-    if (params.get('code') && sessionStorage.getItem(OAUTH_PENDING_KEY)) {
+    if (params.get('code')) {
       return { status: 'finishing', message: 'Finishing Google sign-in…' }
     }
     return { status: 'idle', message: '' }
@@ -1172,9 +1225,81 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const clearGoogleAuthMessage = () => setGoogleAuth({ status: 'idle', message: '' })
 
+  const loadGoogleGsiScript = (): Promise<any> =>
+    new Promise((resolve, reject) => {
+      const w = window as any
+      if (w.google?.accounts?.oauth2) {
+        resolve(w.google.accounts.oauth2)
+        return
+      }
+      const existing = document.querySelector('script[data-sinag-gsi="true"]') as HTMLScriptElement | null
+      if (existing) {
+        existing.addEventListener('load', () => resolve((window as any).google?.accounts?.oauth2))
+        existing.addEventListener('error', () => reject(new Error('Failed to load Google Sign-In script.')))
+        return
+      }
+      const script = document.createElement('script')
+      script.src = 'https://accounts.google.com/gsi/client'
+      script.async = true
+      script.defer = true
+      script.dataset.sinagGsi = 'true'
+      script.onload = () => resolve((window as any).google?.accounts?.oauth2)
+      script.onerror = () => reject(new Error('Failed to load Google Sign-In script.'))
+      document.head.appendChild(script)
+    })
+
   const signInWithGoogle = async (returnView: 'client' | 'booking' = 'client'): Promise<{ error: string | null }> => {
     if (!supabase) return { error: 'Google sign-in is unavailable: the database is not configured.' }
     sessionStorage.setItem(OAUTH_PENDING_KEY, returnView)
+    localStorage.setItem(OAUTH_PENDING_KEY, returnView)
+
+    const directGoogleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined)?.trim()
+    if (directGoogleClientId) {
+      try {
+        setGoogleAuth({ status: 'redirecting', message: 'Opening Google Sign-In…' })
+        const oauth2 = await loadGoogleGsiScript()
+        if (oauth2?.initTokenClient) {
+          return await new Promise<{ error: string | null }>((resolve) => {
+            const tokenClient = oauth2.initTokenClient({
+              client_id: directGoogleClientId,
+              scope: 'openid email profile',
+              prompt: 'select_account',
+              callback: async (resp: any) => {
+                if (resp?.error || !resp?.access_token) {
+                  sessionStorage.removeItem(OAUTH_PENDING_KEY)
+                  localStorage.removeItem(OAUTH_PENDING_KEY)
+                  const msg = resp?.error_description || resp?.error || 'Google sign-in was cancelled.'
+                  setGoogleAuth({ status: 'error', message: msg })
+                  resolve({ error: msg })
+                  return
+                }
+                try {
+                  setGoogleAuth({ status: 'finishing', message: 'Finishing Google sign-in…' })
+                  const profileRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                    headers: { Authorization: `Bearer ${resp.access_token}` },
+                  })
+                  if (!profileRes.ok) throw new Error('Could not verify Google account profile.')
+                  const profile = await profileRes.json()
+                  await completeGoogleLogin({
+                    email: profile.email,
+                    user_metadata: { full_name: profile.name, name: profile.name, picture: profile.picture },
+                  })
+                  resolve({ error: null })
+                } catch (err: any) {
+                  const msg = err?.message || 'Google sign-in failed.'
+                  setGoogleAuth({ status: 'error', message: msg })
+                  resolve({ error: msg })
+                }
+              },
+            })
+            tokenClient.requestAccessToken()
+          })
+        }
+      } catch (err: any) {
+        console.warn('Direct Google GSI fallback to Supabase OAuth:', err?.message)
+      }
+    }
+
     setGoogleAuth({ status: 'redirecting', message: 'Redirecting to Google…' })
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -1185,6 +1310,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     })
     if (error) {
       sessionStorage.removeItem(OAUTH_PENDING_KEY)
+      localStorage.removeItem(OAUTH_PENDING_KEY)
       const message = /provider is not enabled|Unsupported provider/i.test(error.message)
         ? 'Google sign-in is not enabled yet in Supabase (Authentication → Providers → Google).'
         : error.message
@@ -1280,19 +1406,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     const client = supabase
     if (!client) return
-    if (new URLSearchParams(window.location.search).get('error_description')) {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('error_description')) {
       sessionStorage.removeItem(OAUTH_PENDING_KEY)
+      localStorage.removeItem(OAUTH_PENDING_KEY)
       stripOAuthParamsFromUrl()
     }
+    const hasOAuthCodeInUrl = Boolean(params.get('code'))
     const handle = (session: { user?: { email?: string | null; user_metadata?: Record<string, unknown>; app_metadata?: Record<string, unknown> } } | null) => {
       const authUser = session?.user
       if (!authUser) return
       const provider = String(authUser.app_metadata?.provider || '')
-      if (provider !== 'google' && !sessionStorage.getItem(OAUTH_PENDING_KEY)) return
+      const hasPending = Boolean(sessionStorage.getItem(OAUTH_PENDING_KEY) || localStorage.getItem(OAUTH_PENDING_KEY) || hasOAuthCodeInUrl)
+      if (provider !== 'google' && !hasPending) return
+      if (!sessionStorage.getItem(OAUTH_PENDING_KEY) && !localStorage.getItem(OAUTH_PENDING_KEY)) {
+        sessionStorage.setItem(OAUTH_PENDING_KEY, 'client')
+      }
       // Defer: Supabase recommends not awaiting other client calls inside the callback
       window.setTimeout(() => void completeGoogleLogin(authUser), 0)
     }
     const { data: sub } = client.auth.onAuthStateChange((_event, session) => handle(session))
+    void client.auth.getSession().then(({ data }) => {
+      if (data?.session) handle(data.session)
+    })
     return () => sub.subscription.unsubscribe()
   }, [])
 
@@ -1778,7 +1914,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const expiringHoldsRef = React.useRef(new Set<string>())
   useEffect(() => {
     const sweep = () => {
-      const now = Date.now()
+      const now = getSimulatedNowMs()
       const expired = bookings.filter((b) => isHoldExpired(b, now) && !expiringHoldsRef.current.has(b.id))
       if (expired.length === 0) return
       expired.forEach((b) => expiringHoldsRef.current.add(b.id))
@@ -1787,18 +1923,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       expired.forEach((b) => {
         const notify = () => {
+          const smsText = `Sinag Catering: Your 48-hour temporary hold for booking ${b.id} on ${b.eventDate} expired because no payment was uploaded. The date has been released.`
+          sendSemaphoreSMS(b.phone, smsText, b.id).catch(console.error)
+          sendTransactionalEmail(b.email, `Sinag Catering: 48-Hour Temporary Hold Expired (#${b.id})`, smsText, b.id).catch(console.error)
           addAdminNotification({
             id: `nt-exp-a-${b.id}`,
             type: 'hold_expired',
             title: 'Temporary Hold Expired',
-            message: `${b.customerName}'s 48-hour hold (${b.id}) on ${b.eventDate} expired without payment and was forfeited. Date released to the calendar.`,
+            message: `${b.customerName}'s 48-hour hold (${b.id}) on ${b.eventDate} expired without payment and was forfeited. Date released to the calendar & SMS sent.`,
             bookingId: b.id,
           })
           pushClientNotification({
             id: `nt-exp-c-${b.id}`,
             type: 'hold_expired',
             title: 'Temporary Hold Expired',
-            message: `Your 48-hour temporary hold for booking ${b.id} on ${b.eventDate} expired because no payment was uploaded. The date has been released.`,
+            message: smsText,
             bookingId: b.id,
             recipientEmail: b.email,
             userId: b.userId,
@@ -1828,14 +1967,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     sweep()
     const timer = window.setInterval(sweep, 60 * 1000)
     return () => window.clearInterval(timer)
-  }, [bookings])
+  }, [bookings, simulatedNow])
 
   // ---------------------------------------------------------------------------
   // Automated 1-week event reminder (client SMS + email + in-app, admin in-app)
   // ---------------------------------------------------------------------------
   const reminderInFlightRef = React.useRef(new Set<string>())
   useEffect(() => {
-    if (!currentUser || bookings.length === 0) return
+    if (bookings.length === 0) return
+    if (!currentUser && simulatedNow === null) return
     const REMINDER_LOCAL_KEY = 'sinag_event_reminders_sent'
     const readSent = (): string[] => {
       try {
@@ -1852,22 +1992,27 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
 
+    const simDate = getSimulatedNowDate()
+    const isDemoTimeJump = simulatedNow !== null
     const due = bookings.filter((b) => {
-      if (b.reminderSentAt) return false
+      if (b.reminderSentAt && !isDemoTimeJump) return false
       if (b.bookingStatus === 'cancelled' || b.bookingStatus === 'forfeit' || b.bookingStatus === 'completed') return false
       if (isReserveHold(b)) return false
-      const days = daysUntilEvent(b.eventDate)
+      const days = daysUntilEvent(b.eventDate, simDate)
       return days >= 0 && days <= EVENT_REMINDER_DAYS
     })
-    // Clients only process their own bookings; admins process all
-    const scoped = currentUser.role === 'admin'
+    // In normal mode, clients only process their own bookings and admins process all.
+    // When jumping time via Demo Time Machine (isDemoTimeJump), process all due bookings immediately.
+    const scoped = isDemoTimeJump || !currentUser || currentUser.role === 'admin'
       ? due
       : due.filter((b) => b.email.toLowerCase().trim() === currentUser.email.toLowerCase().trim())
 
     scoped.forEach((b) => {
-      if (reminderInFlightRef.current.has(b.id) || readSent().includes(b.id)) return
-      reminderInFlightRef.current.add(b.id)
+      const dedupeKey = isDemoTimeJump ? `${b.id}@${simDate}` : b.id
+      if (reminderInFlightRef.current.has(dedupeKey) || (!isDemoTimeJump && readSent().includes(b.id))) return
+      reminderInFlightRef.current.add(dedupeKey)
       const sentAt = new Date().toISOString()
+      const stamp = isDemoTimeJump ? `-${Date.now().toString().slice(-5)}` : ''
 
       const dispatch = () => {
         markSentLocal(b.id)
@@ -1876,7 +2021,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         sendSemaphoreSMS(b.phone, clientText, b.id).catch(console.error)
         sendTransactionalEmail(b.email, `Sinag Catering Reminder: Your event is in 1 week (#${b.id})`, clientText, b.id).catch(console.error)
         pushClientNotification({
-          id: `nt-rem-c-${b.id}`,
+          id: `nt-rem-c-${b.id}${stamp}`,
           type: 'event_reminder',
           title: 'Your event is 1 week away!',
           message: clientText,
@@ -1885,16 +2030,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           userId: b.userId,
         })
         addAdminNotification({
-          id: `nt-rem-a-${b.id}`,
+          id: `nt-rem-a-${b.id}${stamp}`,
           type: 'event_reminder',
           title: 'Upcoming Event Alert',
-          message: `Upcoming Event Alert: Booking ${b.id} (${b.customerName}) is scheduled in 7 days on ${b.eventDate}. Please coordinate final preparations.`,
+          message: `Upcoming Event Alert: Booking ${b.id} (${b.customerName}) is scheduled in 7 days on ${b.eventDate}. SMS, Email & In-App reminder sent.`,
           bookingId: b.id,
         })
       }
 
-      if (!supabase) {
+      if (!supabase || isDemoTimeJump) {
         dispatch()
+        if (supabase) {
+          void supabase.from('bookings').update({ reminder_sent_at: sentAt }).eq('id', b.id)
+        }
         return
       }
       // Claim the reminder atomically so it is only sent once across sessions
@@ -1907,13 +2055,143 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         .then(({ data, error }) => {
           if (error) {
             // Column not migrated: only the admin session sends (once per browser)
-            if (isMissingColumnError(error) && currentUser.role === 'admin') dispatch()
+            if (isMissingColumnError(error) && currentUser?.role === 'admin') dispatch()
             return
           }
           if (data && data.length > 0) dispatch()
         })
     })
-  }, [bookings, currentUser?.id, currentUser?.role])
+  }, [bookings, currentUser?.id, currentUser?.role, simulatedNow])
+
+  // ---------------------------------------------------------------------------
+  // Approach B: Explicit Demo Simulation Triggers for Panel Defense
+  // ---------------------------------------------------------------------------
+  const runSimulateHoldExpiryCheck = async (options?: { forceExpireActiveHolds?: boolean }): Promise<{ count: number; message: string }> => {
+    const now = getSimulatedNowMs()
+    let targets = bookings.filter((b) => isHoldExpired(b, now))
+    if (targets.length === 0 && options?.forceExpireActiveHolds) {
+      targets = bookings.filter((b) => isReserveHold(b))
+    }
+
+    if (targets.length === 0) {
+      if (supabase) {
+        try {
+          const { data } = await supabase.rpc('expire_reserve_holds')
+          if (typeof data === 'number' && data > 0) {
+            return { count: data, message: `Expired ${data} temporary hold(s) via database RPC.` }
+          }
+        } catch {}
+      }
+      return {
+        count: 0,
+        message: 'No active 48-hour temporary holds found. Create a "Reserve Only (48-Hour Hold)" booking first or advance the Demo Time Machine by +48h.',
+      }
+    }
+
+    const ids = new Set(targets.map((b) => b.id))
+    const pastIso = new Date(Date.now() - 1000).toISOString()
+    setBookings((prev) =>
+      prev.map((bk) => (ids.has(bk.id) ? { ...bk, bookingStatus: 'forfeit', holdExpiresAt: pastIso } : bk)),
+    )
+
+    for (const b of targets) {
+      expiringHoldsRef.current.add(b.id)
+      const stamp = Date.now().toString().slice(-5)
+      const smsText = `Sinag Catering: Your 48-hour temporary hold for booking ${b.id} on ${b.eventDate} expired because no payment was uploaded. The date has been released.`
+      sendSemaphoreSMS(b.phone, smsText, b.id).catch(console.error)
+      sendTransactionalEmail(b.email, `Sinag Catering: 48-Hour Temporary Hold Expired (#${b.id})`, smsText, b.id).catch(console.error)
+      addAdminNotification({
+        id: `nt-exp-a-${b.id}-${stamp}`,
+        type: 'hold_expired',
+        title: 'Temporary Hold Expired',
+        message: `${b.customerName}'s 48-hour hold (${b.id}) on ${b.eventDate} expired without payment and was forfeited. Date released to the calendar & SMS sent.`,
+        bookingId: b.id,
+      })
+      pushClientNotification({
+        id: `nt-exp-c-${b.id}-${stamp}`,
+        type: 'hold_expired',
+        title: 'Temporary Hold Expired',
+        message: smsText,
+        bookingId: b.id,
+        recipientEmail: b.email,
+        userId: b.userId,
+      })
+      if (supabase) {
+        await supabase
+          .from('bookings')
+          .update({ booking_status: 'forfeit', hold_expires_at: pastIso })
+          .eq('id', b.id)
+      }
+    }
+
+    return {
+      count: targets.length,
+      message: `Expired ${targets.length} temporary hold(s) (${targets.map((t) => `#${t.id}`).join(', ')}). Status set to Forfeit, calendar date released, and notifications sent!`,
+    }
+  }
+
+  const runSimulate7DayReminders = async (options?: { forceNextUpcoming?: boolean }): Promise<{ count: number; message: string }> => {
+    const simDate = getSimulatedNowDate()
+    const activeBookings = bookings.filter(
+      (b) =>
+        b.bookingStatus !== 'cancelled' &&
+        b.bookingStatus !== 'forfeit' &&
+        b.bookingStatus !== 'completed' &&
+        !isReserveHold(b),
+    )
+
+    let targets = activeBookings.filter((b) => {
+      const days = daysUntilEvent(b.eventDate, simDate)
+      return days >= 0 && days <= EVENT_REMINDER_DAYS
+    })
+
+    if (targets.length === 0 && options?.forceNextUpcoming && activeBookings.length > 0) {
+      const sorted = [...activeBookings].sort((a, b) => a.eventDate.localeCompare(b.eventDate))
+      targets = [sorted[0]]
+    }
+
+    if (targets.length === 0) {
+      return {
+        count: 0,
+        message: 'No active confirmed/pending bookings found to send a 7-day reminder.',
+      }
+    }
+
+    const sentAt = new Date().toISOString()
+    const ids = new Set(targets.map((b) => b.id))
+    setBookings((prev) => prev.map((bk) => (ids.has(bk.id) ? { ...bk, reminderSentAt: sentAt } : bk)))
+
+    for (const b of targets) {
+      const stamp = Date.now().toString().slice(-5)
+      const clientText = `Sinag Catering Reminder: Your event is coming up in 1 week! Booking Reference: ${b.id} on ${b.eventDate}. We are excited to serve you. Check your portal for full details.`
+      sendSemaphoreSMS(b.phone, clientText, b.id).catch(console.error)
+      sendTransactionalEmail(b.email, `Sinag Catering Reminder: Your event is in 1 week (#${b.id})`, clientText, b.id).catch(console.error)
+      pushClientNotification({
+        id: `nt-rem-c-${b.id}-${stamp}`,
+        type: 'event_reminder',
+        title: 'Your event is 1 week away!',
+        message: clientText,
+        bookingId: b.id,
+        recipientEmail: b.email,
+        userId: b.userId,
+      })
+      addAdminNotification({
+        id: `nt-rem-a-${b.id}-${stamp}`,
+        type: 'event_reminder',
+        title: 'Upcoming Event Alert (7-Day Reminder)',
+        message: `Upcoming Event Alert: Booking ${b.id} (${b.customerName}) is scheduled in 7 days on ${b.eventDate}. SMS, Email, and In-App notifications dispatched.`,
+        bookingId: b.id,
+      })
+      if (supabase) {
+        await supabase.from('bookings').update({ reminder_sent_at: sentAt }).eq('id', b.id)
+      }
+    }
+
+    return {
+      count: targets.length,
+      message: `Dispatched 7-day event reminder batch (SMS + Email + In-App Bell) for ${targets.length} booking(s): ${targets.map((t) => `#${t.id} (${t.customerName} on ${t.eventDate})`).join(', ')}.`,
+    }
+  }
 
   const rebookEvent = (bookingId: string, newDate: string): { success: boolean; message: string } => {
     if (blockedDates.includes(newDate)) {
@@ -2515,6 +2793,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         saveAddon,
         deleteAddon,
         refreshCatalog,
+        simulatedNow,
+        setSimulatedNow,
+        runSimulateHoldExpiryCheck,
+        runSimulate7DayReminders,
       }}
     >
       {children}

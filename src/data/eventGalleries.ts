@@ -1,13 +1,15 @@
-import event1 from '../assets/for-bg/1.jpg'
-import event2 from '../assets/for-bg/2.jpg'
-import event3 from '../assets/for-bg/3.jpg'
-import event4 from '../assets/for-bg/4.jpg'
-import event5 from '../assets/for-bg/5.jpg'
-import event6 from '../assets/for-bg/6.jpg'
-import event7 from '../assets/for-bg/7.jpg'
-import event8 from '../assets/for-bg/8.jpg'
-import event9 from '../assets/for-bg/9.jpg'
-import event10 from '../assets/for-bg/10.jpg'
+import { STORAGE_FILES_BASE } from './packages'
+
+const event1 = `${STORAGE_FILES_BASE}/showcase/1.webp`
+const event2 = `${STORAGE_FILES_BASE}/showcase/2.webp`
+const event3 = `${STORAGE_FILES_BASE}/showcase/3.webp`
+const event4 = `${STORAGE_FILES_BASE}/showcase/4.webp`
+const event5 = `${STORAGE_FILES_BASE}/showcase/5.webp`
+const event6 = `${STORAGE_FILES_BASE}/showcase/6.webp`
+const event7 = `${STORAGE_FILES_BASE}/showcase/7.webp`
+const event8 = `${STORAGE_FILES_BASE}/showcase/8.webp`
+const event9 = `${STORAGE_FILES_BASE}/showcase/9.webp`
+const event10 = `${STORAGE_FILES_BASE}/showcase/10.webp`
 
 export interface ShowcasePhoto {
   id: string

@@ -33,9 +33,6 @@ import { useConfirm } from '../context/ConfirmContext'
 import { uploadImageToStorage } from '../lib/storage'
 import {
   EXCESS_PAX_RATE,
-  EXTRA_DESSERT_RATE,
-  EXTRA_MAIN_RATE,
-  EXTRA_PASTA_RATE,
   FOOD_BUFFER_PAX,
   MAIN_DISHES,
   PASTA_DISHES,
@@ -44,6 +41,8 @@ import {
   DRINK_DETAILS,
   findTierForGuestCount,
   recommendPackage,
+  isBlueBoxFoodAddon,
+  resolvePerGuestFoodRates,
 } from '../data/packages'
 import { CATEGORY_SHOWCASE_GALLERY } from '../data/eventGalleries'
 import { AI_CATALOG_ADDONS, formatMoney, SINAG_PACKAGES } from '../data/packages'
@@ -103,8 +102,12 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     return fromDb.length > 0 ? fromDb : [...DRINK_OPTIONS]
   }, [menuItems])
 
+  const perGuestRates = useMemo(() => resolvePerGuestFoodRates(addons), [addons])
+  const { extraMainRate, extraPastaRate, extraDessertRate, mainAddon, pastaAddon, dessertAddon } = perGuestRates
+
   const availableAddons = useMemo(() => {
-    return addons && addons.length > 0 ? addons : AI_CATALOG_ADDONS
+    const source = addons && addons.length > 0 ? addons : AI_CATALOG_ADDONS
+    return source.filter((a) => !isBlueBoxFoodAddon(a))
   }, [addons])
 
   const getDishMeta = (dishName: string) => {
@@ -430,9 +433,9 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     const excessGuests = isPerHeadPackage ? 0 : Math.max(0, guestCount - servicePax)
     const excessPaxFee = excessGuests * EXCESS_PAX_RATE
 
-    const extraMainCost = extraMain * EXTRA_MAIN_RATE * guestCount
-    const extraPastaCost = extraPasta * EXTRA_PASTA_RATE * guestCount
-    const extraDessertCost = extraDessert * EXTRA_DESSERT_RATE * guestCount
+    const extraMainCost = extraMain * extraMainRate * guestCount
+    const extraPastaCost = extraPasta * extraPastaRate * guestCount
+    const extraDessertCost = extraDessert * extraDessertRate * guestCount
     const flatAddonsCost = availableAddons
       .filter((addon) => selectedAIAddonIds.includes(addon.id))
       .reduce((sum, addon) => {
@@ -458,7 +461,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       totalPrice,
       downpayment,
     }
-  }, [currentPkg, guestCount, extraMain, extraPasta, extraDessert, selectedAIAddonIds, availableAddons])
+  }, [currentPkg, guestCount, extraMain, extraPasta, extraDessert, extraMainRate, extraPastaRate, extraDessertRate, selectedAIAddonIds, availableAddons])
 
   // Dynamic payable amount based on payment term (50% downpayment vs. 100% full payment)
   const payableAmount = useMemo(() => {
@@ -570,12 +573,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
         setProofError(res.error || 'Failed to upload receipt screenshot.')
       }
     } catch {
-      // Graceful fallback to DataURL
-      const reader = new FileReader()
-      reader.onloadend = () => {
-        setProofOfPaymentUrl(reader.result as string)
-      }
-      reader.readAsDataURL(file)
+      setProofError('Failed to upload receipt screenshot. Please try again.')
     } finally {
       setIsUploadingProof(false)
     }
@@ -2227,8 +2225,8 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     <div className="addon-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '18px', background: extraMain > 0 ? '#FFFBF6' : '#FFFFFF', borderColor: extraMain > 0 ? 'var(--gold)' : 'var(--line)', borderRadius: '10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
                         <div>
-                          <strong style={{ display: 'block', fontSize: '1rem', color: 'var(--ink)' }}>Extra Main Dish</strong>
-                          <small style={{ color: 'var(--terracotta)', fontWeight: 600 }}>+PHP {EXTRA_MAIN_RATE} / pax</small>
+                          <strong style={{ display: 'block', fontSize: '1rem', color: 'var(--ink)' }}>{mainAddon?.name || 'Extra Main Dish'}</strong>
+                          <small style={{ color: 'var(--terracotta)', fontWeight: 600 }}>+PHP {extraMainRate.toLocaleString()} / pax</small>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <button type="button" className="stepper-btn" onClick={() => setExtraMain((prev) => Math.max(0, prev - 1))}>
@@ -2242,7 +2240,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       </div>
                       {extraMain > 0 && (
                         <div style={{ fontSize: '0.82rem', color: 'var(--terracotta)', fontWeight: 700, background: '#FFF5EB', padding: '6px 10px', borderRadius: '6px' }}>
-                          +PHP {calculations.extraMainCost.toLocaleString()} ({extraMain} extra main{extraMain > 1 ? 's' : ''} × ₱{EXTRA_MAIN_RATE} × {guestCount} guests)
+                          +PHP {calculations.extraMainCost.toLocaleString()} ({extraMain} extra main{extraMain > 1 ? 's' : ''} × ₱{extraMainRate.toLocaleString()} × {guestCount} guests)
                         </div>
                       )}
 
@@ -2298,8 +2296,8 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     <div className="addon-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '18px', background: extraPasta > 0 ? '#F8FAFF' : '#FFFFFF', borderColor: extraPasta > 0 ? '#60A5FA' : 'var(--line)', borderRadius: '10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
                         <div>
-                          <strong style={{ display: 'block', fontSize: '1rem', color: 'var(--ink)' }}>Extra Pasta Dish</strong>
-                          <small style={{ color: '#2563EB', fontWeight: 600 }}>+PHP {EXTRA_PASTA_RATE} / pax</small>
+                          <strong style={{ display: 'block', fontSize: '1rem', color: 'var(--ink)' }}>{pastaAddon?.name || 'Extra Pasta Dish'}</strong>
+                          <small style={{ color: '#2563EB', fontWeight: 600 }}>+PHP {extraPastaRate.toLocaleString()} / pax</small>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <button type="button" className="stepper-btn" onClick={() => setExtraPasta((prev) => Math.max(0, prev - 1))}>
@@ -2313,7 +2311,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       </div>
                       {extraPasta > 0 && (
                         <div style={{ fontSize: '0.82rem', color: '#1E40AF', fontWeight: 700, background: '#EFF6FF', padding: '6px 10px', borderRadius: '6px' }}>
-                          +PHP {calculations.extraPastaCost.toLocaleString()} ({extraPasta} extra pasta × ₱{EXTRA_PASTA_RATE} × {guestCount} guests)
+                          +PHP {calculations.extraPastaCost.toLocaleString()} ({extraPasta} extra pasta × ₱{extraPastaRate.toLocaleString()} × {guestCount} guests)
                         </div>
                       )}
 
@@ -2369,8 +2367,8 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     <div className="addon-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '18px', background: extraDessert > 0 ? '#FFFDF5' : '#FFFFFF', borderColor: extraDessert > 0 ? 'var(--gold)' : 'var(--line)', borderRadius: '10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
                         <div>
-                          <strong style={{ display: 'block', fontSize: '1rem', color: 'var(--ink)' }}>Extra Dessert</strong>
-                          <small style={{ color: 'var(--terracotta)', fontWeight: 600 }}>+PHP {EXTRA_DESSERT_RATE} / pax</small>
+                          <strong style={{ display: 'block', fontSize: '1rem', color: 'var(--ink)' }}>{dessertAddon?.name || 'Extra Dessert'}</strong>
+                          <small style={{ color: 'var(--terracotta)', fontWeight: 600 }}>+PHP {extraDessertRate.toLocaleString()} / pax</small>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <button type="button" className="stepper-btn" onClick={() => setExtraDessert((prev) => Math.max(0, prev - 1))}>
@@ -2384,7 +2382,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       </div>
                       {extraDessert > 0 && (
                         <div style={{ fontSize: '0.82rem', color: 'var(--terracotta)', fontWeight: 700, background: '#FFFBEB', padding: '6px 10px', borderRadius: '6px' }}>
-                          +PHP {calculations.extraDessertCost.toLocaleString()} (+₱{EXTRA_DESSERT_RATE} × {guestCount} guests)
+                          +PHP {calculations.extraDessertCost.toLocaleString()} (+₱{extraDessertRate.toLocaleString()} × {guestCount} guests)
                         </div>
                       )}
                     </div>
@@ -2480,21 +2478,21 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
               {calculations.extraMainCost > 0 && (
                 <div className="quote-line-item">
-                  <span>Extra Main ({extraMain} dish × ₱{EXTRA_MAIN_RATE})</span>
+                  <span>Extra Main ({extraMain} dish × ₱{extraMainRate.toLocaleString()})</span>
                   <span className="font-number">{formatMoney(calculations.extraMainCost, currentPkg.currency)}</span>
                 </div>
               )}
 
               {calculations.extraPastaCost > 0 && (
                 <div className="quote-line-item">
-                  <span>Extra Pasta ({extraPasta} dish × ₱{EXTRA_PASTA_RATE})</span>
+                  <span>Extra Pasta ({extraPasta} dish × ₱{extraPastaRate.toLocaleString()})</span>
                   <span className="font-number">{formatMoney(calculations.extraPastaCost, currentPkg.currency)}</span>
                 </div>
               )}
 
               {calculations.extraDessertCost > 0 && (
                 <div className="quote-line-item">
-                  <span>Extra Dessert ({extraDessert} dish × ₱{EXTRA_DESSERT_RATE})</span>
+                  <span>Extra Dessert ({extraDessert} dish × ₱{extraDessertRate.toLocaleString()})</span>
                   <span className="font-number">{formatMoney(calculations.extraDessertCost, currentPkg.currency)}</span>
                 </div>
               )}
@@ -3674,7 +3672,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
                         <td style={{ padding: '10px 4px' }}>
                           <div style={{ fontWeight: 600, color: '#9A3412' }}>
-                            Extra Main Course ({extraMain} dish{extraMain > 1 ? 'es' : ''} × ₱{EXTRA_MAIN_RATE}/pax)
+                            Extra Main Course ({extraMain} dish{extraMain > 1 ? 'es' : ''} × ₱{extraMainRate.toLocaleString()}/pax)
                           </div>
                           <span style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>
                             Selected: {extraMainDishes.slice(0, extraMain).filter(Boolean).join(' · ') || 'Dishes to confirm'}
@@ -3694,7 +3692,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
                         <td style={{ padding: '10px 4px' }}>
                           <div style={{ fontWeight: 600, color: '#1E40AF' }}>
-                            Extra Pasta Course ({extraPasta} dish{extraPasta > 1 ? 'es' : ''} × ₱{EXTRA_PASTA_RATE}/pax)
+                            Extra Pasta Course ({extraPasta} dish{extraPasta > 1 ? 'es' : ''} × ₱{extraPastaRate.toLocaleString()}/pax)
                           </div>
                           <span style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>
                             Selected: {extraPastaDishes.slice(0, extraPasta).filter(Boolean).join(' · ') || 'Dishes to confirm'}
@@ -3714,7 +3712,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
                         <td style={{ padding: '10px 4px' }}>
                           <div style={{ fontWeight: 600, color: '#92400E' }}>
-                            Extra Dessert Course ({extraDessert} serving{extraDessert > 1 ? 's' : ''} × ₱{EXTRA_DESSERT_RATE}/pax)
+                            Extra Dessert Course ({extraDessert} serving{extraDessert > 1 ? 's' : ''} × ₱{extraDessertRate.toLocaleString()}/pax)
                           </div>
                         </td>
                         <td style={{ padding: '10px 8px', textAlign: 'center' }}>
@@ -3962,10 +3960,11 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       {!isCompleted && <div className="wizard-nav-spacer" aria-hidden="true" />}
 
       {/* Fullscreen QR Code Inspection Modal */}
-      {qrModalInfo?.isOpen && (
+      {qrModalInfo?.isOpen && typeof document !== 'undefined' && createPortal(
         <div
           role="dialog"
           aria-modal="true"
+          data-lenis-prevent="true"
           onClick={() => setQrModalInfo(null)}
           style={{
             position: 'fixed',
@@ -4059,7 +4058,8 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* Embedded Checkout Modal for PayMongo dynamic QR Ph */}

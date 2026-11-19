@@ -1,8 +1,11 @@
-const rawAssets = import.meta.glob('../../gallery/**/*.jpg', { eager: true, import: 'default', query: '?url' }) as Record<string, string>
+import { STORAGE_FILES_BASE } from './packages'
 
 export function getGalleryAssetUrl(path: string): string {
-  const normalized = `../../gallery/${path.replace(/^\/+/, '')}`
-  return rawAssets[normalized] || ''
+  const clean = path
+    .replace(/^\/+/, '')
+    .replace('setup_styles(optional)/', 'setup_styles/')
+    .replace(/\.(jpg|jpeg|png)$/i, '.webp')
+  return `${STORAGE_FILES_BASE}/gallery/${clean}`
 }
 
 export interface GalleryItem {

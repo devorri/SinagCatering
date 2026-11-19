@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import {
   X,
   User as UserIcon,
@@ -128,9 +129,9 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
     .map((w) => w[0].toUpperCase())
     .join('')
 
-  return (
+  return createPortal(
     <>
-      <div className="login-modal-overlay" onClick={onClose} style={{ zIndex: 11000 }}>
+      <div className="login-modal-overlay" data-lenis-prevent="true" onClick={onClose} style={{ zIndex: 11000 }}>
         <div
           className="login-modal-card"
           onClick={(e) => e.stopPropagation()}
@@ -588,6 +589,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
           }}
         />
       )}
-    </>
+    </>,
+    document.body,
   )
 }

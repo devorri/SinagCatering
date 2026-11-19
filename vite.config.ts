@@ -404,7 +404,7 @@ function apiServerPlugin(env: Record<string, string> = {}): Plugin {
 
         // 4. Catalog Admin Management Endpoint
         if (url === '/api/catalog-admin') {
-          const supabaseUrl = env.VITE_SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wldhvmbcvjbnwkgiafpg.supabase.co'
+          const supabaseUrl = env.VITE_SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://lwgejivunwohzzpckwbb.supabase.co'
           const anonKey = env.VITE_SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || ''
           const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || anonKey
 
@@ -624,6 +624,9 @@ function apiServerPlugin(env: Record<string, string> = {}): Plugin {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   return {
+    server: {
+      port: 3000,
+    },
     plugins: [react(), apiServerPlugin(env)],
   }
 })
