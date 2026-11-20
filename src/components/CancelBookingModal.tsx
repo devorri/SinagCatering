@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { AlertCircle, Info, Loader2, X } from 'lucide-react'
 import type { Booking } from '../types'
 import { formatMoney } from '../data/packages'
+import { useApp } from '../context/AppContext'
 import {
   CANCELLATION_REASONS,
   OTHER_CANCELLATION_REASON,
@@ -16,7 +17,8 @@ interface CancelBookingModalProps {
 }
 
 export const CancelBookingModal: React.FC<CancelBookingModalProps> = ({ booking, onClose, onConfirm }) => {
-  const quote = useMemo(() => computeRefundQuote(booking), [booking])
+  const { business } = useApp()
+  const quote = useMemo(() => computeRefundQuote(booking), [booking, business])
   const [reason, setReason] = useState('')
   const [otherText, setOtherText] = useState('')
   const [attempted, setAttempted] = useState(false)
@@ -86,9 +88,9 @@ export const CancelBookingModal: React.FC<CancelBookingModalProps> = ({ booking,
             </strong>
           </div>
           <ul className="cancel-policy">
-            <li>30+ days before the event — 100% refund</li>
-            <li>14–29 days before the event — 50% refund</li>
-            <li>Less than 14 days — no refund</li>
+            <li>{business.refundFullDays}+ days before the event — 100% refund</li>
+            <li>{business.refundPartialDays}–{business.refundFullDays - 1} days before the event — {business.refundPartialPercent}% refund</li>
+            <li>Less than {business.refundPartialDays} days — no refund</li>
           </ul>
         </div>
 

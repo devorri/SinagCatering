@@ -62,7 +62,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
 
       const cleanedPhone = phone.replace(/[^0-9]/g, '')
       if (!phone.trim() || cleanedPhone.length < 10) {
-        setError('Please provide a valid Philippine mobile number (e.g. 0928 714 4597).')
+        setError('Please provide a valid Philippine mobile number (e.g. 0917 123 4567).')
         return
       }
 
@@ -161,7 +161,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
                   type="tel"
                   className="input-field"
                   required
-                  placeholder="0928 714 4597"
+                  placeholder="0917 123 4567"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   disabled={isSubmitting}

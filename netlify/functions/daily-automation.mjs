@@ -15,7 +15,23 @@ export const config = {
   schedule: '@hourly',
 }
 
-const REMINDER_DAYS = 7
+// Defaults; replaced by the admin's Business Settings (public.business_settings) on every run.
+const settings = { reminderDays: 7, reserveHoldHours: 48 }
+
+const loadSettings = async (db) => {
+  try {
+    const res = await db.rest('business_settings?select=settings&id=eq.1')
+    const s = Array.isArray(res.data) && res.data[0]?.settings
+    if (s && typeof s === 'object') {
+      if (Number.isFinite(Number(s.reminderDays))) settings.reminderDays = Number(s.reminderDays)
+      if (Number.isFinite(Number(s.reserveHoldHours))) settings.reserveHoldHours = Number(s.reserveHoldHours)
+    }
+  } catch {
+    // keep defaults
+  }
+}
+
+const daysLabel = (n) => (n === 7 ? '1 week' : `${n} day${n === 1 ? '' : 's'}`)
 
 const env = (...names) => {
   for (const n of names) {
@@ -145,7 +161,7 @@ const expireHolds = async (db) => {
         booking_id: b.id,
         type: 'hold_expired',
         title: 'Temporary Hold Expired',
-        message: `Your 48-hour temporary hold for booking ${b.id} on ${b.event_date} expired because no payment was uploaded. The date has been released.`,
+        message: `Your ${settings.reserveHoldHours}-hour temporary hold for booking ${b.id} on ${b.event_date} expired because no payment was uploaded. The date has been released.`,
       },
       {
         id: `nt-exp-a-${b.id}`,
@@ -153,7 +169,7 @@ const expireHolds = async (db) => {
         booking_id: b.id,
         type: 'hold_expired',
         title: 'Temporary Hold Expired',
-        message: `${b.customer_name}'s 48-hour hold (${b.id}) on ${b.event_date} expired without payment and was forfeited. Date released to the calendar.`,
+        message: `${b.customer_name}'s ${settings.reserveHoldHours}-hour hold (${b.id}) on ${b.event_date} expired without payment and was forfeited. Date released to the calendar.`,
       },
     ]),
   )
@@ -162,7 +178,7 @@ const expireHolds = async (db) => {
 
 const sendReminders = async (db) => {
   const today = manilaToday()
-  const until = addDays(today, REMINDER_DAYS)
+  const until = addDays(today, settings.reminderDays)
   const query =
     `bookings?select=id,user_id,customer_name,email,phone,event_date,booking_status,payment_status,payment_term` +
     `&reminder_sent_at=is.null&event_date=gte.${today}&event_date=lte.${until}` +
@@ -182,7 +198,7 @@ const sendReminders = async (db) => {
     })
     if (!claim.ok || !Array.isArray(claim.data) || claim.data.length === 0) continue
 
-    const clientText = `Sinag Catering Reminder: Your event is coming up in 1 week! Booking Reference: ${b.id} on ${b.event_date}. We are excited to serve you. Check your portal for full details.`
+    const clientText = `Sinag Catering Reminder: Your event is coming up in ${daysLabel(settings.reminderDays)}! Booking Reference: ${b.id} on ${b.event_date}. We are excited to serve you. Check your portal for full details.`
     const sms = await sendSms(b.phone, clientText)
     await logSms(db, b.phone, clientText, sms.ok, b.id)
 
@@ -194,7 +210,7 @@ const sendReminders = async (db) => {
         recipient_email: String(b.email || '').toLowerCase(),
         booking_id: b.id,
         type: 'event_reminder',
-        title: 'Your event is 1 week away!',
+        title: `Your event is ${daysLabel(settings.reminderDays)} away!`,
         message: clientText,
       },
       {
@@ -203,7 +219,7 @@ const sendReminders = async (db) => {
         booking_id: b.id,
         type: 'event_reminder',
         title: 'Upcoming Event Alert',
-        message: `Upcoming Event Alert: Booking ${b.id} (${b.customer_name}) is scheduled in 7 days on ${b.event_date}. Please coordinate final preparations.`,
+        message: `Upcoming Event Alert: Booking ${b.id} (${b.customer_name}) is scheduled in ${settings.reminderDays} days on ${b.event_date}. Please coordinate final preparations.`,
       },
     ])
     sent += 1
@@ -219,6 +235,7 @@ export default async () => {
       headers: { 'Content-Type': 'application/json' },
     })
   }
+  await loadSettings(db)
   const result = { ok: true, expiredHolds: 0, remindersSent: 0, errors: [] }
   try {
     result.expiredHolds = await expireHolds(db)

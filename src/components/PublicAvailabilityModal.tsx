@@ -21,15 +21,15 @@ export const PublicAvailabilityModal: React.FC<PublicAvailabilityModalProps> = (
   onClose,
   onSelectDateToBook,
 }) => {
-  const { blockedDates, bookings } = useApp()
+  const { blockedDates, bookings, business } = useApp()
 
   // 14-day advance booking calculation rule
   const minBookingDate = useMemo(() => {
     const d = new Date()
     d.setHours(0, 0, 0, 0)
-    d.setDate(d.getDate() + 14)
+    d.setDate(d.getDate() + business.leadTimeDays)
     return d
-  }, [])
+  }, [business.leadTimeDays])
 
   const formatToDateStr = (d: Date) => {
     const y = d.getFullYear()
@@ -95,7 +95,7 @@ export const PublicAvailabilityModal: React.FC<PublicAvailabilityModalProps> = (
       return { status: 'past', label: 'Past Date', canBook: false }
     }
     if (dateObj < minBookingDate) {
-      return { status: 'too_soon', label: 'Requires 14-day advance', canBook: false }
+      return { status: 'too_soon', label: `Requires ${business.leadTimeDays}-day advance`, canBook: false }
     }
     // Rule 1: 50% / 100% bookings lock the date as RESERVED.
     // Rule 2: "Reserve Only" 48-hour holds show as BLOCKED until paid or expired.
@@ -104,7 +104,7 @@ export const PublicAvailabilityModal: React.FC<PublicAvailabilityModalProps> = (
       return { status: 'reserved', label: 'Reserved / Booked', canBook: false }
     }
     if (dayBookings.length > 0) {
-      return { status: 'blocked', label: 'Blocked – temporary 48-hour hold', canBook: false }
+      return { status: 'blocked', label: `Blocked – temporary ${business.reserveHoldHours}-hour hold`, canBook: false }
     }
     if (blockedDates.includes(dateStr)) {
       return { status: 'blocked', label: 'Blocked / Holiday', canBook: false }
@@ -207,7 +207,7 @@ export const PublicAvailabilityModal: React.FC<PublicAvailabilityModalProps> = (
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#B45309' }}>
             <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#F59E0B' }} />
-            <span>&lt;14 Days Prep</span>
+            <span>&lt;{business.leadTimeDays} Days Prep</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#64748B' }}>
             <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#94A3B8' }} />
@@ -430,7 +430,7 @@ export const PublicAvailabilityModal: React.FC<PublicAvailabilityModalProps> = (
         )}
 
         <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem', color: 'var(--muted)' }}>
-          <span>Advance rule: Minimum 14 days lead time required.</span>
+          <span>Advance rule: Minimum {business.leadTimeDays} days lead time required.</span>
           <button
             type="button"
             onClick={onClose}

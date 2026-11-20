@@ -49,7 +49,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
       const cleanedPhone = clientPhone.replace(/[^0-9]/g, '')
       if (!clientPhone.trim() || cleanedPhone.length < 10) {
-        setClientError('Please provide a valid Philippine mobile number (e.g. 0928 714 4597).')
+        setClientError('Please provide a valid Philippine mobile number (e.g. 0917 123 4567).')
         return
       }
 
@@ -151,7 +151,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 <input
                   type="tel"
                   className="input-field"
-                  placeholder="0928 714 4597"
+                  placeholder="0917 123 4567"
                   value={clientPhone}
                   onChange={(e) => setClientPhone(e.target.value)}
                   required

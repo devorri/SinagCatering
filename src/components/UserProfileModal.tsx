@@ -317,7 +317,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
                   className="input-field"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  placeholder="0928 714 4597"
+                  placeholder="0917 123 4567"
                   style={{ width: '100%', fontSize: '0.9rem' }}
                 />
                 <span style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: '4px', display: 'block' }}>

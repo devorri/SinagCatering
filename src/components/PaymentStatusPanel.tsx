@@ -20,8 +20,11 @@ import {
 import type { Booking } from '../types'
 import { formatMoney } from '../data/packages'
 import { uploadImageToStorage } from '../lib/storage'
+import { useApp } from '../context/AppContext'
+import { phoneDigits } from '../lib/businessSettings'
 import {
   RESERVATION_FEE,
+  RESERVE_HOLD_HOURS,
   SIM_CLOCK_EVENT,
   formatCountdown,
   getHoldExpiry,
@@ -47,24 +50,26 @@ interface PaymentStatusPanelProps {
   onZoomQr: (info: QrZoomInfo) => void
 }
 
-const GCASH_QR: QrZoomInfo = {
-  title: 'GCash / QR Ph Code',
-  imageSrc: '/sinag_gcash_qr.png',
-  name: 'SU*****E C.',
-  acc: '0928 714 4597',
-}
-const MARIBANK_QR: QrZoomInfo = {
-  title: 'MariBank / InstaPay QR Code',
-  imageSrc: '/sinag_maribank_qr.png',
-  name: 'SUNSHINE CRUZ (MariBank ****2765)',
-  acc: '0928 714 4597',
-}
 
 /**
  * Bottom "payment status" container on each My Bookings card. Shows the live
  * payment state and an OPTIONAL receipt upload whenever money is still owed.
  */
 export const PaymentStatusPanel: React.FC<PaymentStatusPanelProps> = ({ booking, onUpload, onPayOnline, onZoomQr }) => {
+  const { business } = useApp()
+  const DP = business.downpaymentPercent
+  const GCASH_QR: QrZoomInfo = {
+    title: 'GCash / QR Ph Code',
+    imageSrc: business.gcashQrUrl,
+    name: business.gcashName,
+    acc: business.gcashNumber,
+  }
+  const MARIBANK_QR: QrZoomInfo = {
+    title: `${business.bankName} / InstaPay QR Code`,
+    imageSrc: business.bankQrUrl,
+    name: `${business.bankAccountName} (${business.bankAccountTag})`,
+    acc: business.bankAccountNumber,
+  }
   const [now, setNow] = useState(() => getSimulatedNowMs())
   const [isExpanded, setIsExpanded] = useState(false)
   const [qrMethod, setQrMethod] = useState<'gcash' | 'maribank'>('gcash')
@@ -80,7 +85,7 @@ export const PaymentStatusPanel: React.FC<PaymentStatusPanelProps> = ({ booking,
   const holdExpired = isHoldExpired(booking, now)
   const holdRemaining = getHoldRemainingMs(booking, now)
 
-  const downpaymentDue = Math.round(booking.totalPrice * 0.5)
+  const downpaymentDue = Math.round(booking.totalPrice * (DP / 100))
   const reservationFee = Math.min(booking.totalPrice, term === 'reserve' && booking.downpaymentAmount ? booking.downpaymentAmount : RESERVATION_FEE)
   const remaining = getRemainingBalance(booking)
   const [payChoice, setPayChoice] = useState<'reserve' | 'downpayment' | 'full'>(term === 'full' ? 'full' : term === 'reserve' ? 'reserve' : 'downpayment')
@@ -187,13 +192,13 @@ export const PaymentStatusPanel: React.FC<PaymentStatusPanelProps> = ({ booking,
     tone = 'closed'
     icon = <Ban size={20} />
     title = 'Temporary Hold Expired'
-    desc = 'No payment was uploaded within 48 hours, so the date is being released.'
+    desc = `No payment was uploaded within ${RESERVE_HOLD_HOURS} hours, so the date is being released.`
   } else if (hold) {
     tone = 'hold'
     icon = <AlertTriangle size={20} />
     const exp = getHoldExpiry(booking)
-    title = `Temporary Hold – Pay within 48 Hours (${formatCountdown(holdRemaining)} left)`
-    desc = `Pay the ${formatMoney(reservationFee, booking.currency)} reservation fee and upload the receipt before ${exp ? new Date(exp).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : 'the hold expires'} to lock your date. You may also pay 50% or in full.`
+    title = `Temporary Hold – Pay within ${RESERVE_HOLD_HOURS} Hours (${formatCountdown(holdRemaining)} left)`
+    desc = `Pay the ${formatMoney(reservationFee, booking.currency)} reservation fee and upload the receipt before ${exp ? new Date(exp).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : 'the hold expires'} to lock your date. You may also pay ${DP}% or in full.`
   } else if (booking.paymentStatus === 'fully_paid' || booking.bookingStatus === 'completed') {
     tone = 'paid'
     icon = <CheckCircle size={20} />
@@ -209,14 +214,14 @@ export const PaymentStatusPanel: React.FC<PaymentStatusPanelProps> = ({ booking,
     icon = <CheckCircle size={20} />
     title = booking.paymentStatus === 'partially_paid'
       ? `Reservation Fee Paid – Remaining Balance: ${formatMoney(remaining, booking.currency)}`
-      : `50% Paid – Remaining Balance: ${formatMoney(remaining, booking.currency)}`
+      : `${DP}% Paid – Remaining Balance: ${formatMoney(remaining, booking.currency)}`
     desc = 'Your date is locked. Settle the remaining balance on or before your event day — you may upload the receipt here anytime.'
   } else {
     tone = 'due'
     icon = <AlertCircle size={20} />
     title = term === 'full'
       ? `Full Payment Due: ${formatMoney(booking.totalPrice, booking.currency)}`
-      : `50% Downpayment Due: ${formatMoney(downpaymentDue, booking.currency)}`
+      : `${DP}% Downpayment Due: ${formatMoney(downpaymentDue, booking.currency)}`
     desc = 'Your date is reserved. Upload your payment receipt below whenever you are ready so our team can verify it.'
   }
 
@@ -272,7 +277,7 @@ export const PaymentStatusPanel: React.FC<PaymentStatusPanelProps> = ({ booking,
                 className={`pay-choice ${payChoice === 'downpayment' ? 'active' : ''}`}
                 onClick={() => setPayChoice('downpayment')}
               >
-                <strong>50% Downpayment</strong>
+                <strong>{DP}% Downpayment</strong>
                 <span>{formatMoney(downpaymentDue, booking.currency)}</span>
               </button>
               <button
@@ -296,7 +301,7 @@ export const PaymentStatusPanel: React.FC<PaymentStatusPanelProps> = ({ booking,
                   GCash (QR Ph)
                 </button>
                 <button type="button" className={qrMethod === 'maribank' ? 'active maribank' : ''} onClick={() => setQrMethod('maribank')}>
-                  MariBank (InstaPay)
+                  {business.bankName} (InstaPay)
                 </button>
               </div>
               <button
@@ -305,18 +310,18 @@ export const PaymentStatusPanel: React.FC<PaymentStatusPanelProps> = ({ booking,
                 onClick={() => onZoomQr(qrMethod === 'gcash' ? GCASH_QR : MARIBANK_QR)}
                 title="Click to enlarge QR code"
               >
-                <img src={qrMethod === 'gcash' ? GCASH_QR.imageSrc : MARIBANK_QR.imageSrc} alt={`${qrMethod === 'gcash' ? 'GCash' : 'MariBank'} QR code`} />
+                <img src={qrMethod === 'gcash' ? GCASH_QR.imageSrc : MARIBANK_QR.imageSrc} alt={`${qrMethod === 'gcash' ? 'GCash' : business.bankName} QR code`} />
                 <span className="pay-qr-zoom"><Maximize2 size={11} /> Fullscreen</span>
               </button>
               <div className="pay-qr-meta">
-                <strong>{qrMethod === 'gcash' ? 'SU*****E C. (Sinag Catering)' : 'SUNSHINE CRUZ – MariBank (****2765)'}</strong>
+                <strong>{qrMethod === 'gcash' ? `${business.gcashName} (${business.businessName})` : `${business.bankAccountName} – ${business.bankAccountTag}`}</strong>
                 <span>
-                  0928 714 4597
+                  {qrMethod === 'gcash' ? business.gcashNumber : business.bankAccountNumber}
                   <button
                     type="button"
                     className="pay-copy"
                     onClick={() => {
-                      navigator.clipboard?.writeText('09287144597').catch(() => {})
+                      navigator.clipboard?.writeText(phoneDigits(qrMethod === 'gcash' ? business.gcashNumber : business.bankAccountNumber)).catch(() => {})
                       setCopied(true)
                       window.setTimeout(() => setCopied(false), 2000)
                     }}

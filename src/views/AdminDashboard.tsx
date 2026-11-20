@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react'
 import {
+  Settings2,
   Eye,
   EyeOff,
   ShieldCheck,
@@ -62,9 +63,12 @@ import { UserProfileModal } from '../components/UserProfileModal'
 import { AdminCatalogManager } from '../components/AdminCatalogManager'
 import { CustomersTab } from '../components/admin/CustomersTab'
 import { RefundsTab } from '../components/admin/RefundsTab'
+import { BusinessSettingsTab } from '../components/admin/BusinessSettingsTab'
 import {
   PAYMENT_TERM_LABELS,
   RESERVATION_FEE,
+  DOWNPAYMENT_PERCENT,
+  computeDownpayment,
   getPaymentStatusLabel,
   formatCountdown,
   getBookingStatusLabel,
@@ -77,7 +81,7 @@ import {
   monthLabel,
 } from '../lib/bookingRules'
 
-type AdminTabType = 'analytics' | 'bookings' | 'customers' | 'refunds' | 'calendar' | 'staff' | 'reviews' | 'inquiries' | 'notifications' | 'catalog'
+type AdminTabType = 'analytics' | 'bookings' | 'customers' | 'refunds' | 'calendar' | 'staff' | 'reviews' | 'inquiries' | 'notifications' | 'catalog' | 'settings'
 
 interface AdminDashboardProps {
   onLogout?: () => void
@@ -196,7 +200,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     }
 
     const totalRevenue = filteredList.reduce((acc, b) => acc + b.totalPrice, 0)
-    const totalDownpayment = filteredList.reduce((acc, b) => acc + (b.downpaymentAmount || (b.paymentStatus === 'downpayment_paid' || b.paymentStatus === 'fully_paid' ? b.totalPrice * 0.5 : 0)), 0)
+    const totalDownpayment = filteredList.reduce((acc, b) => acc + (b.downpaymentAmount || (b.paymentStatus === 'downpayment_paid' || b.paymentStatus === 'fully_paid' ? computeDownpayment(b.totalPrice) : 0)), 0)
 
     const reportScopeLabel = printScope === 'all'
       ? 'All Event Reservations'
@@ -608,7 +612,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       if ((b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed') && b.paymentStatus === 'fully_paid') {
         totalRevenue += b.totalPrice
       } else if (b.bookingStatus === 'confirmed' && b.paymentStatus === 'downpayment_paid') {
-        const paidAmount = b.downpaymentAmount || (b.totalPrice * 0.5)
+        const paidAmount = b.downpaymentAmount || (computeDownpayment(b.totalPrice))
         totalRevenue += paidAmount
       }
 
@@ -916,7 +920,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       const dp = b.paymentStatus === 'fully_paid'
         ? total
         : b.paymentStatus === 'downpayment_paid'
-        ? (Number(b.downpaymentAmount) || Math.round(total * 0.5))
+        ? (Number(b.downpaymentAmount) || computeDownpayment(total))
         : 0
       const uncollected = Math.max(0, total - dp)
 
@@ -939,7 +943,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     const grandTotalRevenue = filtered.reduce((sum, b) => sum + (Number(b.totalPrice) || 0), 0)
     const grandCollected = filtered.reduce((sum, b) => {
       const tot = Number(b.totalPrice) || 0
-      return sum + (b.paymentStatus === 'fully_paid' ? tot : b.paymentStatus === 'downpayment_paid' ? (Number(b.downpaymentAmount) || Math.round(tot * 0.5)) : 0)
+      return sum + (b.paymentStatus === 'fully_paid' ? tot : b.paymentStatus === 'downpayment_paid' ? (Number(b.downpaymentAmount) || computeDownpayment(tot)) : 0)
     }, 0)
     const grandUncollected = Math.max(0, grandTotalRevenue - grandCollected)
     const grandBookings = filtered.length
@@ -1013,7 +1017,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const toggleServiceSelection = (service: string) => setTempServices((current) => current.includes(service) ? current.filter((item) => item !== service) : [...current, service])
 
   const handleFullPayment = async (booking: Booking) => {
-    const remainingBalance = booking.totalPrice - (booking.downpaymentAmount || (booking.totalPrice * 0.5))
+    const remainingBalance = booking.totalPrice - (booking.downpaymentAmount || (computeDownpayment(booking.totalPrice)))
     const ok = await confirm({
       title: 'Record Full Settlement',
       message: `Confirm receipt of the remaining balance (${formatMoney(remainingBalance, booking.currency)}) for Booking #${booking.id} (${booking.customerName})?\n\nThis will mark the reservation as Fully Paid and move status to Completed.`,
@@ -1054,7 +1058,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   // Handle booking approval with downpayment requirement
   const handleApproveBooking = (booking: Booking) => {
     setDownpaymentBooking(booking)
-    // Pre-fill with what the client says they paid (e.g. ₱2,000 reservation fee or 100%)
+    // Pre-fill with what the client says they paid (e.g. the reservation fee or 100%)
     setDownpaymentAmount(
       booking.paymentStatus === 'pending_verification' && booking.downpaymentAmount
         ? booking.downpaymentAmount
@@ -1062,7 +1066,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         ? Math.min(booking.totalPrice, booking.downpaymentAmount || RESERVATION_FEE)
         : getPaymentTerm(booking) === 'full'
         ? booking.totalPrice
-        : Math.round(booking.totalPrice * 0.5),
+        : computeDownpayment(booking.totalPrice),
     )
     setShowDownpaymentModal(true)
   }
@@ -1501,6 +1505,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           { id: 'catalog', label: 'Menu & Pricing', icon: <UtensilsCrossed size={18} /> },
           { id: 'staff', label: 'Staff Roster', icon: <Users size={18} />, badge: staff.length },
           { id: 'reviews', label: 'Reviews Moderation', icon: <Star size={18} />, badge: reviews.length },
+          { id: 'settings', label: 'Business Settings', icon: <Settings2 size={18} /> },
         ],
       },
       {
@@ -1690,6 +1695,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   ? 'Customer Inquiries'
                   : activeTab === 'catalog'
                   ? 'Packages & Menu Catalog'
+                  : activeTab === 'settings'
+                  ? 'Business Settings'
                   : 'Notifications & Activity Hub'}
               </h1>
               <p className="lede">
@@ -1754,7 +1761,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     {(() => {
                       const phpBookings = bookings.filter((booking) => (booking.currency ?? 'PHP') === 'PHP')
                       const fullyPaidRev = phpBookings.filter(b => (b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed') && b.paymentStatus === 'fully_paid').reduce((s, b) => s + b.totalPrice, 0)
-                      const downpaymentRev = phpBookings.filter(b => b.bookingStatus === 'confirmed' && b.paymentStatus === 'downpayment_paid').reduce((s, b) => s + (b.downpaymentAmount || b.totalPrice * 0.5), 0)
+                      const downpaymentRev = phpBookings.filter(b => b.bookingStatus === 'confirmed' && b.paymentStatus === 'downpayment_paid').reduce((s, b) => s + (b.downpaymentAmount || computeDownpayment(b.totalPrice)), 0)
                       const pendingRev = phpBookings.filter(b => b.bookingStatus === 'pending').reduce((s, b) => s + b.totalPrice, 0)
                       const cancelledRev = phpBookings.filter(b => b.bookingStatus === 'cancelled' || b.bookingStatus === 'forfeit').reduce((s, b) => s + b.totalPrice, 0)
                       const maxRev = Math.max(fullyPaidRev, downpaymentRev, pendingRev, cancelledRev, 1)
@@ -2370,7 +2377,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                     {formatMoney(b.totalPrice, 'PHP')}
                                   </div>
                                   <div style={{ fontSize: '0.74rem', color: '#64748B', fontWeight: 500 }}>
-                                    Paid: {formatMoney(b.paymentStatus === 'fully_paid' ? b.totalPrice : (b.downpaymentAmount || b.totalPrice * 0.5), 'PHP')}
+                                    Paid: {formatMoney(b.paymentStatus === 'fully_paid' ? b.totalPrice : (b.downpaymentAmount || computeDownpayment(b.totalPrice)), 'PHP')}
                                   </div>
                                 </td>
                               </tr>
@@ -3389,7 +3396,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         </span>
                       ) : (
                         <span style={{ background: '#FEF3C7', color: '#92400E', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 700 }}>
-                          50% Downpayment (Remaining 50% Due on Event Day)
+                          {DOWNPAYMENT_PERCENT}% Downpayment (Remaining {100 - DOWNPAYMENT_PERCENT}% Due on Event Day)
                         </span>
                       )}
                     </p>
@@ -3540,7 +3547,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         className="btn-action-fullpay"
                         style={{ width: '100%', justifyContent: 'center', padding: '10px' }}
                       >
-                        <CreditCard size={16} /> Record Full Payment (50% Balance)
+                        <CreditCard size={16} /> Record Full Payment (Remaining Balance)
                       </button>
                     )}
                   </div>
@@ -4149,7 +4156,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                           <input
                             type="tel"
                             className="input-field"
-                            placeholder="0928 714 4597"
+                            placeholder="0917 123 4567"
                             value={testSmsPhone}
                             onChange={(e) => setTestSmsPhone(e.target.value)}
                             style={{ padding: '6px 10px', fontSize: '0.85rem' }}
@@ -4263,6 +4270,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             <AdminCatalogManager />
           )}
 
+          {/* BUSINESS SETTINGS (contact, payment accounts, pricing rules, policies, terms) */}
+          {activeTab === 'settings' && <BusinessSettingsTab />}
+
           {/* DOWNPAYMENT VERIFICATION & APPROVAL MODAL (Item 8) */}
           {showDownpaymentModal && downpaymentBooking && (
             <div className="modal-overlay">
@@ -4364,8 +4374,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   />
                   <span style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '2px' }}>
                     {getPaymentTerm(downpaymentBooking) === 'reserve'
-                      ? `Reservation fee: ${formatMoney(Math.min(downpaymentBooking.totalPrice, RESERVATION_FEE), downpaymentBooking.currency)} · 50%: ${formatMoney(downpaymentBooking.totalPrice * 0.5, downpaymentBooking.currency)} · Full: ${formatMoney(downpaymentBooking.totalPrice, downpaymentBooking.currency)}`
-                      : `Required 50% amount: ${formatMoney(downpaymentBooking.totalPrice * 0.5, downpaymentBooking.currency)}`}
+                      ? `Reservation fee: ${formatMoney(Math.min(downpaymentBooking.totalPrice, RESERVATION_FEE), downpaymentBooking.currency)} · ${DOWNPAYMENT_PERCENT}%: ${formatMoney(computeDownpayment(downpaymentBooking.totalPrice), downpaymentBooking.currency)} · Full: ${formatMoney(downpaymentBooking.totalPrice, downpaymentBooking.currency)}`
+                      : `Required ${DOWNPAYMENT_PERCENT}% amount: ${formatMoney(computeDownpayment(downpaymentBooking.totalPrice), downpaymentBooking.currency)}`}
                   </span>
                 </div>
 

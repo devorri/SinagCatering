@@ -13,6 +13,8 @@ import {
   ALL_GALLERY_ITEMS,
 } from '../data/galleryData'
 import type { GalleryItem } from '../data/galleryData'
+import { useApp } from '../context/AppContext'
+import { phoneDigits } from '../lib/businessSettings'
 
 interface GalleryPageProps {
   onStartBooking: () => void
@@ -33,6 +35,7 @@ const CATEGORIES = [
 type CategoryType = (typeof CATEGORIES)[number]
 
 export const GalleryPage: React.FC<GalleryPageProps> = ({ onStartBooking }) => {
+  const { business } = useApp()
   const [selectedCategory, setSelectedCategory] = useState<CategoryType>('All')
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
 
@@ -271,15 +274,15 @@ export const GalleryPage: React.FC<GalleryPageProps> = ({ onStartBooking }) => {
               <h2>Bring this celebration ambiance to your event.</h2>
               <p>
                 Every standard booking includes curated buffet presentation, linen styling,
-                chafing dishes, full dining set, attentive crew, and a complimentary +10 pax food buffer.
+                chafing dishes, full dining set, attentive crew, and a complimentary +{business.foodBufferPax} pax food buffer.
               </p>
             </div>
             <div className="gallery-cta-buttons">
               <button type="button" onClick={onStartBooking} className="btn-hero-primary">
                 Start Booking Now <ChevronRight size={16} />
               </button>
-              <a href="tel:09287144597" className="btn-hero-outline">
-                <Phone size={15} /> 0928 714 4597
+              <a href={`tel:${phoneDigits(business.phone)}`} className="btn-hero-outline">
+                <Phone size={15} /> {business.phone}
               </a>
             </div>
           </div>

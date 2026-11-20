@@ -1,4 +1,6 @@
 import { supabase } from './supabase'
+import { getBusiness, refundPolicySummary } from './businessSettings'
+import { getTermsSections } from './terms'
 import {
   AI_CATALOG_ADDONS,
   EXCESS_PAX_RATE,
@@ -26,6 +28,7 @@ import {
   isBookingOccupyingDate,
   isReserveHold,
   manilaToday,
+  computeDownpayment,
 } from './bookingRules'
 
 export interface AIFormData {
@@ -54,6 +57,8 @@ export interface AIResponse {
   suggestions?: string[]
   /** Summary sent to the staff inbox when the assistant forwards the chat. */
   escalationSummary?: string
+  /** Every bookable option in this reply, each shown as its own clickable card. */
+  quotes?: AIFormData[]
 }
 
 export const extractGuestCount = (input: string): number | undefined => {
@@ -251,7 +256,7 @@ export const generateLocalAIResponse = (
 
   if (isExplicitOffTopic || (!isCateringOrEventRelated && inputLower.length > 0)) {
     return {
-      text: `Mabuhay! I am Sinag Catering's AI Concierge, specifically dedicated to assisting you with our celebration packages, menu selections, event dates, pricing, and reservations in Baliwag, Bulacan.\n\nHow can I help you plan your upcoming celebration or catering banquet today?`,
+      text: `Mabuhay! I am Sinag Catering's AI Concierge, specifically dedicated to assisting you with our celebration packages, menu selections, event dates, pricing, and reservations in ${getBusiness().address}.\n\nHow can I help you plan your upcoming celebration or catering banquet today?`,
       escalate: false,
       isLiveApi: false,
     }
@@ -277,9 +282,9 @@ export const generateLocalAIResponse = (
 
     return {
       text: `Mabuhay! Here is our current kitchen menu selection for your celebration banquet:\n\n` +
-        `### 🍖 Signature Main Dishes\n${mainsList}\n\n` +
-        `### 🍝 Gourmet Pasta Courses\n${pastaList}\n\n` +
-        `### 🍹 Refreshing Beverages\n${drinkList}\n\n` +
+        `### Signature Main Dishes\n${mainsList}\n\n` +
+        `### Gourmet Pasta Courses\n${pastaList}\n\n` +
+        `### Refreshing Beverages\n${drinkList}\n\n` +
         `*All Sinag celebration packages include complete table setup, buffet presentation, and your choice of dishes from this live menu! Let me know your guest count for an instant package recommendation.*`,
       escalate: false,
       isLiveApi: false,
@@ -305,11 +310,11 @@ export const generateLocalAIResponse = (
   if (/refund|cancell?ation|cancel|rebook|resched/i.test(inputLower)) {
     return {
       text: `Mabuhay! Here is Sinag Catering's official **Cancellation & Refund Policy**:\n\n` +
-        `• **30 or more days before event:** **100% Full Refund** of the amount paid.\n` +
-        `• **14 to 29 days before event:** **50% Refund** of the amount paid.\n` +
-        `• **Less than 14 days before event:** **0% Refund (Non-refundable)** because kitchen preparations, chef scheduling, and event staff are already finalized.\n\n` +
-        `✦ **Date Rescheduling:** You can rebook to another available date with at least **14 days advance notice** via the Client Portal without forfeiting your downpayment.\n\n` +
-        `For specific reservation assistance, you can also manage your booking in the Client Portal or reach our Baliwag, Bulacan desk at **0928 714 4597**!`,
+        `• **${getBusiness().refundFullDays} or more days before event:** **100% Full Refund** of the amount paid.\n` +
+        `• **${getBusiness().refundPartialDays} to ${getBusiness().refundFullDays - 1} days before event:** **${getBusiness().refundPartialPercent}% Refund** of the amount paid.\n` +
+        `• **Less than ${getBusiness().refundPartialDays} days before event:** **0% Refund (Non-refundable)** because kitchen preparations, chef scheduling, and event staff are already finalized.\n\n` +
+        `**Date Rescheduling:** You can rebook to another available date with at least **${getBusiness().changeNoticeDays} days advance notice** via the Client Portal without forfeiting your downpayment.\n\n` +
+        `For specific reservation assistance, you can also manage your booking in the Client Portal or reach our ${getBusiness().address} desk at **${getBusiness().phone}**!`,
       escalate: false,
       isLiveApi: false,
     }
@@ -319,9 +324,10 @@ export const generateLocalAIResponse = (
   if (/downpayment|payment|deposit|gcash|maribank|how to pay|terms of payment/i.test(inputLower) && !/recommend|package|pax|guest|budget/i.test(inputLower)) {
     return {
       text: `Mabuhay! Here are our official **Payment & Reservation Terms**:\n\n` +
-        `• **50% Downpayment:** Required upon booking to officially reserve your date and lock in catering preparations.\n` +
-        `• **Remaining 50% Balance:** Settleable on or before the day of your event.\n` +
-        `• **Payment Channels:** We accept **QR Ph / GCash** (direct scan or transfer to Sunshine C. **0928 714 4597**), **MariBank / Bank Transfer**, and Cash.\n\n` +
+        `• **${getBusiness().downpaymentPercent}% Downpayment:** Required upon booking to officially reserve your date and lock in catering preparations.\n` +
+        `• **Remaining ${100 - getBusiness().downpaymentPercent}% Balance:** Settleable on or before the day of your event.\n` +
+        `• **Reserve Only:** ${peso(getBusiness().reservationFee)} fee holds your date for ${getBusiness().reserveHoldHours} hours (deducted from your total).\n` +
+        `• **Payment Channels:** We accept **QR Ph / GCash** (direct scan or transfer to ${getBusiness().gcashName} **${getBusiness().gcashNumber}**), **${getBusiness().bankName} / Bank Transfer** (${getBusiness().bankAccountName} **${getBusiness().bankAccountNumber}**), and Cash.\n\n` +
         `You can easily attach your transaction reference number and receipt screenshot directly during booking or in your Sinag Client Portal!`,
       escalate: false,
       isLiveApi: false,
@@ -331,8 +337,8 @@ export const generateLocalAIResponse = (
   // 5. FAQ: Lead Time
   if (/lead time|advance|notice|how early|how many days/i.test(inputLower) && !/recommend|package/i.test(inputLower)) {
     return {
-      text: `Mabuhay! We require a **minimum of 14 days advance notice** for all catering bookings.\n\n` +
-        `This ensures our culinary team in Baliwag, Bulacan can source the freshest ingredients, prepare custom styling, and coordinate complete event staffing for your celebration.`,
+      text: `Mabuhay! We require a **minimum of ${getBusiness().leadTimeDays} days advance notice** for all catering bookings.\n\n` +
+        `This ensures our culinary team in ${getBusiness().address} can source the freshest ingredients, prepare custom styling, and coordinate complete event staffing for your celebration.`,
       escalate: false,
       isLiveApi: false,
     }
@@ -341,10 +347,11 @@ export const generateLocalAIResponse = (
   // 6. FAQ: Location / Contact Info
   if (/where|location|address|contact|phone|call|situated|based/i.test(inputLower) && !/recommend|package/i.test(inputLower)) {
     return {
-      text: `Mabuhay! We are based in **Baliwag, Bulacan, Philippines** and cater celebrations across Bulacan and adjacent provinces.\n\n` +
-        `• **Hotline & GCash / MariBank:** 0928 714 4597\n` +
-        `• **Lead Time Rule:** Minimum 14 days advance booking\n` +
-        `• **Operating Hours:** Concierge desk open Mon–Sat, 9:00 AM – 7:00 PM\n\n` +
+      text: `Mabuhay! We are based in **${getBusiness().address}, Philippines** and cater celebrations across ${getBusiness().serviceArea}.\n\n` +
+        `• **Hotline:** ${getBusiness().phone}\n` +
+        `• **Email:** ${getBusiness().email}\n` +
+        `• **Lead Time Rule:** Minimum ${getBusiness().leadTimeDays} days advance booking\n` +
+        `• **Operating Hours:** ${getBusiness().hours}\n\n` +
         `Let us know if you'd like a package recommendation or quote for your upcoming event!`,
       escalate: false,
       isLiveApi: false,
@@ -429,9 +436,9 @@ export const generateLocalAIResponse = (
 
   if (isBudgetMaximizerActive && targetBudget) {
     selectedAddons = ['ADD-CANDY-01', 'ADD-HOST-02', 'ADD-DESSERT-03']
-    extraMain = Math.min(3, Math.max(1, Math.floor((targetBudget - baseCost) / (extraMainRate * count * 2))))
-    extraPasta = Math.min(2, Math.max(1, Math.floor((targetBudget - baseCost) / (extraPastaRate * count * 3))))
-    extraDessert = Math.min(2, Math.max(1, Math.floor((targetBudget - baseCost) / (extraDessertRate * count * 4))))
+    extraMain = Math.min(getBusiness().maxExtraMain, Math.max(1, Math.floor((targetBudget - baseCost) / (extraMainRate * count * 2))))
+    extraPasta = Math.min(getBusiness().maxExtraPasta, Math.max(1, Math.floor((targetBudget - baseCost) / (extraPastaRate * count * 3))))
+    extraDessert = Math.min(getBusiness().maxExtraDessert, Math.max(1, Math.floor((targetBudget - baseCost) / (extraDessertRate * count * 4))))
   } else {
     if (/candy|chocolate|fountain/i.test(inputLower)) selectedAddons.push('ADD-CANDY-01')
     if (/emcee|games|host/i.test(inputLower) && chosenPkg.id === 'budget-basic') selectedAddons.push('ADD-HOST-02')
@@ -453,7 +460,7 @@ export const generateLocalAIResponse = (
   }
 
   const total = calculateTotalForPackage(chosenPkg, count, selectedAddons, extraMain, extraPasta, extraDessert, liveAddons)
-  const downpayment = Math.round(total * 0.5)
+  const downpayment = computeDownpayment(total)
   const addonNames = selectedAddons.map((id) => {
     const live = liveAddons.find((a) => a.id === id)
     return live?.name || AI_CATALOG_ADDONS.find((a) => a.id === id)?.name || id
@@ -472,25 +479,25 @@ export const generateLocalAIResponse = (
     event_type: eventTypeObj.category,
     notes: isBudgetMaximizerActive && targetBudget
       ? `AI Budget Plan: ${formatMoney(total)} total within the ${formatMoney(targetBudget)} budget ceiling (${extraMain} extra mains, ${extraPasta} extra pastas, ${extraDessert} extra desserts) for ${eventTypeObj.label}.`
-      : `AI Recommendation for ${eventTypeObj.label} (${count} pax). 50% Downpayment: ${formatMoney(downpayment)}.`,
+      : `AI Recommendation for ${eventTypeObj.label} (${count} pax). ${getBusiness().downpaymentPercent}% Downpayment: ${formatMoney(downpayment)}.`,
   }
 
   if (isBudgetMaximizerActive && targetBudget) {
     const stylingSurplus = Math.max(0, targetBudget - total)
     return {
       text: `Mabuhay! For your **${eventTypeObj.label}** with **${count} guests** and a budget of **${formatMoney(targetBudget)}**, here's the best plan that stays **within your budget** (never above it):\n\n` +
-        `👑 **Recommended Flagship Plan:** **${chosenPkg.name}**\n` +
+        `**Recommended Flagship Plan:** **${chosenPkg.name}**\n` +
         `• **Base Package Tier:** ${formatMoney(baseCost)} (${count} Pax + ${FOOD_BUFFER_PAX} Buffer Pax)\n` +
         `• **Included Inclusions:** ${chosenPkg.inclusions.slice(0, 4).join(', ')}\n\n` +
-        `💎 **Curated Luxury Upgrades Bundled to Maximize Your Budget:**\n` +
+        `**Curated Luxury Upgrades Bundled to Maximize Your Budget:**\n` +
         (extraMain > 0 ? `• **${extraMain} Extra Main Dish${extraMain > 1 ? 'es' : ''} (+PHP ${extraMainRate}/pax):** +${formatMoney(extraMain * extraMainRate * count)}\n` : '') +
         (extraPasta > 0 ? `• **${extraPasta} Extra Pasta Course${extraPasta > 1 ? 's' : ''} (+PHP ${extraPastaRate}/pax):** +${formatMoney(extraPasta * extraPastaRate * count)}\n` : '') +
         (extraDessert > 0 ? `• **${extraDessert} Extra Dessert Course${extraDessert > 1 ? 's' : ''} (+PHP ${extraDessertRate}/pax):** +${formatMoney(extraDessert * extraDessertRate * count)}\n` : '') +
         (addonNames.length > 0 ? `• **Celebration Add-ons:** ${addonNames.join(', ')}\n` : '') +
         (stylingSurplus > 0 ? `• **Unused budget:** ${formatMoney(stylingSurplus)} stays with you — the plan is within your ${formatMoney(targetBudget)} ceiling.\n\n` : '\n') +
-        `📊 **Calculated Package Total:** **${formatMoney(total)}**\n` +
-        `🔒 **Required 50% Downpayment:** **${formatMoney(downpayment)}** (Locks in your date)\n` +
-        `🏷️ **Event Category:** **${eventTypeObj.category}**\n\n` +
+        `**Calculated Package Total:** **${formatMoney(total)}**\n` +
+        `**Required ${getBusiness().downpaymentPercent}% Downpayment:** **${formatMoney(downpayment)}** (Locks in your date)\n` +
+        `**Event Category:** **${eventTypeObj.category}**\n\n` +
         `Click **"Auto-Fill Booking Wizard with AI Plan"** below to load this plan into your reservation. Want more? Ask me **"What if I increase my budget?"**`,
       escalate: false,
       pkgId: chosenPkg.id,
@@ -502,7 +509,7 @@ export const generateLocalAIResponse = (
 
   return {
     text: `Mabuhay! For your **${eventTypeObj.label}**, I recommend the **${chosenPkg.name}** for **${count} guests**.\n\n` +
-      `• **Estimated Total:** ${formatMoney(total)} (50% Downpayment: ${formatMoney(downpayment)})\n` +
+      `• **Estimated Total:** ${formatMoney(total)} (${getBusiness().downpaymentPercent}% Downpayment: ${formatMoney(downpayment)})\n` +
       `• **Menu Inclusions:** ${chosenPkg.inclusions.slice(0, 3).join(', ')} and more\n` +
       (chosenPkg.entertainment.length > 0 ? `• **Entertainment Included:** ${chosenPkg.entertainment.join(', ')}\n` : '') +
       (addonNames.length > 0 ? `• **Selected Add-ons:** ${addonNames.join(', ')}\n` : '') +
@@ -529,6 +536,10 @@ export interface ChatTurn {
 }
 
 export interface AIRuntimeContext {
+  /** Live catalog already loaded by the site (kept in sync by realtime). */
+  packages?: CateringPackage[]
+  menuItems?: any[]
+  addons?: any[]
   bookings?: Booking[]
   blockedDates?: string[]
   currentUser?: { name?: string; email?: string; role?: string } | null
@@ -537,9 +548,10 @@ export interface AIRuntimeContext {
 const HISTORY_LIMIT = 20
 const MAX_TOOL_ROUNDS = 5
 const GEMINI_MODELS = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-2.5-flash']
-const MAX_EXTRA_MAIN = 3
-const MAX_EXTRA_PASTA = 2
-const MAX_EXTRA_DESSERT = 2
+const maxExtras = () => {
+  const b = getBusiness()
+  return { main: b.maxExtraMain, pasta: b.maxExtraPasta, dessert: b.maxExtraDessert }
+}
 
 const peso = (n: number) => `₱${Math.round(n).toLocaleString('en-PH')}`
 
@@ -583,7 +595,30 @@ interface ToolState {
   bookings: Booking[]
   blockedDates: string[]
   lastQuote?: AIFormData & { within_budget: boolean }
+  /** Options produced by compare_packages / match_budget (one card each). */
+  optionQuotes: AIFormData[]
   escalationSummary?: string
+}
+
+const makeOptionQuote = (state: ToolState, pkg: CateringPackage, guests: number): AIFormData => {
+  const total = calculateTotalForPackage(pkg, guests, [], 0, 0, 0, state.liveAddons)
+  return {
+    package_id: pkg.id,
+    package_name: pkg.name,
+    guest_count: guests,
+    estimated_total: total,
+    selected_menu: pkg.inclusions.slice(0, 5),
+    addons: [],
+    extra_main_count: 0,
+    extra_pasta_count: 0,
+    extra_dessert_count: 0,
+    notes: `AI quote: ${pkg.name}, ${guests} guests, ${formatMoney(total)}.`,
+  }
+}
+
+const pushOption = (state: ToolState, quote: AIFormData) => {
+  state.optionQuotes = state.optionQuotes.filter((q) => q.package_id !== quote.package_id)
+  state.optionQuotes.push(quote)
 }
 
 const findPackage = (state: ToolState, id: unknown): CateringPackage | undefined => {
@@ -607,9 +642,10 @@ const toolGetQuote = (state: ToolState, args: Record<string, unknown>) => {
     return { error: 'Unknown package_id.', valid_package_ids: state.packages.map((p) => p.id) }
   }
   const guests = clampInt(args.guest_count, 1, 1000, pkg.defaultPax || 50)
-  const extraMain = clampInt(args.extra_main_count, 0, MAX_EXTRA_MAIN)
-  const extraPasta = clampInt(args.extra_pasta_count, 0, MAX_EXTRA_PASTA)
-  const extraDessert = clampInt(args.extra_dessert_count, 0, MAX_EXTRA_DESSERT)
+  const max = maxExtras()
+  const extraMain = clampInt(args.extra_main_count, 0, max.main)
+  const extraPasta = clampInt(args.extra_pasta_count, 0, max.pasta)
+  const extraDessert = clampInt(args.extra_dessert_count, 0, max.dessert)
 
   const flatAddons = state.addons.filter((a) => !isBlueBoxFoodAddon(a))
   const requested = Array.isArray(args.addon_ids) ? args.addon_ids.map(String) : []
@@ -659,17 +695,17 @@ const toolGetQuote = (state: ToolState, args: Record<string, unknown>) => {
     guest_count: guests,
     breakdown: lines.map((l) => ({ item: l.item, amount: peso(l.amount) })),
     total: peso(total),
-    downpayment_50_percent: peso(Math.round(total * 0.5)),
-    reserve_only_fee: `${peso(RESERVATION_FEE)} (holds the date 48 hours, deducted from the total)`,
+    downpayment: `${peso(computeDownpayment(total))} (${getBusiness().downpaymentPercent}%)`,
+    reserve_only_fee: `${peso(RESERVATION_FEE)} (holds the date ${getBusiness().reserveHoldHours} hours, deducted from the total)`,
     below_minimum_tier: !isPerHead && guests < (pkg.tiers[0]?.pax ?? 0) ? `Under ${pkg.tiers[0]?.pax} guests is still priced at the ${pkg.tiers[0]?.pax}-pax tier.` : undefined,
-    capped_extras: (Number(args.extra_main_count) > MAX_EXTRA_MAIN || Number(args.extra_pasta_count) > MAX_EXTRA_PASTA || Number(args.extra_dessert_count) > MAX_EXTRA_DESSERT)
-      ? `Extras are limited to ${MAX_EXTRA_MAIN} mains, ${MAX_EXTRA_PASTA} pasta, ${MAX_EXTRA_DESSERT} desserts.`
+    capped_extras: (Number(args.extra_main_count) > max.main || Number(args.extra_pasta_count) > max.pasta || Number(args.extra_dessert_count) > max.dessert)
+      ? `Extras are limited to ${max.main} mains, ${max.pasta} pasta, ${max.dessert} desserts.`
       : undefined,
     unknown_addon_ids: unknownAddons.length > 0 ? unknownAddons : undefined,
     budget_ceiling: ceiling !== undefined ? peso(ceiling) : undefined,
     within_budget: withinBudget,
     note: withinBudget
-      ? 'Use these exact amounts. A quote card with an Auto-Fill button is shown under your reply.'
+      ? 'Use these exact amounts. A quote card with a Book button is shown under your reply.'
       : 'This is OVER the customer\'s budget. Do not present it as a recommendation; say it exceeds the budget and offer cheaper options (fewer guests/extras or another package) unless they ask to increase the budget.',
   }
 }
@@ -701,6 +737,14 @@ const toolMatchBudget = (state: ToolState, args: Record<string, unknown>) => {
     }
   })
 
+  const activeCeiling = state.budgetIncreaseAsked ? undefined : (state.budgetCeiling ?? budget)
+  for (const pkg of state.packages) {
+    const count = guests || maxGuestsWithinBudget(state, pkg, budget)
+    if (count <= 0) continue
+    const quote = makeOptionQuote(state, pkg, count)
+    if (activeCeiling === undefined || quote.estimated_total <= activeCeiling) pushOption(state, quote)
+  }
+
   let best: string | undefined
   if (guests) {
     const fitting = state.packages
@@ -723,6 +767,11 @@ const toolMatchBudget = (state: ToolState, args: Record<string, unknown>) => {
 
 const toolComparePackages = (state: ToolState, args: Record<string, unknown>) => {
   const guests = clampInt(args.guest_count, 1, 1000, 50)
+  const ceiling = state.budgetIncreaseAsked ? undefined : state.budgetCeiling
+  for (const pkg of state.packages) {
+    const quote = makeOptionQuote(state, pkg, guests)
+    if (ceiling === undefined || quote.estimated_total <= ceiling) pushOption(state, quote)
+  }
   return {
     guest_count: guests,
     packages: state.packages.map((pkg) => {
@@ -731,7 +780,7 @@ const toolComparePackages = (state: ToolState, args: Record<string, unknown>) =>
         package_id: pkg.id,
         package: pkg.name,
         total: peso(total),
-        downpayment_50_percent: peso(Math.round(total * 0.5)),
+        downpayment: `${peso(computeDownpayment(total))} (${getBusiness().downpaymentPercent}%)`,
         entertainment: pkg.entertainment.length > 0 ? pkg.entertainment.join(', ') : 'none',
       }
     }),
@@ -745,17 +794,18 @@ const toolCheckDate = (state: ToolState, args: Record<string, unknown>) => {
   const weekday = new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
   const base = { date, weekday, days_from_today: days }
   if (days < 0) return { ...base, status: 'past', can_book: false }
-  if (days < 14) return { ...base, status: 'too_soon', can_book: false, reason: 'Bookings need at least 14 days advance notice.', earliest_bookable: addDaysToDateStr(manilaToday(), 14) }
+  const lead = getBusiness().leadTimeDays
+  if (days < lead) return { ...base, status: 'too_soon', can_book: false, reason: `Bookings need at least ${lead} days advance notice.`, earliest_bookable: addDaysToDateStr(manilaToday(), lead) }
   const dayBookings = state.bookings.filter((b) => b.eventDate === date && isBookingOccupyingDate(b))
   if (dayBookings.some((b) => !isReserveHold(b))) return { ...base, status: 'reserved', can_book: false }
-  if (dayBookings.length > 0) return { ...base, status: 'temporary_hold', can_book: false, reason: 'Someone has a 48-hour hold on this date; it may open up if unpaid.' }
+  if (dayBookings.length > 0) return { ...base, status: 'temporary_hold', can_book: false, reason: `Someone has a ${getBusiness().reserveHoldHours}-hour hold on this date; it may open up if unpaid.` }
   if (state.blockedDates.includes(date)) return { ...base, status: 'blocked', can_book: false }
   return { ...base, status: 'available', can_book: true, note: 'Available on the live calendar right now; it is only locked once booked.' }
 }
 
 const toolForwardToStaff = (state: ToolState, args: Record<string, unknown>) => {
   state.escalationSummary = String(args.summary || '').slice(0, 1000) || 'Customer asked to talk to staff.'
-  return { forwarded: true, note: 'Tell the customer the Sinag team will get back to them; give the hotline 0928 714 4597 for urgent concerns.' }
+  return { forwarded: true, note: `Tell the customer the Sinag team will get back to them; give the hotline ${getBusiness().phone} for urgent concerns.` }
 }
 
 const runTool = (state: ToolState, name: string, args: Record<string, unknown>): Record<string, unknown> => {
@@ -773,7 +823,9 @@ const runTool = (state: ToolState, name: string, args: Record<string, unknown>):
   }
 }
 
-const TOOL_DECLARATIONS = [
+const toolDeclarations = () => {
+  const max = maxExtras()
+  return [
   {
     name: 'get_quote',
     description: 'Compute the exact price for a specific setup: package, guest count, optional extra courses and flat add-ons. Use for ANY "how much / magkano / what if I add" question. Never calculate prices yourself.',
@@ -782,9 +834,9 @@ const TOOL_DECLARATIONS = [
       properties: {
         package_id: { type: 'STRING', description: 'Package id from the catalog.' },
         guest_count: { type: 'INTEGER' },
-        extra_main_count: { type: 'INTEGER', description: `Extra main dishes, 0-${MAX_EXTRA_MAIN} (charged per guest).` },
-        extra_pasta_count: { type: 'INTEGER', description: `Extra pasta dishes, 0-${MAX_EXTRA_PASTA} (charged per guest).` },
-        extra_dessert_count: { type: 'INTEGER', description: `Extra dessert courses, 0-${MAX_EXTRA_DESSERT} (charged per guest).` },
+        extra_main_count: { type: 'INTEGER', description: `Extra main dishes, 0-${max.main} (charged per guest).` },
+        extra_pasta_count: { type: 'INTEGER', description: `Extra pasta dishes, 0-${max.pasta} (charged per guest).` },
+        extra_dessert_count: { type: 'INTEGER', description: `Extra dessert courses, 0-${max.dessert} (charged per guest).` },
         addon_ids: { type: 'ARRAY', items: { type: 'STRING' }, description: 'Flat add-on ids from the catalog.' },
         event_type: { type: 'STRING', enum: [...EVENT_CATEGORIES] },
       },
@@ -814,7 +866,7 @@ const TOOL_DECLARATIONS = [
   },
   {
     name: 'check_date',
-    description: 'Check if an event date is open on the live booking calendar (also enforces the 14-day lead time).',
+    description: `Check if an event date is open on the live booking calendar (also enforces the ${getBusiness().leadTimeDays}-day lead time).`,
     parameters: {
       type: 'OBJECT',
       properties: { date: { type: 'STRING', description: 'YYYY-MM-DD' } },
@@ -831,6 +883,7 @@ const TOOL_DECLARATIONS = [
     },
   },
 ]
+}
 
 // ---------------------------------------------------------------------------
 // System knowledge
@@ -878,7 +931,12 @@ const buildSystemPrompt = (
     ? `The customer is signed in as ${user.name || user.email}.\n${describeUserBookings(state.bookings, user.email)}`
     : 'The customer is NOT signed in (booking requires signing in or creating an account, email or Google).'
 
-  return `You are Sinag Catering's chat assistant on sinagscater.online — Sinag's Catering Services from Baliwag, Bulacan (full celebration catering, event styling, freebies and entertainment).
+  const biz = getBusiness()
+  const termsText = getTermsSections()
+    .map((sec) => `  ${sec.heading}: ${[...(sec.paragraphs ?? []), ...(sec.items ?? [])].join(' ')}`)
+    .join('\n')
+
+  return `You are ${biz.businessName}'s chat assistant on the Sinag Catering website — based in ${biz.address} (full celebration catering, event styling, freebies and entertainment).
 
 TODAY: ${manilaToday()} (Asia/Manila). When a customer mentions a date ("Dec 12", "next Saturday"), turn it into YYYY-MM-DD (the next upcoming one) before using check_date.
 
@@ -888,7 +946,7 @@ HOW YOU TALK
 - Keep replies short: 1–4 short sentences, or a compact list only when showing a price breakdown or options.
 - Ask ONE follow-up question at a time to move the plan forward (event type → guests → budget → date → book).
 - Remember everything said earlier in this chat. Never re-ask something already answered. Only greet once at the start; don't open every reply with "Mabuhay".
-- Light emoji is fine (max 1–2 per reply). Use **bold** for key numbers. No headings.
+- Do NOT use emojis or emoticons at all. Use **bold** for key numbers. No headings.
 
 WHAT THE CUSTOMER HAS ALREADY TOLD YOU: ${known || 'nothing specific yet'}.
 ${signedIn}
@@ -897,32 +955,32 @@ PRICES — HARD RULES
 - NEVER calculate a total yourself. For any total, "magkano", add-on, extra course, "what if" or budget question, call a tool (get_quote, match_budget, compare_packages) and use its numbers exactly.
 - You may mention the tier prices listed below as "starts at", nothing else without a tool.
 - Budget ceiling: never recommend a setup above the customer's stated budget unless they explicitly ask about increasing it. If nothing fits, say so kindly and give the closest fit (max guests per package from match_budget).
-- When you give a quote, mention the 50% downpayment. A quote card with an "Auto-Fill Booking" button appears under your reply automatically for the last get_quote you ran — you can tell them to tap it.
+- When you give a quote, mention the ${biz.downpaymentPercent}% downpayment. Under your reply, every package option from your tool results appears as its own card with a "Book this" button (just one card if you ran get_quote) — tell them to tap the one they like. Keep your text consistent with the tool results.
 - Quotes are estimates; Sinag confirms the final price on booking.
 - Discounts, custom menus, dishes not on the menu, venue rental, travel fees for far locations: don't invent answers — offer to forward to staff (forward_to_staff).
 
 PACKAGES (price is per guest-count tier; each tier serves ${FOOD_BUFFER_PAX} extra buffer guests free; beyond the biggest tier + buffer, each excess guest is ${peso(EXCESS_PAX_RATE)}):
 ${pkgText}
 
-MENU (every package: choose 3 main dishes + 1 pasta + 1 drink, plus dessert):
+MENU (every package: choose ${biz.includedMains} main dishes + ${biz.includedPastas} pasta + ${biz.includedDrinks} drink${biz.includedDrinks > 1 ? 's' : ''}, plus dessert):
 - Mains: ${listMenu('main', MAIN_DISHES)}
 - Pasta: ${listMenu('pasta', PASTA_DISHES)}
 - Drinks: ${listMenu('drink', [...DRINK_OPTIONS])}
-- Extra courses (per guest): extra main ${peso(extraMainRate)}, extra pasta ${peso(extraPastaRate)}, extra dessert ${peso(extraDessertRate)} (max ${MAX_EXTRA_MAIN}/${MAX_EXTRA_PASTA}/${MAX_EXTRA_DESSERT}).
+- Extra courses (per guest): extra main ${peso(extraMainRate)}, extra pasta ${peso(extraPastaRate)}, extra dessert ${peso(extraDessertRate)} (max ${biz.maxExtraMain}/${biz.maxExtraPasta}/${biz.maxExtraDessert}).
 FLAT ADD-ONS:
 ${flatAddons || '• none listed'}
 
 HOW THE WEBSITE WORKS (explain these when asked, and guide them step by step)
 - Pages: Home (About, Services & Packages, Contact), Gallery (birthdays, debuts, weddings, christenings, special/corporate events, food), Testimonials, "Check Availability" calendar, Book Now, Sign In, My Bookings.
 - Accounts: sign up / sign in with email + password or "Continue with Google". Forgot password sends a reset email. First sign-in asks them to accept the Terms & Conditions.
-- Booking Wizard (Book Now) — 5 steps: 1) Select Package, 2) Customize (pick 3 mains + 1 pasta + 1 drink, add extra courses and add-ons), 3) Pick Date (calendar; minimum 14 days ahead; reserved/held/blocked dates can't be picked), 4) Your Details (event category, contact and event info, payment term & method), 5) Review & Submit.
+- Booking Wizard (Book Now) — 5 steps: 1) Select Package, 2) Customize (pick ${biz.includedMains} mains + ${biz.includedPastas} pasta + ${biz.includedDrinks} drink${biz.includedDrinks > 1 ? 's' : ''}, add extra courses and add-ons), 3) Pick Date (calendar; minimum ${biz.leadTimeDays} days ahead; reserved/held/blocked dates can't be picked), 4) Your Details (event category, contact and event info, payment term & method), 5) Review & Submit.
 - Event categories: Kids Birthday, Debut, Wedding, Others (baptism/christening, corporate, anniversary, reunion, thanksgiving…).
-- Payment terms: 100% full payment, 50% downpayment, or "Reserve Only" (${peso(RESERVATION_FEE)} reservation fee that holds the date for 48 hours; deducted from the total; if unpaid after 48 hours the hold expires, it's forfeited and the date is released). Remaining balance is due on or before the event day.
-- Payment methods: QR Ph / GCash and MariBank / bank transfer (GCash/MariBank: Sunshine C., 0928 714 4597), plus online checkout via PayMongo. Uploading the receipt is optional at checkout — they can upload it later in My Bookings; payments show "Pending Verification" until staff confirm.
-- My Bookings (client portal): see booking status and payment status, upload receipts, view the quotation invoice and the catering contract, rebook to another open date (14+ days notice, no forfeit), and cancel with a reason. Notification bell shows updates; reminders go out 7 days before the event.
-- Cancellation & refund (based on amount paid): 30+ days before event → 100%; 14–29 days → 50%; under 14 days → no refund. Refund requests are reviewed by the admin.
-- Terms: client provides the crew meal; changes to venue/date/theme/guest count need 14 days notice; damages to equipment/decor are charged; not liable for delays from disasters/outages/etc.; service follows the agreed duration; unpaid balance may suspend service; data handled under the Data Privacy Act (RA 10173).
-- Contact: hotline 0928 714 4597, email cruzsunshine19@yahoo.com, concierge hours Mon–Sat 9:00 AM – 7:00 PM, based in Baliwag, Bulacan.
+- Payment terms: 100% full payment, ${biz.downpaymentPercent}% downpayment, or "Reserve Only" (${peso(biz.reservationFee)} reservation fee that holds the date for ${biz.reserveHoldHours} hours; deducted from the total; if unpaid after ${biz.reserveHoldHours} hours the hold expires, it's forfeited and the date is released). Remaining balance is due on or before the event day.
+- Payment methods: QR Ph / GCash (${biz.gcashName}, ${biz.gcashNumber}) and ${biz.bankName} / bank transfer (${biz.bankAccountName}, ${biz.bankAccountNumber}), plus online checkout via PayMongo. Uploading the receipt is optional at checkout — they can upload it later in My Bookings; payments show "Pending Verification" until staff confirm.
+- My Bookings (client portal): see booking status and payment status, upload receipts, view the quotation invoice and the catering contract, rebook to another open date (${biz.changeNoticeDays}+ days notice, no forfeit), and cancel with a reason. Notification bell shows updates; reminders go out ${biz.reminderDays} days before the event.
+- Cancellation & refund (based on amount paid): ${refundPolicySummary(biz)}. Refund requests are reviewed by the admin.
+- Terms & Conditions (official text, summarize when asked):\n${termsText}
+- Contact: hotline ${biz.phone}, email ${biz.email}, hours ${biz.hours}, based in ${biz.address}, serving ${biz.serviceArea}.
 
 SCOPE
 - Only help with Sinag Catering: events, packages, menu, pricing, dates, booking, payments, the website and their own bookings.
@@ -999,7 +1057,10 @@ export const querySinagAI = async (
   history: ChatTurn[] = [],
   ctx: AIRuntimeContext = {},
 ): Promise<AIResponse> => {
-  const { packages, menuItems, addons: liveAddons } = await fetchLiveCatalog()
+  const hasLiveCatalog = Boolean(ctx.packages && ctx.packages.length > 0)
+  const { packages, menuItems, addons: liveAddons } = hasLiveCatalog
+    ? { packages: ctx.packages!, menuItems: ctx.menuItems ?? [], addons: ctx.addons ?? [] }
+    : await fetchLiveCatalog()
 
   const facts = summarizeConversationFacts(userInput, history)
   const state: ToolState = {
@@ -1010,6 +1071,7 @@ export const querySinagAI = async (
     budgetIncreaseAsked: isBudgetIncreaseRequest(userInput),
     bookings: ctx.bookings ?? [],
     blockedDates: ctx.blockedDates ?? [],
+    optionQuotes: [],
   }
 
   const rawKey = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined) ||
@@ -1036,7 +1098,7 @@ export const querySinagAI = async (
       const result = await callGemini(apiKey, models, {
         systemInstruction: { parts: [{ text: systemPrompt }] },
         contents,
-        tools: [{ functionDeclarations: TOOL_DECLARATIONS }],
+        tools: [{ functionDeclarations: toolDeclarations() }],
         generationConfig: { temperature: 0.6 },
       })
       if (!result) break
@@ -1068,20 +1130,25 @@ export const querySinagAI = async (
     if (!finalText) return localFallback()
 
     const { text, suggestions } = extractSuggestions(finalText)
+    const eventType = facts.eventCategory || detectEventType(userInput).category
     const quote = state.lastQuote
-    const showCard = quote && quote.within_budget
-    let formData: AIFormData | undefined
-    if (showCard && quote) {
+    let quotes: AIFormData[] = []
+    if (quote && quote.within_budget) {
       const { within_budget: _ignored, ...rest } = quote
       void _ignored
-      formData = { ...rest, event_type: rest.event_type || facts.eventCategory || detectEventType(userInput).category }
+      quotes = [rest]
+    } else if (!quote) {
+      quotes = state.optionQuotes
     }
+    quotes = quotes.map((q) => ({ ...q, event_type: q.event_type || eventType }))
+    const formData = quotes[0]
 
     return {
       text,
       suggestions,
       escalate: Boolean(state.escalationSummary),
       escalationSummary: state.escalationSummary,
+      quotes,
       pkgId: formData?.package_id,
       guestCount: formData?.guest_count,
       isLiveApi: true,

@@ -1,6 +1,8 @@
 import type { Booking, NotificationLog } from '../types'
 import { supabase } from './supabase'
 import { formatMoney } from '../data/packages'
+import { getBusiness } from './businessSettings'
+import { computeDownpayment } from './bookingRules'
 
 const LOCAL_STORAGE_LOGS_KEY = 'sinag_notification_logs'
 if (typeof localStorage !== 'undefined') {
@@ -568,20 +570,20 @@ export const sendBookingSubmissionNotifications = async (booking: Booking) => {
   const isReserveFee = booking.paymentTerm === 'reserve'
   const isFullPayment = booking.paymentTerm === 'full' || (booking.downpaymentAmount && booking.downpaymentAmount >= booking.totalPrice)
   const currency = booking.currency ?? 'PHP'
-  const payableAmount = isFullPayment ? booking.totalPrice : (booking.downpaymentAmount || Math.round(booking.totalPrice * 0.5))
+  const payableAmount = isFullPayment ? booking.totalPrice : (booking.downpaymentAmount || computeDownpayment(booking.totalPrice))
   const remainingBalance = isFullPayment ? 0 : Math.max(0, booking.totalPrice - payableAmount)
-  const paymentTermLabel = isFullPayment ? '100% Full Payment Upfront' : isReserveFee ? 'Reservation Fee' : '50% Required Downpayment'
+  const paymentTermLabel = isFullPayment ? '100% Full Payment Upfront' : isReserveFee ? 'Reservation Fee' : `${getBusiness().downpaymentPercent}% Required Downpayment`
 
   const smsText = isReserveFee
-    ? `[Sinag Catering] Mabuhay ${booking.customerName}! Your reservation fee of ${formatMoney(payableAmount, currency)} for booking #${booking.id} (${booking.eventDate}) was received and is being verified. Your date is reserved. Contact: 0928 714 4597.`
+    ? `[Sinag Catering] Mabuhay ${booking.customerName}! Your reservation fee of ${formatMoney(payableAmount, currency)} for booking #${booking.id} (${booking.eventDate}) was received and is being verified. Your date is reserved. Contact: ${getBusiness().phone}.`
     : isFullPayment
-    ? `[Sinag Catering] Mabuhay ${booking.customerName}! Your booking request #${booking.id} for ${booking.eventDate} (${booking.guestCount} pax) has been submitted with 100% Full Payment: ${formatMoney(payableAmount, currency)} (Zero Balance on event day). Contact: 0928 714 4597.`
-    : `[Sinag Catering] Mabuhay ${booking.customerName}! Your booking request #${booking.id} for ${booking.eventDate} (${booking.guestCount} pax) has been submitted. 50% Downpayment: ${formatMoney(payableAmount, currency)}. Contact: 0928 714 4597.`
+    ? `[Sinag Catering] Mabuhay ${booking.customerName}! Your booking request #${booking.id} for ${booking.eventDate} (${booking.guestCount} pax) has been submitted with 100% Full Payment: ${formatMoney(payableAmount, currency)} (Zero Balance on event day). Contact: ${getBusiness().phone}.`
+    : `[Sinag Catering] Mabuhay ${booking.customerName}! Your booking request #${booking.id} for ${booking.eventDate} (${booking.guestCount} pax) has been submitted. ${getBusiness().downpaymentPercent}% Downpayment: ${formatMoney(payableAmount, currency)}. Contact: ${getBusiness().phone}.`
   
   await sendSemaphoreSMS(booking.phone, smsText, booking.id)
 
   const emailSubject = `Sinag Catering: Booking Request Received #${booking.id}`
-  const emailBody = `Dear ${booking.customerName},\n\nThank you for choosing Sinag's Catering Services!\n\nBooking ID: ${booking.id}\nEvent Type: ${booking.eventType}\nEvent Date: ${booking.eventDate}\nGuest Count: ${booking.guestCount} pax\nTotal Estimate: ${formatMoney(booking.totalPrice, currency)}\nPayment Term: ${paymentTermLabel}\n${booking.gcashRefNumber || booking.proofOfPaymentUrl ? 'Amount Transferred' : 'Amount Due (upload receipt in My Bookings)'}: ${formatMoney(payableAmount, currency)}\nRemaining Balance: ${isFullPayment ? '₱0.00 (Fully Settled / Zero Balance)' : formatMoney(remainingBalance, currency) + ' (Payable on event day)'}\nPayment Method: ${booking.paymentMethod?.toUpperCase() || 'GCash / QR Ph'}\nReference No.: ${booking.gcashRefNumber || 'Pending'}\n\nOur concierge desk is reviewing your reservation. Once your payment is verified, your date will be locked.\n\nWarm regards,\nSinag Catering Services Team\nBaliwag, Bulacan | Hotline: 0928 714 4597`
+  const emailBody = `Dear ${booking.customerName},\n\nThank you for choosing ${getBusiness().businessName}!\n\nBooking ID: ${booking.id}\nEvent Type: ${booking.eventType}\nEvent Date: ${booking.eventDate}\nGuest Count: ${booking.guestCount} pax\nTotal Estimate: ${formatMoney(booking.totalPrice, currency)}\nPayment Term: ${paymentTermLabel}\n${booking.gcashRefNumber || booking.proofOfPaymentUrl ? 'Amount Transferred' : 'Amount Due (upload receipt in My Bookings)'}: ${formatMoney(payableAmount, currency)}\nRemaining Balance: ${isFullPayment ? '₱0.00 (Fully Settled / Zero Balance)' : formatMoney(remainingBalance, currency) + ' (Payable on event day)'}\nPayment Method: ${booking.paymentMethod?.toUpperCase() || 'GCash / QR Ph'}\nReference No.: ${booking.gcashRefNumber || 'Pending'}\n\nOur concierge desk is reviewing your reservation. Once your payment is verified, your date will be locked.\n\nWarm regards,\nSinag Catering Services Team\nBaliwag, Bulacan | Hotline: ${getBusiness().phone}`
 
   await sendTransactionalEmail(booking.email, emailSubject, emailBody, booking.id, {
     customer_name: booking.customerName,
@@ -605,14 +607,14 @@ export const sendBookingSubmissionNotifications = async (booking: Booking) => {
  */
 export const sendReserveHoldNotifications = async (booking: Booking) => {
   const currency = booking.currency ?? 'PHP'
-  const smsText = `Sinag Catering: Your temporary hold for booking ${booking.id} is active. Please settle your payment within 2 days to secure your date. Check your client portal for details.`
+  const smsText = `Sinag Catering: Your temporary hold for booking ${booking.id} is active. Please settle your payment within ${getBusiness().reserveHoldHours} hours to secure your date. Check your client portal for details.`
   const fee = booking.downpaymentAmount || 2000
   await sendSemaphoreSMS(booking.phone, smsText, booking.id)
 
-  const expiry = booking.holdExpiresAt ? new Date(booking.holdExpiresAt) : new Date(Date.now() + 48 * 60 * 60 * 1000)
+  const expiry = booking.holdExpiresAt ? new Date(booking.holdExpiresAt) : new Date(Date.now() + getBusiness().reserveHoldHours * 60 * 60 * 1000)
   const expiryText = expiry.toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' })
   const emailSubject = `Sinag Catering: Your date is temporarily held (#${booking.id})`
-  const emailBody = `Dear ${booking.customerName},\n\nYour date is temporarily held! Please pay the ${formatMoney(fee, currency)} reservation fee within 2 days (48 hours) to lock in your reservation, or your booking will automatically expire. The fee is deducted from your package total.\n\nBooking ID: ${booking.id}\nEvent Type: ${booking.eventType}\nEvent Date: ${booking.eventDate}\nGuest Count: ${booking.guestCount} pax\nPackage Total: ${formatMoney(booking.totalPrice, currency)}\nReservation Fee Due: ${formatMoney(fee, currency)}\nHold Expires: ${expiryText} (Philippine time)\n\nUpload your payment receipt from My Bookings in the client portal.\n\nWarm regards,\nSinag Catering Services Team\nBaliwag, Bulacan | Hotline: 0928 714 4597`
+  const emailBody = `Dear ${booking.customerName},\n\nYour date is temporarily held! Please pay the ${formatMoney(fee, currency)} reservation fee within ${getBusiness().reserveHoldHours} hours to lock in your reservation, or your booking will automatically expire. The fee is deducted from your package total.\n\nBooking ID: ${booking.id}\nEvent Type: ${booking.eventType}\nEvent Date: ${booking.eventDate}\nGuest Count: ${booking.guestCount} pax\nPackage Total: ${formatMoney(booking.totalPrice, currency)}\nReservation Fee Due: ${formatMoney(fee, currency)}\nHold Expires: ${expiryText} (Philippine time)\n\nUpload your payment receipt from My Bookings in the client portal.\n\nWarm regards,\nSinag Catering Services Team\nBaliwag, Bulacan | Hotline: ${getBusiness().phone}`
 
   await sendTransactionalEmail(booking.email, emailSubject, emailBody, booking.id, {
     customer_name: booking.customerName,
@@ -644,16 +646,16 @@ export const sendPaymentVerificationNotifications = async (booking: Booking) => 
     await sendTransactionalEmail(
       booking.email,
       `Sinag Catering: Reservation Fee Verified – Date Reserved #${booking.id}`,
-      `Mabuhay ${booking.customerName}!\n\nYour reservation fee of ${formatMoney(paid, currency)} has been verified and your event date (${booking.eventDate}) is now reserved.\n\nBooking Reference: #${booking.id}\nPackage: ${booking.packageName}\nTotal: ${formatMoney(booking.totalPrice, currency)}\nRemaining Balance: ${formatMoney(balance, currency)} (payable on or before the event day)\n\nYou can upload further payments anytime from My Bookings.\n\nThank you for trusting Sinag's Catering Services!\nHotline: 0928 714 4597`,
+      `Mabuhay ${booking.customerName}!\n\nYour reservation fee of ${formatMoney(paid, currency)} has been verified and your event date (${booking.eventDate}) is now reserved.\n\nBooking Reference: #${booking.id}\nPackage: ${booking.packageName}\nTotal: ${formatMoney(booking.totalPrice, currency)}\nRemaining Balance: ${formatMoney(balance, currency)} (payable on or before the event day)\n\nYou can upload further payments anytime from My Bookings.\n\nThank you for trusting Sinag's Catering Services!\nHotline: ${getBusiness().phone}`,
       booking.id,
     )
     return
   }
   const isFullPayment = booking.paymentTerm === 'full' || (booking.downpaymentAmount && booking.downpaymentAmount >= booking.totalPrice)
   const currency = booking.currency ?? 'PHP'
-  const verifiedAmount = isFullPayment ? booking.totalPrice : (booking.downpaymentAmount || Math.round(booking.totalPrice * 0.5))
+  const verifiedAmount = isFullPayment ? booking.totalPrice : (booking.downpaymentAmount || computeDownpayment(booking.totalPrice))
   const remainingBalance = isFullPayment ? 0 : Math.max(0, booking.totalPrice - verifiedAmount)
-  const paymentTermLabel = isFullPayment ? '100% Full Payment' : '50% Downpayment'
+  const paymentTermLabel = isFullPayment ? '100% Full Payment' : `${getBusiness().downpaymentPercent}% Downpayment`
 
   const smsText = isFullPayment
     ? `[Sinag Catering] Payment Verified! 100% Full Payment of ${formatMoney(verifiedAmount, currency)} for Booking #${booking.id} (${booking.eventDate}) is verified. Your date is locked with ₱0 balance on event day! Salamat po!`
@@ -662,7 +664,7 @@ export const sendPaymentVerificationNotifications = async (booking: Booking) => 
   await sendSemaphoreSMS(booking.phone, smsText, booking.id)
 
   const emailSubject = `Sinag Catering: Payment Verified & Booking Confirmed! #${booking.id}`
-  const emailBody = `Mabuhay ${booking.customerName}!\n\nWe are pleased to inform you that your ${paymentTermLabel} of ${formatMoney(verifiedAmount, currency)} has been verified by our management team.\n\nBooking Reference: #${booking.id}\nScheduled Date: ${booking.eventDate}\nPackage: ${booking.packageName}\nStatus: Confirmed / Payment Verified\nPayment Term: ${paymentTermLabel}\nRemaining Balance: ${isFullPayment ? '₱0.00 (Fully Settled / Zero Balance)' : formatMoney(remainingBalance, currency) + ' (Payable on event day)'}\n\nOur event coordinator and kitchen team are now prepping your banquet.\n\nThank you for trusting Sinag's Catering Services!\nHotline: 0928 714 4597`
+  const emailBody = `Mabuhay ${booking.customerName}!\n\nWe are pleased to inform you that your ${paymentTermLabel} of ${formatMoney(verifiedAmount, currency)} has been verified by our management team.\n\nBooking Reference: #${booking.id}\nScheduled Date: ${booking.eventDate}\nPackage: ${booking.packageName}\nStatus: Confirmed / Payment Verified\nPayment Term: ${paymentTermLabel}\nRemaining Balance: ${isFullPayment ? '₱0.00 (Fully Settled / Zero Balance)' : formatMoney(remainingBalance, currency) + ' (Payable on event day)'}\n\nOur event coordinator and kitchen team are now prepping your banquet.\n\nThank you for trusting Sinag's Catering Services!\nHotline: ${getBusiness().phone}`
 
   await sendTransactionalEmail(booking.email, emailSubject, emailBody, booking.id, {
     customer_name: booking.customerName,

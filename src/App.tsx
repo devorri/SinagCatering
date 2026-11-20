@@ -19,11 +19,13 @@ import { TermsGateModal } from './components/TermsGateModal'
 import { DemoTimeMachineBar } from './components/DemoTimeMachineBar'
 import type { AIFormData } from './lib/ai'
 import { supabase } from './lib/supabase'
+import { phoneDigits } from './lib/businessSettings'
 
 type ViewName = 'landing' | 'gallery' | 'testimonials' | 'login' | 'client' | 'admin' | 'booking'
 
 function AppContent() {
-  const { currentUser, bookings, logout, updatePaymentStatus, needsTermsAcceptance, acceptTerms, googleAuth, clearGoogleAuthMessage } = useApp()
+  const { currentUser, bookings, logout, updatePaymentStatus, needsTermsAcceptance, acceptTerms, googleAuth, clearGoogleAuthMessage, business } = useApp()
+  const telHref = `tel:${phoneDigits(business.phone)}`
   const { confirm } = useConfirm()
   const userBookings = currentUser
     ? bookings.filter((b) => b.email?.toLowerCase().trim() === currentUser.email?.toLowerCase().trim())
@@ -217,7 +219,7 @@ function AppContent() {
 
         // Always ensure successful return marks downpayment in test simulation
         updatePaymentStatus(bookingId, 'downpayment_paid')
-        setPaymongoNotice('PayMongo confirmed your 50% downpayment! Your event reservation is officially locked.')
+        setPaymongoNotice('PayMongo confirmed your payment! Your event reservation is officially locked.')
         setActiveView('client')
       }
 
@@ -480,7 +482,7 @@ function AppContent() {
             </div>
           ) : (
             <div className="desktop-only" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <a href="tel:09287144597" className="icon-button" aria-label="Call Sinag Catering 0928 714 4597" title="Call 0928 714 4597">
+              <a href={telHref} className="icon-button" aria-label={`Call Sinag Catering ${business.phone}`} title={`Call ${business.phone}`}>
                 <Phone size={16} />
               </a>
               <button onClick={() => navigateTo('login')} className="btn-nav-login">Login</button>
@@ -638,8 +640,8 @@ function AppContent() {
                 </button>
               )}
 
-              <a href="tel:09287144597" className="mobile-drawer-call-link">
-                <Phone size={14} /> Direct Hotline: <strong>0928 714 4597</strong>
+              <a href={telHref} className="mobile-drawer-call-link">
+                <Phone size={14} /> Direct Hotline: <strong>{business.phone}</strong>
               </a>
             </div>
           </aside>
@@ -737,16 +739,16 @@ function AppContent() {
               <img src="/sinag_logo.png" alt="Sinag Catering" className="brand-logo-img" />
               <span>Sinag Catering</span>
             </a>
-            <p>Full celebration catering, event styling, freebies, entertainment coordination, and booking support from Baliwag, Bulacan.</p>
+            <p>Full celebration catering, event styling, freebies, entertainment coordination, and booking support from {business.address}.</p>
           </div>
 
           <div className="footer-contact-col">
             <h4>Concierge Desk</h4>
             <div className="footer-contact-list">
-              <span><Phone size={16} /> Hotline: <strong>0928 714 4597</strong></span>
-              <span><Clock3 size={16} /> Mon-Sat, 9:00 AM - 7:00 PM</span>
-              <span><MapPin size={16} /> Baliwag, Bulacan</span>
-              <span><Mail size={16} /> <a href="mailto:cruzsunshine19@yahoo.com">cruzsunshine19@yahoo.com</a></span>
+              <span><Phone size={16} /> Hotline: <a href={telHref}><strong>{business.phone}</strong></a></span>
+              <span><Clock3 size={16} /> {business.hours}</span>
+              <span><MapPin size={16} /> {business.address}</span>
+              <span><Mail size={16} /> <a href={`mailto:${business.email}`}>{business.email}</a></span>
             </div>
           </div>
 
@@ -765,7 +767,7 @@ function AppContent() {
         </div>
 
         <div className="footer-bottom-strip">
-          <span>&copy; {new Date().getFullYear()} Sinag's Catering Services. Planning and event coordination.</span>
+          <span>&copy; {new Date().getFullYear()} {business.businessName}. Planning and event coordination.</span>
         </div>
       </footer>
       <DemoTimeMachineBar />

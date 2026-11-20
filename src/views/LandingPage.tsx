@@ -14,7 +14,8 @@ import {
   Maximize2,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
-import { FOOD_BUFFER_PAX, formatMoney, STORAGE_FILES_BASE } from '../data/packages'
+import { formatMoney, STORAGE_FILES_BASE } from '../data/packages'
+import { phoneDigits } from '../lib/businessSettings'
 
 const bg1 = `${STORAGE_FILES_BASE}/showcase/1.webp`
 const bg2 = `${STORAGE_FILES_BASE}/showcase/2.webp`
@@ -41,7 +42,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onNavigateToGallery,
   onNavigateToTestimonials,
 }) => {
-  const { createInquiryDirect, packages, menuItems, refreshCatalog } = useApp()
+  const { createInquiryDirect, packages, menuItems, refreshCatalog, business } = useApp()
+  const telHref = `tel:${phoneDigits(business.phone)}`
+  const FOOD_BUFFER_PAX = business.foodBufferPax
+  const allTierPax = packages.flatMap((p) => p.tiers.map((t) => t.pax))
+  const paxRange = allTierPax.length > 0 ? `${Math.min(...allTierPax)}-${Math.max(...allTierPax)}` : '50-200'
 
   const [inquiryName, setInquiryName] = useState('')
   const [inquiryEmail, setInquiryEmail] = useState('')
@@ -123,8 +128,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <button type="button" onClick={() => onStartBooking()} className="btn-hero-primary">
                 Start Booking <ChevronRight size={16} />
               </button>
-              <a href="tel:09287144597" className="btn-hero-outline">
-                Call 0928 714 4597
+              <a href={telHref} className="btn-hero-outline">
+                Call {business.phone}
               </a>
             </div>
 
@@ -135,12 +140,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </div>
               <div className="hero-stat-divider" />
               <div>
-                <span className="hero-stat-num">50-200</span>
+                <span className="hero-stat-num">{paxRange}</span>
                 <span className="hero-stat-lbl">Pax Tiers</span>
               </div>
               <div className="hero-stat-divider" />
               <div>
-                <span className="hero-stat-num">50%</span>
+                <span className="hero-stat-num">{business.downpaymentPercent}%</span>
                 <span className="hero-stat-lbl">Reservation Deposit</span>
               </div>
             </div>
@@ -170,7 +175,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               Abundant Feasts with <span className="serif-italic">Filipino Heart.</span>
             </h2>
             <p className="simple-subtitle">
-              Based in Baliwag, Bulacan, Sinag's Catering Services creates thoughtful, stress-free banquets for kids' birthdays, debuts, weddings, and family gatherings. From bountiful comfort food to customized setups, we make sure every guest is well-served.
+              Based in {business.address}, {business.businessName} creates thoughtful, stress-free banquets for kids' birthdays, debuts, weddings, and family gatherings. From bountiful comfort food to customized setups, we make sure every guest is well-served.
             </p>
           </div>
 
@@ -209,10 +214,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   </div>
                 </div>
                 <h3 style={{ fontSize: 'clamp(1.6rem, 2.2vw, 2rem)', color: '#FFFFFF', lineHeight: 1.15, marginBottom: '0.9rem' }}>
-                  +10 Pax Food <span className="serif-italic" style={{ color: 'var(--gold)' }}>Buffer.</span>
+                  +{FOOD_BUFFER_PAX} Pax Food <span className="serif-italic" style={{ color: 'var(--gold)' }}>Buffer.</span>
                 </h3>
                 <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '0.94rem', lineHeight: 1.7 }}>
-                  Every standard package includes a complimentary 10-guest food buffer so your celebration never runs short. Genuine hospitality without worry.
+                  Every standard package includes a complimentary {FOOD_BUFFER_PAX}-guest food buffer so your celebration never runs short. Genuine hospitality without worry.
                 </p>
               </div>
               <div style={{ borderTop: '1px solid rgba(255,255,255,0.15)', paddingTop: '1rem', marginTop: '1rem', fontSize: '0.85rem', color: 'var(--gold)', fontWeight: 600 }}>
@@ -268,7 +273,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               Curated Packages with <span className="serif-italic">Bespoke Taste.</span>
             </h2>
             <p className="simple-subtitle">
-              All packages include full buffet setup, motif linens, tableware, and a complimentary <strong>+10 pax food buffer</strong>.
+              All packages include full buffet setup, motif linens, tableware, and a complimentary <strong>+{FOOD_BUFFER_PAX} pax food buffer</strong>.
             </p>
           </div>
 
@@ -547,12 +552,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <div className="simple-step-item reveal">
               <div className="simple-step-num">02</div>
               <h3>Select Your Date</h3>
-              <p>Pick an available celebration date (requires 14 days advance notice).</p>
+              <p>Pick an available celebration date (requires {business.leadTimeDays} days advance notice).</p>
             </div>
             <div className="simple-step-item reveal">
               <div className="simple-step-num">03</div>
               <h3>Confirm via GCash</h3>
-              <p>Settle the 50% downpayment via GCash QR to lock your reservation.</p>
+              <p>Settle the {business.downpaymentPercent}% downpayment via GCash QR to lock your reservation.</p>
             </div>
           </div>
         </div>
@@ -575,7 +580,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <Phone size={20} className="simple-contact-icon" />
                 <div>
                   <strong>Hotline & GCash</strong>
-                  <a href="tel:09287144597">0928 714 4597</a>
+                  <a href={telHref}>{business.phone}</a>
                 </div>
               </div>
 
@@ -583,7 +588,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <MapPin size={20} className="simple-contact-icon" />
                 <div>
                   <strong>Location</strong>
-                  <span>Baliwag, Bulacan, Philippines</span>
+                  <span>{business.address}, Philippines</span>
                 </div>
               </div>
 
@@ -591,7 +596,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <Mail size={20} className="simple-contact-icon" />
                 <div>
                   <strong>Email</strong>
-                  <a href="mailto:cruzsunshine19@yahoo.com">cruzsunshine19@yahoo.com</a>
+                  <a href={`mailto:${business.email}`}>{business.email}</a>
                 </div>
               </div>
 

@@ -13,6 +13,9 @@ interface Message {
   timestamp: string
   escalated?: boolean
   suggestions?: string[]
+  /** One clickable card per bookable option. */
+  quotes?: AIFormData[]
+  /** Older saved chats stored a single card here. */
   formData?: AIFormData
 }
 
@@ -35,7 +38,7 @@ const MAX_SAVED_MESSAGES = 60
 
 const greeting = (name?: string): Message => ({
   sender: 'bot',
-  text: `Hi${name ? ` ${name.split(' ')[0]}` : ''}! 👋 I'm Sinag's assistant. Planning a birthday, debut, wedding or any celebration? Tell me about it and I'll help you pick a package, compute the cost, and check dates. Pwede rin po mag-Tagalog!`,
+  text: `Hi${name ? ` ${name.split(' ')[0]}` : ''}! I'm Sinag's assistant. Planning a birthday, debut, wedding or any celebration? Tell me about it and I'll help you pick a package, compute the cost, and check dates. Pwede rin po mag-Tagalog!`,
   timestamp: new Date().toISOString(),
   suggestions: STARTER_SUGGESTIONS,
 })
@@ -97,7 +100,7 @@ const parseInlineMarkdown = (text: string): string =>
     .replace(/(^|[^*])\*(?!\s)(.+?)\*(?!\*)/g, '$1<em>$2</em>')
 
 export const AIAssistant: React.FC<AIAssistantProps> = ({ isOpen, onClose, onApplyRecommendation }) => {
-  const { createInquiryDirect, currentUser, bookings, blockedDates } = useApp()
+  const { createInquiryDirect, currentUser, bookings, blockedDates, packages, menuItems, addons, business } = useApp()
   const userId = currentUser?.id
 
   const [messages, setMessages] = useState<Message[]>(() => loadMessages(userId) ?? [greeting(currentUser?.name)])
@@ -145,6 +148,9 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ isOpen, onClose, onApp
 
     try {
       const response = await querySinagAI(trimmed, history, {
+        packages,
+        menuItems,
+        addons,
         bookings,
         blockedDates,
         currentUser: currentUser ? { name: currentUser.name, email: currentUser.email, role: currentUser.role } : null,
@@ -158,7 +164,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ isOpen, onClose, onApp
           timestamp: new Date().toISOString(),
           escalated: response.escalate,
           suggestions: response.suggestions,
-          formData: response.formData,
+          quotes: response.quotes ?? (response.formData ? [response.formData] : []),
         },
       ])
 
@@ -175,7 +181,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ isOpen, onClose, onApp
         ...prev,
         {
           sender: 'bot',
-          text: "Sorry, nagka-problema ako sa connection 😅 Try again in a bit, or call our team at **0928 714 4597**.",
+          text: `Sorry, nagka-problema ako sa connection. Try again in a bit, or call our team at **${business.phone}**.`,
           timestamp: new Date().toISOString(),
           suggestions: ['Try again', 'How do I book?'],
         },
@@ -207,7 +213,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ isOpen, onClose, onApp
             <h3 className="ai-chat-title">Sinag AI Concierge</h3>
             <span style={{ fontSize: '0.72rem', color: 'var(--gold-light)', display: 'flex', alignItems: 'center', gap: '4px' }}>
               <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10B981' }} />
-              {isTyping ? 'Typing…' : 'Online · Baliwag, Bulacan'}
+              {isTyping ? 'Typing…' : `Online · ${business.address}`}
             </span>
           </div>
         </div>
@@ -233,40 +239,43 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ isOpen, onClose, onApp
                 )}
               </div>
 
-              {msg.formData && (
-                <div className="ai-quote-card">
+              {(msg.quotes ?? (msg.formData ? [msg.formData] : [])).map((quote) => (
+                <div key={`${quote.package_id}-${quote.guest_count}`} className="ai-quote-card">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                    <strong style={{ fontSize: '0.85rem', color: 'var(--terracotta)' }}>{msg.formData.package_name}</strong>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--ink)', whiteSpace: 'nowrap' }}>{msg.formData.guest_count} pax</span>
+                    <strong style={{ fontSize: '0.85rem', color: 'var(--terracotta)' }}>{quote.package_name}</strong>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--ink)', whiteSpace: 'nowrap' }}>{quote.guest_count} pax</span>
                   </div>
                   <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--ink)' }}>
-                    Est. Total: {formatMoney(msg.formData.estimated_total)}
+                    Est. Total: {formatMoney(quote.estimated_total)}
                   </div>
                   <div style={{ fontSize: '0.74rem', color: 'var(--muted)', marginBottom: '6px' }}>
-                    50% downpayment: {formatMoney(Math.round(msg.formData.estimated_total * 0.5))}
+                    {business.downpaymentPercent}% downpayment: {formatMoney(Math.round(quote.estimated_total * (business.downpaymentPercent / 100)))}
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                    {msg.formData.event_type && <span className="ai-quote-tag" style={{ background: '#FEF3C7', color: '#92400E' }}>🏷️ {msg.formData.event_type}</span>}
-                    {Boolean(msg.formData.extra_main_count) && <span className="ai-quote-tag" style={{ background: '#FFEDD5', color: '#9A3412' }}>+{msg.formData.extra_main_count} Extra Mains</span>}
-                    {Boolean(msg.formData.extra_pasta_count) && <span className="ai-quote-tag" style={{ background: '#DBEAFE', color: '#1E40AF' }}>+{msg.formData.extra_pasta_count} Extra Pasta</span>}
-                    {Boolean(msg.formData.extra_dessert_count) && <span className="ai-quote-tag" style={{ background: '#FEF9C3', color: '#854D0E' }}>+{msg.formData.extra_dessert_count} Extra Dessert</span>}
-                    {msg.formData.addons.length > 0 && <span className="ai-quote-tag" style={{ background: '#DCFCE7', color: '#166534' }}>+{msg.formData.addons.length} Add-on{msg.formData.addons.length > 1 ? 's' : ''}</span>}
+                    {quote.event_type && <span className="ai-quote-tag" style={{ background: '#FEF3C7', color: '#92400E' }}>{quote.event_type}</span>}
+                    {Boolean(quote.extra_main_count) && <span className="ai-quote-tag" style={{ background: '#FFEDD5', color: '#9A3412' }}>+{quote.extra_main_count} Extra Mains</span>}
+                    {Boolean(quote.extra_pasta_count) && <span className="ai-quote-tag" style={{ background: '#DBEAFE', color: '#1E40AF' }}>+{quote.extra_pasta_count} Extra Pasta</span>}
+                    {Boolean(quote.extra_dessert_count) && <span className="ai-quote-tag" style={{ background: '#FEF9C3', color: '#854D0E' }}>+{quote.extra_dessert_count} Extra Dessert</span>}
+                    {quote.addons.length > 0 && <span className="ai-quote-tag" style={{ background: '#DCFCE7', color: '#166534' }}>+{quote.addons.length} Add-on{quote.addons.length > 1 ? 's' : ''}</span>}
                   </div>
                   {onApplyRecommendation && (
                     <button
                       type="button"
                       onClick={() => {
-                        onApplyRecommendation(msg.formData!)
+                        onApplyRecommendation(quote)
                         onClose()
                       }}
                       className="btn-hero-primary"
                       style={{ width: '100%', padding: '8px 12px', fontSize: '0.78rem', justifyContent: 'center', marginTop: '10px' }}
                     >
-                      <Sparkles size={14} /> Auto-Fill Booking with this Plan
+                      <Sparkles size={14} /> Book this
                     </button>
                   )}
-                  <div style={{ fontSize: '0.66rem', color: 'var(--muted)', marginTop: '6px' }}>Estimate only — final price confirmed by Sinag.</div>
                 </div>
+              ))}
+
+              {(msg.quotes?.length || msg.formData) && (
+                <div style={{ fontSize: '0.66rem', color: 'var(--muted)', marginTop: '6px' }}>Estimates only — final price confirmed by Sinag.</div>
               )}
 
               {msg.escalated && (

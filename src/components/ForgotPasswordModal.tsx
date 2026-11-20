@@ -267,7 +267,7 @@ export const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({
                   type={method === 'email' ? 'email' : 'tel'}
                   className="input-field"
                   required
-                  placeholder={method === 'email' ? 'e.g. maria@example.com' : 'e.g. 0928 714 4597'}
+                  placeholder={method === 'email' ? 'e.g. maria@example.com' : 'e.g. 0917 123 4567'}
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   style={{ width: '100%', fontSize: '0.92rem' }}

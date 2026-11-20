@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { ScrollText, ShieldCheck, ChevronDown, LogOut, Loader2 } from 'lucide-react'
-import { TERMS_SECTIONS, TERMS_VERSION } from '../lib/terms'
+import { getTermsSections, getTermsVersion } from '../lib/terms'
 
 interface TermsGateModalProps {
   userName: string
@@ -78,7 +78,7 @@ export const TermsGateModal: React.FC<TermsGateModalProps> = ({ userName, onAcce
           tabIndex={0}
           data-lenis-prevent
         >
-          {TERMS_SECTIONS.map((section) => (
+          {getTermsSections().map((section) => (
             <section key={section.heading} className="terms-gate-section">
               <h3>{section.heading}</h3>
               {section.paragraphs?.map((p) => (
@@ -101,7 +101,7 @@ export const TermsGateModal: React.FC<TermsGateModalProps> = ({ userName, onAcce
               )}
             </section>
           ))}
-          <p className="terms-gate-version">Terms version {TERMS_VERSION}</p>
+          <p className="terms-gate-version">Terms version {getTermsVersion()}</p>
         </div>
 
         <div className="terms-gate-footer">

@@ -48,6 +48,7 @@ export const ClientPortal: React.FC = () => {
     uploadPayment,
     cancelBooking,
     rebookEvent,
+    business,
   } = useApp()
 
   const { confirm } = useConfirm()
@@ -175,7 +176,7 @@ export const ClientPortal: React.FC = () => {
         return {
           color: '#DC2626',
           icon: <AlertCircle size={16} />,
-          text: activeBooking.paymentTerm === 'full' ? 'Full Payment Due' : '50% Downpayment Due',
+          text: activeBooking.paymentTerm === 'full' ? 'Full Payment Due' : `${business.downpaymentPercent}% Downpayment Due`,
           sub: 'Upload your receipt in My Bookings',
         }
     }
@@ -242,7 +243,7 @@ export const ClientPortal: React.FC = () => {
           <div className="hold-alert-text">
             <strong>Your date is temporarily held!</strong>
             <span>
-              Please pay the <b>{formatMoney(b.downpaymentAmount || 2000, b.currency)} reservation fee</b> within <b>2 days (48 hours)</b> to lock in your reservation, or your booking will automatically expire. Upload the receipt in the payment box below.
+              Please pay the <b>{formatMoney(b.downpaymentAmount || business.reservationFee, b.currency)} reservation fee</b> within <b>{business.reserveHoldHours} hours</b> to lock in your reservation, or your booking will automatically expire. Upload the receipt in the payment box below.
             </span>
             <span className="hold-alert-meta">
               Booking {b.id.slice(0, 16)}… · {b.eventDate} · <b>{formatCountdown(getHoldRemainingMs(b, now))} remaining</b>
@@ -334,7 +335,7 @@ export const ClientPortal: React.FC = () => {
                       </span>
                       <span className="portal-meta-item">
                         <Users size={14} style={{ color: 'var(--gold-dark)' }} />
-                        <span><strong>{booking.guestCount}</strong> Attendees (+10 buffer)</span>
+                        <span><strong>{booking.guestCount}</strong> Attendees (+{business.foodBufferPax} buffer)</span>
                       </span>
                     </div>
                   </div>
@@ -407,7 +408,7 @@ export const ClientPortal: React.FC = () => {
                       </h4>
                     </div>
                     <span style={{ fontSize: '0.8rem', color: 'var(--muted)', fontWeight: 600 }}>
-                      Package: <strong>{booking.packageName}</strong> ({booking.guestCount} pax + 10 pax buffer)
+                      Package: <strong>{booking.packageName}</strong> ({booking.guestCount} pax + {business.foodBufferPax} pax buffer)
                     </span>
                   </div>
 
@@ -502,7 +503,7 @@ export const ClientPortal: React.FC = () => {
                 {!isClosed && booking.bookingStatus !== 'completed' && (
                   <div className="portal-card-footer">
                     <span className="portal-footer-note">
-                      Modifications can be requested up to 14 days before your scheduled date.
+                      Modifications can be requested up to {business.changeNoticeDays} days before your scheduled date.
                     </span>
                     <div className="portal-footer-buttons">
                       <button type="button" onClick={() => openRebook(booking)} className="portal-btn-secondary">
@@ -537,7 +538,7 @@ export const ClientPortal: React.FC = () => {
                   className="input-field"
                   required
                   value={rebookDate}
-                  min={(() => { const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().slice(0, 10) })()}
+                  min={(() => { const d = new Date(); d.setDate(d.getDate() + business.changeNoticeDays); return d.toISOString().slice(0, 10) })()}
                   onChange={(e) => setRebookDate(e.target.value)}
                 />
               </div>
@@ -652,8 +653,8 @@ export const ClientPortal: React.FC = () => {
 
             <div style={{ fontSize: '0.9rem', lineHeight: 1.7, color: 'var(--ink)' }}>
               <p><strong>MEMORANDUM OF AGREEMENT</strong></p>
-              <p>This Catering Contract is executed between <strong>Sinag Catering Services</strong> and <strong>{selectedBooking.customerName}</strong> for the <strong>{selectedBooking.eventType}</strong> event on <strong>{selectedBooking.eventDate}</strong>.</p>
-              <p>1. <strong>Service Scope:</strong> Full banquet arrangement for <strong>{selectedBooking.guestCount} attendees (+10 buffer)</strong> under the <strong>{selectedBooking.packageName}</strong> with professional staff and tableware.</p>
+              <p>This Catering Contract is executed between <strong>{business.businessName}</strong> and <strong>{selectedBooking.customerName}</strong> for the <strong>{selectedBooking.eventType}</strong> event on <strong>{selectedBooking.eventDate}</strong>.</p>
+              <p>1. <strong>Service Scope:</strong> Full banquet arrangement for <strong>{selectedBooking.guestCount} attendees (+{business.foodBufferPax} buffer)</strong> under the <strong>{selectedBooking.packageName}</strong> with professional staff and tableware.</p>
               {selectedBooking.addOns?.selectedMainDishes && selectedBooking.addOns.selectedMainDishes.length > 0 && (
                 <p>2. <strong>Included Main Courses:</strong> {selectedBooking.addOns.selectedMainDishes.join(', ')}.</p>
               )}
@@ -663,8 +664,8 @@ export const ClientPortal: React.FC = () => {
               {selectedBooking.addOns?.selectedDrinks && selectedBooking.addOns.selectedDrinks.length > 0 && (
                 <p>4. <strong>Included Refreshment:</strong> {selectedBooking.addOns.selectedDrinks.join(', ')}.</p>
               )}
-              <p>5. <strong>Payment Terms:</strong> {selectedBooking.paymentStatus === 'fully_paid' ? '100% full payment received; zero balance on event day.' : `${formatMoney(selectedBooking.downpaymentAmount || Math.round(selectedBooking.totalPrice * 0.5), selectedBooking.currency)} downpayment received; remaining balance payable on or before event setup date.`}</p>
-              <p>6. <strong>Terms &amp; Conditions:</strong> The client has accepted Sinag Catering&apos;s Terms &amp; Conditions and Cancellation Policy (30+ days: full refund; 14–29 days: 50% refund; less than 14 days: no refund).</p>
+              <p>5. <strong>Payment Terms:</strong> {selectedBooking.paymentStatus === 'fully_paid' ? '100% full payment received; zero balance on event day.' : `${formatMoney(selectedBooking.downpaymentAmount || Math.round(selectedBooking.totalPrice * (business.downpaymentPercent / 100)), selectedBooking.currency)} downpayment received; remaining balance payable on or before event setup date.`}</p>
+              <p>6. <strong>Terms &amp; Conditions:</strong> The client has accepted {business.businessName}&apos;s Terms &amp; Conditions and Cancellation Policy ({business.refundFullDays}+ days: full refund; {business.refundPartialDays}–{business.refundFullDays - 1} days: {business.refundPartialPercent}% refund; less than {business.refundPartialDays} days: no refund).</p>
             </div>
 
             <div style={{ marginTop: '24px', textAlign: 'right' }}>
@@ -763,7 +764,7 @@ export const ClientPortal: React.FC = () => {
               {portalQrZoom.title}
             </h3>
             <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0 0 16px' }}>
-              Scan directly using GCash, MariBank, Maya, or any banking app via QR Ph / InstaPay.
+              Scan directly using GCash, {business.bankName}, Maya, or any banking app via QR Ph / InstaPay.
             </p>
 
             <div style={{ background: '#FFFFFF', padding: '16px', borderRadius: '14px', border: '2px solid #CBD5E1', display: 'inline-block', margin: '0 auto 16px', boxShadow: '0 8px 24px rgba(0,0,0,0.08)' }}>

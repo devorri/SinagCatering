@@ -31,9 +31,8 @@ import {
 import { useApp } from '../context/AppContext'
 import { useConfirm } from '../context/ConfirmContext'
 import { uploadImageToStorage } from '../lib/storage'
+import { phoneDigits } from '../lib/businessSettings'
 import {
-  EXCESS_PAX_RATE,
-  FOOD_BUFFER_PAX,
   MAIN_DISHES,
   PASTA_DISHES,
   DISH_DETAILS,
@@ -54,6 +53,16 @@ import { isBookingOccupyingDate, isReserveHold, RESERVATION_FEE, RESERVE_HOLD_HO
 const DEFAULT_MAIN_DISHES = ['Cordon Bleu', 'Mixed Veggies', 'Fish Fillet']
 const DEFAULT_PASTA_DISHES = ['Carbonara']
 const DEFAULT_DRINKS = ['Cucumber']
+
+/** Default picks first, then the rest of the live menu, until `count` items. */
+const pickDefaults = (wanted: string[], available: string[], count: number): string[] => {
+  const picked = pickAvailable(wanted, available).slice(0, count)
+  for (const item of available) {
+    if (picked.length >= count) break
+    if (!picked.includes(item)) picked.push(item)
+  }
+  return picked
+}
 
 const pickAvailable = (wanted: string[], available: string[]): string[] => {
   const picked: string[] = []
@@ -83,7 +92,16 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   initialDate,
   initialPackageId,
 }) => {
-  const { blockedDates, bookings, createBooking, currentUser, packages, menuItems, addons } = useApp()
+  const { blockedDates, bookings, createBooking, currentUser, packages, menuItems, addons, business } = useApp()
+  // Live business rules from the admin's Business Settings
+  const FOOD_BUFFER_PAX = business.foodBufferPax
+  const EXCESS_PAX_RATE = business.excessPaxRate
+  const DP = business.downpaymentPercent
+  const LEAD_DAYS = business.leadTimeDays
+  // Included menu rule (Business Settings): e.g. 3 mains + 1 pasta + 1 drink
+  const NM = business.includedMains
+  const NP = business.includedPastas
+  const ND = business.includedDrinks
   const { confirm } = useConfirm()
 
   // Dynamically managed catalog with safe fallbacks
@@ -178,12 +196,12 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const [extraMain, setExtraMain] = useState(initialAIFormData?.extra_main_count || 0)
   const [extraPasta, setExtraPasta] = useState(initialAIFormData?.extra_pasta_count || 0)
   const [extraDessert, setExtraDessert] = useState(initialAIFormData?.extra_dessert_count || 0)
-  const [selectedMainDishes, setSelectedMainDishes] = useState<string[]>(() => pickAvailable(DEFAULT_MAIN_DISHES, availableMainDishes))
-  const [selectedPastaDishes, setSelectedPastaDishes] = useState<string[]>(() => pickAvailable(DEFAULT_PASTA_DISHES, availablePastaDishes))
+  const [selectedMainDishes, setSelectedMainDishes] = useState<string[]>(() => pickDefaults(DEFAULT_MAIN_DISHES, availableMainDishes, NM))
+  const [selectedPastaDishes, setSelectedPastaDishes] = useState<string[]>(() => pickDefaults(DEFAULT_PASTA_DISHES, availablePastaDishes, NP))
   const [selectedDrinks, setSelectedDrinks] = useState<string[]>(() =>
     initialAIFormData?.selected_drinks && initialAIFormData.selected_drinks.length > 0
       ? initialAIFormData.selected_drinks
-      : pickAvailable(DEFAULT_DRINKS, availableDrinkOptions),
+      : pickDefaults(DEFAULT_DRINKS, availableDrinkOptions, ND),
   )
   // Tracks whether the client changed the default dishes for the current package
   const menuTouchedRef = React.useRef(false)
@@ -242,7 +260,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const getMinBookingDate = () => {
     const d = new Date()
     d.setHours(0, 0, 0, 0)
-    d.setDate(d.getDate() + 14)
+    d.setDate(d.getDate() + LEAD_DAYS)
     return d
   }
   const formatToDateStr = (d: Date) => {
@@ -393,12 +411,12 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     if (defaultsPkgRef.current === currentPkg.id) return
     defaultsPkgRef.current = currentPkg.id
     menuTouchedRef.current = false
-    setSelectedMainDishes(pickAvailable(DEFAULT_MAIN_DISHES, availableMainDishes))
-    setSelectedPastaDishes(pickAvailable(DEFAULT_PASTA_DISHES, availablePastaDishes))
+    setSelectedMainDishes(pickDefaults(DEFAULT_MAIN_DISHES, availableMainDishes, NM))
+    setSelectedPastaDishes(pickDefaults(DEFAULT_PASTA_DISHES, availablePastaDishes, NP))
     setSelectedDrinks((current) => {
       const aiDrinks = initialAIFormData?.selected_drinks
       if (aiDrinks && aiDrinks.length > 0 && current.length > 0 && aiDrinks.includes(current[0])) return current
-      return pickAvailable(DEFAULT_DRINKS, availableDrinkOptions)
+      return pickDefaults(DEFAULT_DRINKS, availableDrinkOptions, ND)
     })
   }, [currentPkg?.id])
 
@@ -406,20 +424,27 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   React.useEffect(() => {
     setSelectedMainDishes((current) => {
       const valid = current.filter((d) => availableMainDishes.includes(d))
-      if (valid.length === 0 && !menuTouchedRef.current) return pickAvailable(DEFAULT_MAIN_DISHES, availableMainDishes)
+      if (valid.length === 0 && !menuTouchedRef.current) return pickDefaults(DEFAULT_MAIN_DISHES, availableMainDishes, NM)
       return valid.length === current.length ? current : valid
     })
     setSelectedPastaDishes((current) => {
       const valid = current.filter((d) => availablePastaDishes.includes(d))
-      if (valid.length === 0 && !menuTouchedRef.current) return pickAvailable(DEFAULT_PASTA_DISHES, availablePastaDishes)
+      if (valid.length === 0 && !menuTouchedRef.current) return pickDefaults(DEFAULT_PASTA_DISHES, availablePastaDishes, NP)
       return valid.length === current.length ? current : valid
     })
     setSelectedDrinks((current) => {
       const valid = current.filter((d) => availableDrinkOptions.includes(d))
-      if (valid.length === 0 && !menuTouchedRef.current) return pickAvailable(DEFAULT_DRINKS, availableDrinkOptions)
+      if (valid.length === 0 && !menuTouchedRef.current) return pickDefaults(DEFAULT_DRINKS, availableDrinkOptions, ND)
       return valid.length === current.length ? current : valid
     })
   }, [availableMainDishes, availablePastaDishes, availableDrinkOptions])
+
+  // If the admin changes how many dishes are included, re-fit the selections
+  React.useEffect(() => {
+    setSelectedMainDishes((current) => (current.length > NM ? current.slice(0, NM) : current.length < NM && !menuTouchedRef.current ? pickDefaults([...current, ...DEFAULT_MAIN_DISHES], availableMainDishes, NM) : current))
+    setSelectedPastaDishes((current) => (current.length > NP ? current.slice(0, NP) : current.length < NP && !menuTouchedRef.current ? pickDefaults([...current, ...DEFAULT_PASTA_DISHES], availablePastaDishes, NP) : current))
+    setSelectedDrinks((current) => (current.length > ND ? current.slice(0, ND) : current.length < ND && !menuTouchedRef.current ? pickDefaults([...current, ...DEFAULT_DRINKS], availableDrinkOptions, ND) : current))
+  }, [NM, NP, ND])
 
   // Task 3: Precise Math Logic for Package, Buffers, Add-ons & 50% Downpayment
   const calculations = useMemo(() => {
@@ -445,7 +470,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     const addOnCost = extraMainCost + extraPastaCost + extraDessertCost + flatAddonsCost
 
     const totalPrice = baseCost + excessPaxFee + addOnCost
-    const downpayment = Math.round(totalPrice * 0.5)
+    const downpayment = Math.round(totalPrice * (DP / 100))
 
     return {
       tier,
@@ -484,7 +509,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       setSelectedMainDishes((current) =>
         current.includes(dish)
           ? current.filter((value) => value !== dish)
-          : current.length < 3
+          : current.length < NM
           ? [...current, dish]
           : current
       )
@@ -492,7 +517,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       setSelectedPastaDishes((current) =>
         current.includes(dish)
           ? current.filter((value) => value !== dish)
-          : current.length < 1
+          : current.length < NP
           ? [...current, dish]
           : current
       )
@@ -503,8 +528,12 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     menuTouchedRef.current = true
     setSelectedDrinks((current) =>
       current.includes(drink)
-        ? []
-        : [drink]
+        ? current.filter((d) => d !== drink)
+        : ND === 1
+        ? [drink]
+        : current.length < ND
+        ? [...current, drink]
+        : current
     )
   }
 
@@ -582,9 +611,9 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
   const handleDateSelect = (dateStr: string) => {
     const minimumDate = new Date()
     minimumDate.setHours(0, 0, 0, 0)
-    minimumDate.setDate(minimumDate.getDate() + 14)
+    minimumDate.setDate(minimumDate.getDate() + LEAD_DAYS)
     if (new Date(`${dateStr}T00:00:00`) < minimumDate) {
-      setErrorMsg('Bookings require at least 14 days advance notice.')
+      setErrorMsg(`Bookings require at least ${LEAD_DAYS} days advance notice.`)
       return
     }
     const isBlocked = blockedDates.includes(dateStr)
@@ -638,22 +667,22 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       if (guestCount < 1) {
         return { valid: false, error: 'Please specify a valid guest count.' }
       }
-      if (selectedMainDishes.length !== 3) {
+      if (selectedMainDishes.length !== NM) {
         return {
           valid: false,
-          error: `Please select 3 main dishes (${selectedMainDishes.length}/3 selected).`,
+          error: `Please select ${NM} main dishes (${selectedMainDishes.length}/${NM} selected).`,
         }
       }
-      if (selectedPastaDishes.length !== 1) {
+      if (selectedPastaDishes.length !== NP) {
         return {
           valid: false,
-          error: `Please select 1 pasta dish (${selectedPastaDishes.length}/1 selected).`,
+          error: `Please select ${NP} pasta dish${NP > 1 ? 'es' : ''} (${selectedPastaDishes.length}/${NP} selected).`,
         }
       }
-      if (selectedDrinks.length !== 1) {
+      if (selectedDrinks.length !== ND) {
         return {
           valid: false,
-          error: 'Please select 1 included buffet drink (Blue Lemonade, Iced Tea, or Cucumber).',
+          error: `Please select ${ND} included buffet drink${ND > 1 ? 's' : ''} (${availableDrinkOptions.join(', ')}).`,
         }
       }
       if (extraMain > 0) {
@@ -685,7 +714,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       }
       const minValidDate = getMinBookingDate()
       if (new Date(`${eventDate}T00:00:00`) < minValidDate) {
-        return { valid: false, error: 'Selected date requires at least 14 days advance booking.' }
+        return { valid: false, error: `Selected date requires at least ${LEAD_DAYS} days advance booking.` }
       }
       const isBooked = bookings.some((b) => b.eventDate === eventDate && isBookingOccupyingDate(b))
       if (isBooked) {
@@ -749,11 +778,11 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
         const val = validateStep(s)
         if (!val.valid) {
           if (s === 1) {
-            if (selectedMainDishes.length !== 3) {
+            if (selectedMainDishes.length !== NM) {
               triggerSectionAttention('mains', 'booking-main-dishes-section')
-            } else if (selectedPastaDishes.length !== 1) {
+            } else if (selectedPastaDishes.length !== NP) {
               triggerSectionAttention('pasta', 'booking-pasta-dishes-section')
-            } else if (selectedDrinks.length !== 1) {
+            } else if (selectedDrinks.length !== ND) {
               triggerSectionAttention('drinks', 'booking-drinks-section')
             } else {
               setShowExtraDishErrors(true)
@@ -792,19 +821,19 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     }
 
     if (currentStep === 1) {
-      if (selectedMainDishes.length !== 3) {
+      if (selectedMainDishes.length !== NM) {
         triggerSectionAttention('mains', 'booking-main-dishes-section')
-        setErrorMsg(`Please select 3 main dishes (${selectedMainDishes.length}/3 selected).`)
+        setErrorMsg(`Please select ${NM} main dishes (${selectedMainDishes.length}/${NM} selected).`)
         return
       }
-      if (selectedPastaDishes.length !== 1) {
+      if (selectedPastaDishes.length !== NP) {
         triggerSectionAttention('pasta', 'booking-pasta-dishes-section')
-        setErrorMsg(`Please select 1 pasta dish (${selectedPastaDishes.length}/1 selected).`)
+        setErrorMsg(`Please select ${NP} pasta dish${NP > 1 ? 'es' : ''} (${selectedPastaDishes.length}/${NP} selected).`)
         return
       }
-      if (selectedDrinks.length !== 1) {
+      if (selectedDrinks.length !== ND) {
         triggerSectionAttention('drinks', 'booking-drinks-section')
-        setErrorMsg('Please select 1 included buffet drink (Blue Lemonade, Iced Tea, or Cucumber).')
+        setErrorMsg(`Please select ${ND} included buffet drink${ND > 1 ? 's' : ''} (${availableDrinkOptions.join(', ')}).`)
         return
       }
       if (extraMain > 0 && extraMainDishes.slice(0, extraMain).some((dish) => !dish || !dish.trim())) {
@@ -880,7 +909,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     setErrorMsg('')
     setIsSubmitting(true)
     const isReserve = paymentTerm === 'reserve'
-    const termLabel = paymentTerm === 'full' ? '100% FULL PAYMENT UPFRONT' : paymentTerm === 'reserve' ? 'RESERVE ONLY (₱2,000 RESERVATION FEE)' : '50% DOWNPAYMENT'
+    const termLabel = paymentTerm === 'full' ? '100% FULL PAYMENT UPFRONT' : paymentTerm === 'reserve' ? `RESERVE ONLY (${formatMoney(RESERVATION_FEE)} RESERVATION FEE)` : `${DP}% DOWNPAYMENT`
 
     if (!currentUser && (!clientName.trim() || !clientEmail.trim())) {
       setErrorMsg('Missing contact details.')
@@ -897,7 +926,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
 
     const minBookingLeadTime = getMinBookingDate()
     if (!eventDate || new Date(`${eventDate}T00:00:00`) < minBookingLeadTime) {
-      setErrorMsg('Bookings require at least 14 days advance notice. Please select an eligible date.')
+      setErrorMsg(`Bookings require at least ${LEAD_DAYS} days advance notice. Please select an eligible date.`)
       setIsSubmitting(false)
       return
     }
@@ -920,7 +949,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     const bookingData = {
       customerName: currentUser?.name || clientName.trim(),
       email: currentUser?.email || clientEmail.trim(),
-      phone: clientPhone || '0928 714 4597',
+      phone: clientPhone || business.phone,
       eventType: finalEventType,
       customEventType: customEventType.trim() || undefined,
       eventDate,
@@ -953,7 +982,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
     const confirmed = await confirm({
       title: 'Confirm Event Reservation',
       message: isReserve
-        ? `Reserve ${eventDate} for ${guestCount} guests (${currentPkg.name})?\n\nReservation fee: ₱${payableAmount.toLocaleString()} (deducted from your ₱${calculations.totalPrice.toLocaleString()} total). ${paidOnlineRef || proofOfPaymentUrl ? 'Your payment will be verified by our team.' : 'Pay it within 48 hours and upload the receipt in My Bookings, or the hold automatically expires.'}`
+        ? `Reserve ${eventDate} for ${guestCount} guests (${currentPkg.name})?\n\nReservation fee: ₱${payableAmount.toLocaleString()} (deducted from your ₱${calculations.totalPrice.toLocaleString()} total). ${paidOnlineRef || proofOfPaymentUrl ? 'Your payment will be verified by our team.' : `Pay it within ${RESERVE_HOLD_HOURS} hours and upload the receipt in My Bookings, or the hold automatically expires.`}`
         : `Are you ready to submit your catering booking for ${guestCount} guests on ${eventDate} (${currentPkg.name})?\n\nTotal package amount: ₱${calculations.totalPrice.toLocaleString()} (${termLabel}: ₱${payableAmount.toLocaleString()}).`,
       confirmText: isReserve ? 'Reserve My Date' : 'Complete Booking',
       cancelText: 'Review Details',
@@ -971,7 +1000,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
       isReserve
         ? (paidOnlineRef || proofOfPaymentUrl
           ? 'Reservation fee submitted! Your date is reserved while we verify your payment. Redirecting to My Bookings…'
-          : `Your date is temporarily held! Please pay the ₱${payableAmount.toLocaleString()} reservation fee within 2 days (48 hours) to lock in your reservation, or your booking will automatically expire. Redirecting to My Bookings…`)
+          : `Your date is temporarily held! Please pay the ₱${payableAmount.toLocaleString()} reservation fee within ${RESERVE_HOLD_HOURS} hours to lock in your reservation, or your booking will automatically expire. Redirecting to My Bookings…`)
         : paidOnlineRef
         ? 'Booking complete and paid online! Your date is locked. Redirecting to My Bookings…'
         : 'Booking complete! Your date is locked on our calendar. You can upload your payment receipt anytime in My Bookings. Redirecting…',
@@ -1269,7 +1298,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       PHP {(aiRecommendation.budgetExceeded ? aiRecommendation.tier.price : aiRecommendation.estimatedTotal).toLocaleString()}
                     </strong>
                     {!aiRecommendation.budgetExceeded && <span style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block' }}>
-                      50% Downpayment: PHP {Math.round(aiRecommendation.estimatedTotal * 0.5).toLocaleString()}
+                      {DP}% Downpayment: PHP {Math.round(aiRecommendation.estimatedTotal * (DP / 100)).toLocaleString()}
                     </span>}
                   </div>
                 </div>
@@ -1427,11 +1456,11 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <Utensils size={20} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />
                       <h4 className="dish-swap-title" style={{ margin: 0, fontSize: '1.2rem', color: 'var(--ink)' }}>
-                        Select Your 4 Included Dishes: 3 Main Courses + 1 Pasta Dish
+                        Select Your {NM + NP} Included Dishes: {NM} Main Courses + {NP} Pasta Dish{NP > 1 ? 'es' : ''}
                       </h4>
                     </div>
                     <p style={{ fontSize: '0.84rem', color: 'var(--muted)', margin: '5px 0 0', paddingLeft: '28px' }}>
-                      Tailor your banquet buffet spread. Choose exactly 3 signature main courses and 1 pasta dish included with your package.
+                      Tailor your banquet buffet spread. Choose exactly {NM} signature main courses and {NP} pasta dish{NP > 1 ? 'es' : ''} included with your package.
                     </p>
                   </div>
 
@@ -1445,17 +1474,17 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       borderRadius: '20px',
                       fontSize: '0.82rem',
                       fontWeight: 700,
-                      background: (selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? '#ECFDF5' : '#FEF3C7',
-                      color: (selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? '#059669' : '#D97706',
-                      border: `1.5px solid ${(selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? '#A7F3D0' : '#FDE68A'}`,
+                      background: (selectedMainDishes.length === NM && selectedPastaDishes.length === NP) ? '#ECFDF5' : '#FEF3C7',
+                      color: (selectedMainDishes.length === NM && selectedPastaDishes.length === NP) ? '#059669' : '#D97706',
+                      border: `1.5px solid ${(selectedMainDishes.length === NM && selectedPastaDishes.length === NP) ? '#A7F3D0' : '#FDE68A'}`,
                     }}>
-                      {(selectedMainDishes.length === 3 && selectedPastaDishes.length === 1) ? (
+                      {(selectedMainDishes.length === NM && selectedPastaDishes.length === NP) ? (
                         <>
                           <Check size={14} /> 4 / 4 Dishes Complete
                         </>
                       ) : (
                         <>
-                          {selectedDishCount} / 4 Included Dishes Selected
+                          {selectedDishCount} / {NM + NP} Included Dishes Selected
                         </>
                       )}
                     </div>
@@ -1522,7 +1551,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                         {selectedMainDishes.length > 0 || selectedPastaDishes.length > 0 || selectedDrinks.length > 0 ? (
                           <>
                             <strong style={{ color: '#991B1B' }}>3 Mains:</strong>{' '}
-                            {selectedMainDishes.length > 0 ? selectedMainDishes.join(', ') : <span style={{ color: '#991B1B', fontStyle: 'italic' }}>Pending selection ({3 - selectedMainDishes.length} remaining)</span>}
+                            {selectedMainDishes.length > 0 ? selectedMainDishes.join(', ') : <span style={{ color: '#991B1B', fontStyle: 'italic' }}>Pending selection ({NM - selectedMainDishes.length} remaining)</span>}
                             &nbsp;&nbsp;•&nbsp;&nbsp;
                             <strong style={{ color: '#1E40AF' }}>1 Pasta:</strong>{' '}
                             {selectedPastaDishes.length > 0 ? selectedPastaDishes.join(', ') : <span style={{ color: '#1E40AF', fontStyle: 'italic' }}>Pending selection</span>}
@@ -1535,7 +1564,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                           </>
                         ) : (
                           <span style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
-                            No dishes selected yet. Click to unfold and pick your 3 main courses and 1 pasta dish.
+                            No dishes selected yet. Click to unfold and pick your {NM} main courses and {NP} pasta dish{NP > 1 ? 'es' : ''}.
                           </span>
                         )}
                       </div>
@@ -1555,8 +1584,8 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       className={`dish-section-box ${shakeSection === 'mains' ? 'shake-vibrate' : ''}`}
                       style={{
                         marginBottom: '22px',
-                        border: (attemptedStep1Next && selectedMainDishes.length !== 3) ? '2.5px solid #EF4444' : '1.5px solid #FCA5A5',
-                        background: (attemptedStep1Next && selectedMainDishes.length !== 3) ? '#FEF2F2' : '#FFF8F8',
+                        border: (attemptedStep1Next && selectedMainDishes.length !== NM) ? '2.5px solid #EF4444' : '1.5px solid #FCA5A5',
+                        background: (attemptedStep1Next && selectedMainDishes.length !== NM) ? '#FEF2F2' : '#FFF8F8',
                         borderRadius: '12px',
                         padding: '18px 20px',
                         transition: 'all 0.3s ease',
@@ -1569,14 +1598,14 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                         <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <h5 style={{ fontSize: '0.88rem', fontWeight: 700, color: '#991B1B', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>
-                              Main Dishes (Choose 3)
+                              Main Dishes (Choose {NM})
                             </h5>
                             <span style={{ fontSize: '0.72rem', color: '#991B1B', background: '#FEE2E2', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer' }}>
                               {isMainDishesCollapsed ? '▸ Expand Mains' : '▾ Fold'}
                             </span>
                           </div>
                           <span style={{ fontSize: '0.78rem', color: '#7F1D1D' }}>
-                            Select 3 savory viands for your guest buffet table
+                            Select {NM} savory viands for your guest buffet table
                           </span>
                         </div>
                         <div
@@ -1585,20 +1614,20 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                             borderRadius: '16px',
                             fontSize: '0.8rem',
                             fontWeight: 700,
-                            background: selectedMainDishes.length === 3 ? '#ECFDF5' : '#FEE2E2',
-                            color: selectedMainDishes.length === 3 ? '#065F46' : '#991B1B',
-                            border: `1.5px solid ${selectedMainDishes.length === 3 ? '#A7F3D0' : '#EF4444'}`,
+                            background: selectedMainDishes.length === NM ? '#ECFDF5' : '#FEE2E2',
+                            color: selectedMainDishes.length === NM ? '#065F46' : '#991B1B',
+                            border: `1.5px solid ${selectedMainDishes.length === NM ? '#A7F3D0' : '#EF4444'}`,
                           }}
                         >
-                          [ {selectedMainDishes.length} / 3 Selected ]
+                          [ {selectedMainDishes.length} / {NM} Selected ]
                         </div>
                       </div>
 
                       {/* Red indicator banner when needed to be filled */}
-                      {attemptedStep1Next && selectedMainDishes.length !== 3 && (
+                      {attemptedStep1Next && selectedMainDishes.length !== NM && (
                         <div style={{ background: '#FEE2E2', border: '1.5px solid #EF4444', color: '#991B1B', padding: '10px 14px', borderRadius: '8px', fontSize: '0.82rem', fontWeight: 700, marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <AlertCircle size={16} style={{ color: '#DC2626', flexShrink: 0 }} />
-                          <span>Action Required: Please select 3 main dishes ({selectedMainDishes.length}/3 selected).</span>
+                          <span>Action Required: Please select {NM} main dishes ({selectedMainDishes.length}/{NM} selected).</span>
                         </div>
                       )}
 
@@ -1606,7 +1635,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                         <div className="dish-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
                           {availableMainDishes.map((dish) => {
                             const isSelected = selectedMainDishes.includes(dish)
-                            const isDisabled = !isSelected && selectedMainDishes.length >= 3
+                            const isDisabled = !isSelected && selectedMainDishes.length >= NM
                             const details = getDishMeta(dish)
                             return (
                               <label
@@ -1696,7 +1725,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                                   </div>
 
                                   <div style={{ paddingTop: '6px', borderTop: '1px dashed #F3F4F6', fontSize: '0.75rem', fontWeight: 600, color: isSelected ? '#059669' : isDisabled ? 'var(--muted)' : 'var(--terracotta)' }}>
-                                    {isSelected ? '✓ In Buffet Spread' : isDisabled ? 'Max 3 mains reached' : '+ Select main dish'}
+                                    {isSelected ? '✓ In Buffet Spread' : isDisabled ? `Max ${NM} mains reached` : '+ Select main dish'}
                                   </div>
                                 </div>
                               </label>
@@ -1711,8 +1740,8 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       id="booking-pasta-dishes-section"
                       className={`dish-section-box ${shakeSection === 'pasta' ? 'shake-vibrate' : ''}`}
                       style={{
-                        border: (attemptedStep1Next && selectedPastaDishes.length !== 1) ? '2.5px solid #EF4444' : '1.5px solid #93C5FD',
-                        background: (attemptedStep1Next && selectedPastaDishes.length !== 1) ? '#FEF2F2' : '#F0F7FF',
+                        border: (attemptedStep1Next && selectedPastaDishes.length !== NP) ? '2.5px solid #EF4444' : '1.5px solid #93C5FD',
+                        background: (attemptedStep1Next && selectedPastaDishes.length !== NP) ? '#FEF2F2' : '#F0F7FF',
                         borderRadius: '12px',
                         padding: '18px 20px',
                         transition: 'all 0.3s ease',
@@ -1725,7 +1754,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                         <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <h5 style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E40AF', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>
-                              Pasta Dishes (Choose 1)
+                              Pasta Dishes (Choose {NP})
                             </h5>
                             <span style={{ fontSize: '0.72rem', color: '#1E40AF', background: '#DBEAFE', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer' }}>
                               {isPastaDishesCollapsed ? '▸ Expand Pasta' : '▾ Fold'}
@@ -1741,20 +1770,20 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                             borderRadius: '16px',
                             fontSize: '0.8rem',
                             fontWeight: 700,
-                            background: selectedPastaDishes.length === 1 ? '#ECFDF5' : '#DBEAFE',
-                            color: selectedPastaDishes.length === 1 ? '#065F46' : '#1E40AF',
-                            border: `1.5px solid ${selectedPastaDishes.length === 1 ? '#A7F3D0' : '#EF4444'}`,
+                            background: selectedPastaDishes.length === NP ? '#ECFDF5' : '#DBEAFE',
+                            color: selectedPastaDishes.length === NP ? '#065F46' : '#1E40AF',
+                            border: `1.5px solid ${selectedPastaDishes.length === NP ? '#A7F3D0' : '#EF4444'}`,
                           }}
                         >
-                          [ {selectedPastaDishes.length} / 1 Selected ]
+                          [ {selectedPastaDishes.length} / {NP} Selected ]
                         </div>
                       </div>
 
                       {/* Red indicator banner when needed to be filled */}
-                      {attemptedStep1Next && selectedPastaDishes.length !== 1 && (
+                      {attemptedStep1Next && selectedPastaDishes.length !== NP && (
                         <div style={{ background: '#FEE2E2', border: '1.5px solid #EF4444', color: '#991B1B', padding: '10px 14px', borderRadius: '8px', fontSize: '0.82rem', fontWeight: 700, marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <AlertCircle size={16} style={{ color: '#DC2626', flexShrink: 0 }} />
-                          <span>Action Required: Please select 1 pasta dish ({selectedPastaDishes.length}/1 selected).</span>
+                          <span>Action Required: Please select {NP} pasta dish{NP > 1 ? 'es' : ''} ({selectedPastaDishes.length}/{NP} selected).</span>
                         </div>
                       )}
 
@@ -1762,7 +1791,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                         <div className="dish-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
                           {availablePastaDishes.map((dish) => {
                             const isSelected = selectedPastaDishes.includes(dish)
-                            const isDisabled = !isSelected && selectedPastaDishes.length >= 1
+                            const isDisabled = !isSelected && selectedPastaDishes.length >= NP
                             const details = getDishMeta(dish)
                             return (
                               <label
@@ -1852,7 +1881,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                                   </div>
 
                                   <div style={{ paddingTop: '6px', borderTop: '1px dashed #F3F4F6', fontSize: '0.75rem', fontWeight: 600, color: isSelected ? '#059669' : isDisabled ? 'var(--muted)' : '#1E40AF' }}>
-                                    {isSelected ? '✓ In Buffet Spread' : isDisabled ? 'Max 1 pasta reached' : '+ Select pasta dish'}
+                                    {isSelected ? '✓ In Buffet Spread' : isDisabled ? `Max ${NP} pasta reached` : '+ Select pasta dish'}
                                   </div>
                                 </div>
                               </label>
@@ -1863,11 +1892,11 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     </div>
 
                     {/* Completion Alert + Fold Action */}
-                    {selectedMainDishes.length === 3 && selectedPastaDishes.length === 1 && (
+                    {selectedMainDishes.length === NM && selectedPastaDishes.length === NP && (
                       <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', padding: '14px 18px', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginTop: '18px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           <Check size={18} style={{ color: '#059669', flexShrink: 0 }} />
-                          <span>All 4 included dishes chosen (3 Main Courses + 1 Pasta Dish). You can add extra courses or flat add-ons below if needed!</span>
+                          <span>All {NM + NP} included dishes chosen ({NM} Main Courses + {NP} Pasta Dish{NP > 1 ? 'es' : ''}). You can add extra courses or flat add-ons below if needed!</span>
                         </div>
                         <button
                           type="button"
@@ -1924,12 +1953,12 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 id="booking-drinks-section"
                 className={`dish-swap-box ${shakeSection === 'drinks' ? 'shake-vibrate' : ''}`}
                 style={{
-                  background: (attemptedStep1Next && selectedDrinks.length !== 1) ? '#FEF2F2' : 'linear-gradient(180deg, #FFFFFF 0%, #F0FDF4 100%)',
-                  border: (attemptedStep1Next && selectedDrinks.length !== 1) ? '2.5px solid #EF4444' : '1.5px solid #10B981',
+                  background: (attemptedStep1Next && selectedDrinks.length !== ND) ? '#FEF2F2' : 'linear-gradient(180deg, #FFFFFF 0%, #F0FDF4 100%)',
+                  border: (attemptedStep1Next && selectedDrinks.length !== ND) ? '2.5px solid #EF4444' : '1.5px solid #10B981',
                   borderRadius: '16px',
                   padding: '24px 20px',
                   marginBottom: '28px',
-                  boxShadow: (attemptedStep1Next && selectedDrinks.length !== 1) ? '0 0 0 4px rgba(239, 68, 68, 0.2)' : '0 4px 18px rgba(16, 185, 129, 0.08)',
+                  boxShadow: (attemptedStep1Next && selectedDrinks.length !== ND) ? '0 0 0 4px rgba(239, 68, 68, 0.2)' : '0 4px 18px rgba(16, 185, 129, 0.08)',
                   transition: 'all 0.3s ease',
                 }}
               >
@@ -1952,7 +1981,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <CupSoda size={20} style={{ color: '#059669', flexShrink: 0 }} />
                       <h4 className="dish-swap-title" style={{ margin: 0, fontSize: '1.2rem', color: 'var(--ink)' }}>
-                        Select Your Included Buffet Drink (Choose 1)
+                        Select Your Included Buffet Drink (Choose {ND})
                       </h4>
                     </div>
                     <p style={{ fontSize: '0.84rem', color: 'var(--muted)', margin: '5px 0 0', paddingLeft: '28px' }}>
@@ -1971,18 +2000,18 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                         borderRadius: '20px',
                         fontSize: '0.82rem',
                         fontWeight: 700,
-                        background: selectedDrinks.length === 1 ? '#ECFDF5' : '#FEE2E2',
-                        color: selectedDrinks.length === 1 ? '#059669' : '#991B1B',
-                        border: `1.5px solid ${selectedDrinks.length === 1 ? '#A7F3D0' : '#EF4444'}`,
+                        background: selectedDrinks.length === ND ? '#ECFDF5' : '#FEE2E2',
+                        color: selectedDrinks.length === ND ? '#059669' : '#991B1B',
+                        border: `1.5px solid ${selectedDrinks.length === ND ? '#A7F3D0' : '#EF4444'}`,
                       }}
                     >
-                      {selectedDrinks.length === 1 ? (
+                      {selectedDrinks.length === ND ? (
                         <>
-                          <Check size={14} /> 1 / 1 Drink Complete
+                          <Check size={14} /> {ND} / {ND} Drink{ND > 1 ? 's' : ''} Complete
                         </>
                       ) : (
                         <>
-                          {selectedDrinks.length} / 1 Drink Selected
+                          {selectedDrinks.length} / {ND} Drink{ND > 1 ? 's' : ''} Selected
                         </>
                       )}
                     </div>
@@ -2024,10 +2053,10 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 </div>
 
                 {/* Red indicator banner when needed to be filled */}
-                {attemptedStep1Next && selectedDrinks.length !== 1 && (
+                {attemptedStep1Next && selectedDrinks.length !== ND && (
                   <div style={{ background: '#FEE2E2', border: '1.5px solid #EF4444', color: '#991B1B', padding: '10px 14px', borderRadius: '8px', fontSize: '0.84rem', fontWeight: 700, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <AlertCircle size={16} style={{ color: '#DC2626', flexShrink: 0 }} />
-                    <span>Action Required: Please choose your 1 included buffet drink (Blue Lemonade, Iced Tea, or Cucumber).</span>
+                    <span>Action Required: Please choose your {ND} included buffet drink{ND > 1 ? 's' : ''} ({availableDrinkOptions.join(', ')}).</span>
                   </div>
                 )}
 
@@ -2056,11 +2085,11 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       <div style={{ fontSize: '0.88rem', color: 'var(--ink)' }}>
                         {selectedDrinks.length > 0 ? (
                           <strong style={{ color: '#059669' }}>
-                            🥤 {selectedDrinks[0]}
+                            {selectedDrinks.join(', ')}
                           </strong>
                         ) : (
                           <span style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
-                            No drink selected yet. Click to unfold and pick Blue Lemonade, Iced Tea, or Cucumber.
+                            No drink selected yet. Click to unfold and pick from {availableDrinkOptions.join(', ')}.
                           </span>
                         )}
                       </div>
@@ -2233,7 +2262,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                             <Minus size={14} />
                           </button>
                           <strong style={{ minWidth: '22px', textAlign: 'center', fontSize: '1rem' }}>{extraMain}</strong>
-                          <button type="button" className="stepper-btn" onClick={() => setExtraMain((prev) => prev + 1)}>
+                          <button type="button" className="stepper-btn" onClick={() => setExtraMain((prev) => Math.min(business.maxExtraMain, prev + 1))}>
                             <Plus size={14} />
                           </button>
                         </div>
@@ -2304,7 +2333,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                             <Minus size={14} />
                           </button>
                           <strong style={{ minWidth: '22px', textAlign: 'center', fontSize: '1rem' }}>{extraPasta}</strong>
-                          <button type="button" className="stepper-btn" onClick={() => setExtraPasta((prev) => prev + 1)}>
+                          <button type="button" className="stepper-btn" onClick={() => setExtraPasta((prev) => Math.min(business.maxExtraPasta, prev + 1))}>
                             <Plus size={14} />
                           </button>
                         </div>
@@ -2375,7 +2404,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                             <Minus size={14} />
                           </button>
                           <strong style={{ minWidth: '22px', textAlign: 'center', fontSize: '1rem' }}>{extraDessert}</strong>
-                          <button type="button" className="stepper-btn" onClick={() => setExtraDessert((prev) => prev + 1)}>
+                          <button type="button" className="stepper-btn" onClick={() => setExtraDessert((prev) => Math.min(business.maxExtraDessert, prev + 1))}>
                             <Plus size={14} />
                           </button>
                         </div>
@@ -2518,7 +2547,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                 <CreditCard size={22} style={{ color: '#B45309', marginTop: '2px', flexShrink: 0 }} />
                 <div>
                   <strong style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    Required 50% Downpayment:
+                    Required {DP}% Downpayment:
                   </strong>
                   <div className="font-number" style={{ fontSize: '1.45rem', fontWeight: 800, color: '#18181B', marginTop: '2px', lineHeight: 1.2 }}>
                     {formatMoney(calculations.downpayment, currentPkg.currency)}
@@ -2582,7 +2611,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     className={`calendar-day-cell ${stateClass} ${isSelected ? 'selected' : ''} ${!isClickable ? 'disabled' : ''}`}
                     onClick={() => isClickable && handleDateSelect(item.dateStr)}
                     disabled={!isClickable}
-                    title={isTooSoon ? 'Requires at least 14 days advance booking' : isBlocked ? 'Blocked date' : isHeld ? `Temporarily held (${RESERVE_HOLD_HOURS}-hour hold)` : isBooked ? 'Already reserved' : 'Available for booking'}
+                    title={isTooSoon ? `Requires at least ${LEAD_DAYS} days advance booking` : isBlocked ? 'Blocked date' : isHeld ? `Temporarily held (${RESERVE_HOLD_HOURS}-hour hold)` : isBooked ? 'Already reserved' : 'Available for booking'}
                   >
                     <span className="calendar-day-number">{item.day}</span>
                     {isTooSoon ? (
@@ -2787,7 +2816,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                             onChange={() => choosePaymentTerm('downpayment')}
                             style={{ accentColor: 'var(--terracotta)', cursor: 'pointer' }}
                           />
-                          <strong style={{ fontSize: '0.95rem', color: 'var(--ink)' }}>50% Downpayment</strong>
+                          <strong style={{ fontSize: '0.95rem', color: 'var(--ink)' }}>{DP}% Downpayment</strong>
                         </div>
                         <span style={{ fontSize: '0.7rem', fontWeight: 700, background: '#FFEDD5', color: '#9A3412', padding: '2px 8px', borderRadius: '4px' }}>
                           STANDARD LOCK-IN
@@ -2797,7 +2826,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                         {formatMoney(calculations.downpayment, currentPkg.currency)}
                       </div>
                       <span style={{ fontSize: '0.76rem', color: 'var(--muted)', lineHeight: 1.4 }}>
-                        Pay 50% now to lock in your date. Settle the remaining 50% ({formatMoney(calculations.totalPrice - calculations.downpayment, currentPkg.currency)}) on the event day.
+                        Pay {DP}% now to lock in your date. Settle the remaining {100 - DP}% ({formatMoney(calculations.totalPrice - calculations.downpayment, currentPkg.currency)}) on the event day.
                       </span>
                     </div>
 
@@ -2875,7 +2904,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                         {formatMoney(RESERVATION_FEE, currentPkg.currency)}
                       </div>
                       <span style={{ fontSize: '0.76rem', color: 'var(--muted)', lineHeight: 1.4 }}>
-                        Reservation fee to lock your date. Pay it within 48 hours — it&apos;s deducted from your total. Remaining balance: {formatMoney(Math.max(0, calculations.totalPrice - RESERVATION_FEE), currentPkg.currency)}.
+                        Reservation fee to lock your date. Pay it within {RESERVE_HOLD_HOURS} hours — it&apos;s deducted from your total. Remaining balance: {formatMoney(Math.max(0, calculations.totalPrice - RESERVATION_FEE), currentPkg.currency)}.
                       </span>
                     </div>
                   </div>
@@ -2885,7 +2914,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   <div style={{ background: '#FFFBEB', border: '1.5px solid #FCD34D', borderRadius: 'var(--radius-md)', padding: '16px 18px', marginBottom: '8px', display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
                     <AlertCircle size={20} style={{ color: '#B45309', flexShrink: 0, marginTop: '2px' }} />
                     <div style={{ fontSize: '0.85rem', color: '#78350F', lineHeight: 1.55 }}>
-                      <strong style={{ display: 'block', fontSize: '0.95rem', marginBottom: '4px' }}>How the ₱2,000 reservation works</strong>
+                      <strong style={{ display: 'block', fontSize: '0.95rem', marginBottom: '4px' }}>How the {formatMoney(RESERVATION_FEE)} reservation works</strong>
                       Your date is held (shown as <strong>Blocked</strong>) for {RESERVE_HOLD_HOURS} hours. Pay the <strong>{formatMoney(RESERVATION_FEE, currentPkg.currency)}</strong> reservation
                       fee and upload the receipt — now below, or later from <strong>My Bookings</strong> — within that window to lock the date as <strong>Reserved</strong>.
                       The fee is deducted from your total ({formatMoney(calculations.totalPrice, currentPkg.currency)}). If no payment is uploaded in time,
@@ -2897,8 +2926,8 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     To lock your celebration date, {paymentTerm === 'full' ? (
                       <>a <strong>100% full upfront payment</strong> of <strong style={{ color: 'var(--ink)' }}>{formatMoney(calculations.totalPrice, currentPkg.currency)}</strong></>
                     ) : (
-                      <>a <strong>50% downpayment</strong> of <strong style={{ color: 'var(--ink)' }}>{formatMoney(calculations.downpayment, currentPkg.currency)}</strong></>
-                    )} applies. Transfer via QR Ph / GCash or MariBank — uploading your receipt now is <strong>optional</strong>; you can also upload it later from <strong>My Bookings</strong>.
+                      <>a <strong>{DP}% downpayment</strong> of <strong style={{ color: 'var(--ink)' }}>{formatMoney(calculations.downpayment, currentPkg.currency)}</strong></>
+                    )} applies. Transfer via QR Ph / GCash or {business.bankName} — uploading your receipt now is <strong>optional</strong>; you can also upload it later from <strong>My Bookings</strong>.
                   </p>
                 )}
 
@@ -2948,7 +2977,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   >
                     <Building size={22} style={{ color: 'var(--gold-dark)' }} />
                     <div>
-                      <strong style={{ display: 'block', fontSize: '0.9rem', color: 'var(--ink)' }}>MariBank / Bank Transfer</strong>
+                      <strong style={{ display: 'block', fontSize: '0.9rem', color: 'var(--ink)' }}>{business.bankName} / Bank Transfer</strong>
                       <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Direct bank transfer</span>
                     </div>
                   </button>
@@ -2963,16 +2992,16 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                           onClick={() => setQrModalInfo({
                             isOpen: true,
                             title: 'GCash / QR Ph Code',
-                            imageSrc: '/sinag_gcash_qr.png',
+                            imageSrc: business.gcashQrUrl,
                             subtitle: 'Official Sinag GCash InstaPay Standee',
-                            accountName: 'SU*****E C.',
-                            accountNo: '0928 714 4597',
+                            accountName: business.gcashName,
+                            accountNo: business.gcashNumber,
                           })}
                           style={{ cursor: 'pointer', position: 'relative', background: '#FFFFFF', borderRadius: '10px', padding: '14px', border: '1.5px solid #CBD5E1', boxShadow: '0 4px 14px rgba(0,0,0,0.06)' }}
                           title="Click to view full size QR code"
                         >
                           <img
-                            src="/sinag_gcash_qr.png"
+                            src={business.gcashQrUrl}
                             alt="Official Sinag Catering GCash / QR Ph Standee"
                             style={{ width: '100%', height: '340px', display: 'block', borderRadius: '8px', objectFit: 'contain' }}
                           />
@@ -2986,10 +3015,10 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                           onClick={() => setQrModalInfo({
                             isOpen: true,
                             title: 'GCash / QR Ph Code',
-                            imageSrc: '/sinag_gcash_qr.png',
+                            imageSrc: business.gcashQrUrl,
                             subtitle: 'Official Sinag GCash InstaPay Standee',
-                            accountName: 'SU*****E C.',
-                            accountNo: '0928 714 4597',
+                            accountName: business.gcashName,
+                            accountNo: business.gcashNumber,
                           })}
                           style={{
                             marginTop: '12px',
@@ -3026,13 +3055,13 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                           </span>
                         </div>
                         <strong style={{ display: 'block', fontSize: '1.25rem', color: 'var(--ink)' }}>
-                          Sinag's Catering Services (SU*****E C.)
+                          {business.businessName} ({business.gcashName})
                         </strong>
                         <div style={{ fontSize: '0.92rem', color: 'var(--muted)', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                          <span>Mobile / Hotline: <strong style={{ color: 'var(--ink)', fontSize: '1.05rem' }}>0928 714 4597</strong></span>
+                          <span>GCash No.: <strong style={{ color: 'var(--ink)', fontSize: '1.05rem' }}>{business.gcashNumber}</strong></span>
                           <button
                             type="button"
-                            onClick={() => handleCopyAccount('0928 714 4597')}
+                            onClick={() => handleCopyAccount(phoneDigits(business.gcashNumber))}
                             style={{
                               background: '#F1F5F9',
                               border: '1px solid #CBD5E1',
@@ -3051,13 +3080,13 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                           </button>
                         </div>
                         <div style={{ fontSize: '0.92rem', color: 'var(--ink-light)', marginTop: '12px', padding: '12px 16px', background: '#F8FAFC', borderRadius: '8px', border: '1.5px solid #E2E8F0' }}>
-                          {paymentTerm === 'full' ? 'Required Full Upfront Payment' : paymentTerm === 'reserve' ? 'Reservation Fee' : 'Required 50% Downpayment'}:{' '}
+                          {paymentTerm === 'full' ? 'Required Full Upfront Payment' : paymentTerm === 'reserve' ? 'Reservation Fee' : `Required ${DP}% Downpayment`}:{' '}
                           <strong style={{ color: paymentTerm === 'full' ? '#059669' : 'var(--terracotta)', fontSize: '1.35rem', display: 'block', marginTop: '4px' }}>
                             {formatMoney(payableAmount, currentPkg.currency)}
                           </strong>
                         </div>
                         <p style={{ margin: '14px 0 0', fontSize: '0.85rem', color: 'var(--muted)', lineHeight: 1.55 }}>
-                          Point your phone camera or open <strong>GCash</strong>, <strong>Maya</strong>, <strong>BDO</strong>, <strong>BPI</strong>, <strong>MariBank</strong>, or any QR Ph app. Scan the large QR code on the left, confirm transfer of <strong>{formatMoney(payableAmount, currentPkg.currency)}</strong> to <strong>SU*****E C.</strong>, and attach your screenshot receipt below.
+                          Point your phone camera or open <strong>GCash</strong>, <strong>Maya</strong>, <strong>BDO</strong>, <strong>BPI</strong>, <strong>{business.bankName}</strong>, or any QR Ph app. Scan the large QR code on the left, confirm transfer of <strong>{formatMoney(payableAmount, currentPkg.currency)}</strong> to <strong>{business.gcashName}</strong>, and attach your screenshot receipt below.
                         </p>
                       </div>
                     </div>
@@ -3072,18 +3101,18 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                         <div
                           onClick={() => setQrModalInfo({
                             isOpen: true,
-                            title: 'MariBank / InstaPay QR Code',
-                            imageSrc: '/sinag_maribank_qr.png',
-                            subtitle: 'Official Sinag MariBank InstaPay Standee',
-                            accountName: 'SUNSHINE CRUZ (MariBank ****2765)',
-                            accountNo: '0928 714 4597',
+                            title: `${business.bankName} / InstaPay QR Code`,
+                            imageSrc: business.bankQrUrl,
+                            subtitle: `Official ${business.bankName} InstaPay Standee`,
+                            accountName: `${business.bankAccountName} (${business.bankAccountTag})`,
+                            accountNo: business.bankAccountNumber,
                           })}
                           style={{ cursor: 'pointer', position: 'relative', background: '#FFFFFF', borderRadius: '10px', padding: '14px', border: '1.5px solid #CBD5E1', boxShadow: '0 4px 14px rgba(0,0,0,0.06)' }}
-                          title="Click to view full size MariBank QR code"
+                          title={`Click to view full size ${business.bankName} QR code`}
                         >
                           <img
-                            src="/sinag_maribank_qr.png"
-                            alt="Official Sinag Catering MariBank / InstaPay QR Code"
+                            src={business.bankQrUrl}
+                            alt={`Official ${business.bankName} / InstaPay QR Code`}
                             style={{ width: '100%', height: '340px', display: 'block', borderRadius: '8px', objectFit: 'contain' }}
                           />
                           <div style={{ position: 'absolute', bottom: '18px', right: '18px', background: 'rgba(234, 88, 12, 0.92)', color: '#FFF', borderRadius: '6px', padding: '5px 10px', fontSize: '0.72rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 2px 6px rgba(0,0,0,0.2)' }}>
@@ -3095,11 +3124,11 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                           type="button"
                           onClick={() => setQrModalInfo({
                             isOpen: true,
-                            title: 'MariBank / InstaPay QR Code',
-                            imageSrc: '/sinag_maribank_qr.png',
-                            subtitle: 'Official Sinag MariBank InstaPay Standee',
-                            accountName: 'SUNSHINE CRUZ (MariBank ****2765)',
-                            accountNo: '0928 714 4597',
+                            title: `${business.bankName} / InstaPay QR Code`,
+                            imageSrc: business.bankQrUrl,
+                            subtitle: `Official ${business.bankName} InstaPay Standee`,
+                            accountName: `${business.bankAccountName} (${business.bankAccountTag})`,
+                            accountNo: business.bankAccountNumber,
                           })}
                           style={{
                             marginTop: '12px',
@@ -3129,23 +3158,23 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                       <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
                           <span style={{ display: 'inline-block', fontSize: '0.75rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#9A3412', background: '#FFEDD5', padding: '3px 10px', borderRadius: '5px' }}>
-                            Official MariBank Account
+                            Official {business.bankName} Account
                           </span>
                           <span style={{ display: 'inline-block', fontSize: '0.75rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#047857', background: '#D1FAE5', padding: '3px 10px', borderRadius: '5px' }}>
                             InstaPay Compatible
                           </span>
                         </div>
                         <strong style={{ display: 'block', fontSize: '1.25rem', color: 'var(--ink)' }}>
-                          MariBank Philippines — SUNSHINE CRUZ
+                          {business.bankName} — {business.bankAccountName}
                         </strong>
                         <div style={{ fontSize: '0.92rem', color: 'var(--muted)', marginTop: '8px' }}>
-                          Account Tag: <strong style={{ color: 'var(--ink)', fontSize: '1.05rem' }}>MariBank(****2765)</strong>
+                          Account Tag: <strong style={{ color: 'var(--ink)', fontSize: '1.05rem' }}>{business.bankAccountTag}</strong>
                         </div>
                         <div style={{ fontSize: '0.92rem', color: 'var(--muted)', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                          <span>Account / Mobile No: <strong style={{ color: 'var(--ink)', fontSize: '1.05rem' }}>0928 714 4597</strong></span>
+                          <span>Account / Mobile No: <strong style={{ color: 'var(--ink)', fontSize: '1.05rem' }}>{business.bankAccountNumber}</strong></span>
                           <button
                             type="button"
-                            onClick={() => handleCopyAccount('0928 714 4597')}
+                            onClick={() => handleCopyAccount(phoneDigits(business.bankAccountNumber))}
                             style={{
                               background: '#F1F5F9',
                               border: '1px solid #CBD5E1',
@@ -3164,13 +3193,13 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                           </button>
                         </div>
                         <div style={{ fontSize: '0.92rem', color: 'var(--ink-light)', marginTop: '12px', padding: '12px 16px', background: '#F8FAFC', borderRadius: '8px', border: '1.5px solid #E2E8F0' }}>
-                          {paymentTerm === 'full' ? 'Required Full Upfront Payment' : paymentTerm === 'reserve' ? 'Reservation Fee' : 'Required 50% Downpayment'}:{' '}
+                          {paymentTerm === 'full' ? 'Required Full Upfront Payment' : paymentTerm === 'reserve' ? 'Reservation Fee' : `Required ${DP}% Downpayment`}:{' '}
                           <strong style={{ color: paymentTerm === 'full' ? '#059669' : 'var(--terracotta)', fontSize: '1.35rem', display: 'block', marginTop: '4px' }}>
                             {formatMoney(payableAmount, currentPkg.currency)}
                           </strong>
                         </div>
                         <p style={{ margin: '14px 0 0', fontSize: '0.85rem', color: 'var(--muted)', lineHeight: 1.55 }}>
-                          Point your phone camera or open <strong>MariBank</strong> or any bank via InstaPay. Scan the large QR code on the left, confirm transfer of <strong>{formatMoney(payableAmount, currentPkg.currency)}</strong> to <strong>SUNSHINE CRUZ</strong>, and attach your screenshot receipt below.
+                          Point your phone camera or open <strong>{business.bankName}</strong> or any bank via InstaPay. Scan the large QR code on the left, confirm transfer of <strong>{formatMoney(payableAmount, currentPkg.currency)}</strong> to <strong>{business.bankAccountName}</strong>, and attach your screenshot receipt below.
                         </p>
                       </div>
                     </div>
@@ -3236,7 +3265,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   </div>
 
                   <p style={{ margin: '0 0 16px', fontSize: '0.82rem', color: 'var(--muted)', lineHeight: 1.45 }}>
-                    Already paid? Enter your GCash / MariBank reference number and attach your receipt screenshot so our admin team can verify it faster. You can also do this later from My Bookings.
+                    Already paid? Enter your GCash / {business.bankName} reference number and attach your receipt screenshot so our admin team can verify it faster. You can also do this later from My Bookings.
                   </p>
 
                   <div className="form-group" style={{ marginBottom: '14px' }}>
@@ -3247,7 +3276,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     <input
                       type="text"
                       className="input-field"
-                      placeholder="e.g. 902148923019 or MariBank transaction ID"
+                      placeholder={`e.g. 902148923019 or ${business.bankName} transaction ID`}
                       value={gcashRefNumber}
                       onChange={(e) => setGcashRefNumber(e.target.value)}
                     />
@@ -3512,14 +3541,14 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                     }}
                   />
                   <h3 style={{ margin: 0, fontFamily: 'var(--font-serif)', fontSize: '1.85rem', color: 'var(--ink)', letterSpacing: '-0.01em' }}>
-                    Sinag's Catering Services
+                    {business.businessName}
                   </h3>
                 </div>
                 <p style={{ margin: '0 0 2px', fontSize: '0.82rem', color: 'var(--muted)', letterSpacing: '0.02em' }}>
-                  Authentic Filipino Celebrations & Catering Banquet · Baliwag, Bulacan
+                  Authentic Filipino Celebrations & Catering Banquet · {business.address}
                 </p>
                 <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--ink-light)' }}>
-                  Mobile Hotline: <strong>0928 714 4597</strong> · contact@sinagcateringservices.com
+                  Mobile Hotline: <strong>{business.phone}</strong> · {business.email}
                 </p>
               </div>
 
@@ -3580,7 +3609,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                   </div>
                   <div>
                     <span style={{ color: 'var(--muted)', display: 'inline-block', width: '92px' }}>Contact No:</span>
-                    <strong style={{ color: 'var(--ink)' }}>{clientPhone || '0928 714 4597'}</strong>
+                    <strong style={{ color: 'var(--ink)' }}>{clientPhone || business.phone}</strong>
                   </div>
                   <div>
                     <span style={{ color: 'var(--muted)', display: 'inline-block', width: '92px' }}>Email:</span>
@@ -3629,11 +3658,11 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                         {/* Selected 4 Included Dishes + Beverage */}
                         <div style={{ marginTop: '8px', padding: '8px 10px', background: '#FFFDF9', border: '1px solid #FED7AA', borderRadius: '6px' }}>
                           <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#9A3412', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px' }}>
-                            Included 4 Courses + Buffet Drink:
+                            Included {NM + NP} Courses + Buffet Drink{ND > 1 ? 's' : ''}:
                           </div>
                           <div style={{ fontSize: '0.79rem', color: 'var(--ink-light)', lineHeight: 1.45 }}>
-                            <span style={{ color: '#991B1B', fontWeight: 600 }}>• 3 Mains:</span> {selectedMainDishes.join(', ') || '3 main dishes selected'}<br />
-                            <span style={{ color: '#1E40AF', fontWeight: 600 }}>• 1 Pasta:</span> {selectedPastaDishes.join(', ') || '1 pasta dish selected'}<br />
+                            <span style={{ color: '#991B1B', fontWeight: 600 }}>• {NM} Mains:</span> {selectedMainDishes.join(', ') || `${NM} main dishes selected`}<br />
+                            <span style={{ color: '#1E40AF', fontWeight: 600 }}>• {NP} Pasta:</span> {selectedPastaDishes.join(', ') || `${NP} pasta dish selected`}<br />
                             <span style={{ color: '#059669', fontWeight: 600 }}>• Buffet Drink:</span> {selectedDrinks.join(', ') || 'Standard House Drink'}
                           </div>
                         </div>
@@ -3803,14 +3832,14 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                             ? '100% Full Payment Upfront'
                             : paymentTerm === 'reserve'
                             ? `Reserve Only – ${formatMoney(payableAmount, currentPkg.currency)} Reservation Fee`
-                            : `50% Downpayment: ${formatMoney(calculations.downpayment, currentPkg.currency)}`}
+                            : `${DP}% Downpayment: ${formatMoney(calculations.downpayment, currentPkg.currency)}`}
                         </strong>
                         <span style={{ fontSize: '0.76rem', color: tone.sub }}>
                           {paymentTerm === 'full'
                             ? 'Event bill fully settled upfront. Zero (₱0) balance remaining on event day.'
                             : paymentTerm === 'reserve'
-                            ? `Pay within 48 hours to lock your date. Remaining balance (${formatMoney(Math.max(0, calculations.totalPrice - payableAmount), currentPkg.currency)}) due before the event.`
-                            : `Remaining 50% balance (${formatMoney(calculations.totalPrice - calculations.downpayment, currentPkg.currency)}) payable on event day.`}
+                            ? `Pay within ${RESERVE_HOLD_HOURS} hours to lock your date. Remaining balance (${formatMoney(Math.max(0, calculations.totalPrice - payableAmount), currentPkg.currency)}) due before the event.`
+                            : `Remaining ${100 - DP}% balance (${formatMoney(calculations.totalPrice - calculations.downpayment, currentPkg.currency)}) payable on event day.`}
                         </span>
                       </div>
                       <div style={{ textAlign: 'right' }}>
@@ -3839,7 +3868,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                         Selected Payment Term
                       </span>
                       <strong style={{ fontSize: '0.92rem', color: 'var(--ink)' }}>
-                        {paymentTerm === 'full' ? '100% Full Payment Upfront' : paymentTerm === 'reserve' ? `Reserve Only (${formatMoney(payableAmount, currentPkg.currency)} fee)` : '50% Downpayment'}
+                        {paymentTerm === 'full' ? '100% Full Payment Upfront' : paymentTerm === 'reserve' ? `Reserve Only (${formatMoney(payableAmount, currentPkg.currency)} fee)` : `${DP}% Downpayment`}
                       </strong>
                     </div>
                     {(
@@ -3849,7 +3878,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
                             Payment Method
                           </span>
                           <strong style={{ fontSize: '0.92rem', color: 'var(--ink)' }}>
-                            {paidOnlineRef ? 'PayMongo (Online)' : paymentMethod === 'bank_transfer' ? 'MariBank / Bank Transfer' : 'QR Ph / GCash'}
+                            {paidOnlineRef ? 'PayMongo (Online)' : paymentMethod === 'bank_transfer' ? `${business.bankName} / Bank Transfer` : 'QR Ph / GCash'}
                           </strong>
                         </div>
                         <div>
@@ -4021,7 +4050,7 @@ export const BookingWizard: React.FC<BookingWizardProps> = ({
               {qrModalInfo.title}
             </h3>
             <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0 0 16px' }}>
-              Scan directly with your phone camera, GCash, MariBank, Maya, or any bank app via QR Ph / InstaPay.
+              Scan directly with your phone camera, GCash, {business.bankName}, Maya, or any bank app via QR Ph / InstaPay.
             </p>
 
             <div style={{ background: '#FFFFFF', padding: '16px', borderRadius: '14px', border: '2px solid #CBD5E1', display: 'inline-block', margin: '0 auto 16px', boxShadow: '0 8px 24px rgba(0,0,0,0.08)' }}>

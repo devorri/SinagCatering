@@ -219,7 +219,9 @@ export const mapDatabasePackage = (record: any): CateringPackage => {
     bestFor: record.ideal_for || '',
     description: record.ideal_for || '',
     tiers,
-    pricePerHead: record.price_per_head ?? undefined,
+    // Tier pricing is the source of truth. A per-head rate only applies to a
+    // package that has no tiers, so editing tiers in the admin always shows up.
+    pricePerHead: tiers.length === 0 && record.price_per_head != null ? Number(record.price_per_head) : undefined,
     defaultPax: record.default_pax ?? tiers[0]?.pax,
     currency: 'PHP',
     inclusions: Array.isArray(details.inclusions) ? details.inclusions : (Array.isArray(record.included_menu) ? record.included_menu : []),
@@ -233,8 +235,27 @@ export const mapDatabasePackage = (record: any): CateringPackage => {
 export const formatMoney = (amount: number, currency: 'PHP' = 'PHP'): string =>
   `${currency} ${amount.toLocaleString('en-PH', { maximumFractionDigits: 2 })}`
 
-export const FOOD_BUFFER_PAX = 10
-export const EXCESS_PAX_RATE = 700
+// Live values: updated from the admin's Business Settings (see lib/businessSettings.ts).
+export let FOOD_BUFFER_PAX = 10
+export let EXCESS_PAX_RATE = 700
+
+export let MAX_EXTRA_MAIN = 3
+export let MAX_EXTRA_PASTA = 2
+export let MAX_EXTRA_DESSERT = 2
+
+export const setPricingRules = (rules: {
+  foodBufferPax: number
+  excessPaxRate: number
+  maxExtraMain: number
+  maxExtraPasta: number
+  maxExtraDessert: number
+}) => {
+  FOOD_BUFFER_PAX = rules.foodBufferPax
+  EXCESS_PAX_RATE = rules.excessPaxRate
+  MAX_EXTRA_MAIN = rules.maxExtraMain
+  MAX_EXTRA_PASTA = rules.maxExtraPasta
+  MAX_EXTRA_DESSERT = rules.maxExtraDessert
+}
 export const EXTRA_MAIN_RATE = 100
 export const EXTRA_PASTA_RATE = 80
 export const EXTRA_DESSERT_RATE = 50
@@ -493,9 +514,9 @@ export function recommendPackage(
   // 2. Optimal Value Matching: utilize remaining headroom up to the user budget
   let remainingBudget = budget - currentTotal
 
-  // If we have headroom for extra main dishes (up to 3 dishes)
+  // If we have headroom for extra main dishes (up to MAX_EXTRA_MAIN)
   const extraMainCostPerDish = guestCount * extraMainRate
-  while (suggestedAddons.extraMain < 3 && remainingBudget >= extraMainCostPerDish) {
+  while (suggestedAddons.extraMain < MAX_EXTRA_MAIN && remainingBudget >= extraMainCostPerDish) {
     suggestedAddons.extraMain += 1
     remainingBudget -= extraMainCostPerDish
     currentTotal += extraMainCostPerDish
@@ -504,9 +525,9 @@ export function recommendPackage(
     customizationNotes.push(`+${suggestedAddons.extraMain} Extra Main Dish${suggestedAddons.extraMain > 1 ? 'es' : ''} (+₱${(suggestedAddons.extraMain * extraMainCostPerDish).toLocaleString()})`)
   }
 
-  // If we have headroom for extra pasta (up to 2 dishes)
+  // If we have headroom for extra pasta (up to MAX_EXTRA_PASTA)
   const extraPastaCost = guestCount * extraPastaRate
-  while (suggestedAddons.extraPasta < 2 && remainingBudget >= extraPastaCost) {
+  while (suggestedAddons.extraPasta < MAX_EXTRA_PASTA && remainingBudget >= extraPastaCost) {
     suggestedAddons.extraPasta += 1
     remainingBudget -= extraPastaCost
     currentTotal += extraPastaCost
@@ -515,9 +536,9 @@ export function recommendPackage(
     customizationNotes.push(`+${suggestedAddons.extraPasta} Extra Pasta Dish${suggestedAddons.extraPasta > 1 ? 'es' : ''} (+₱${(suggestedAddons.extraPasta * extraPastaCost).toLocaleString()})`)
   }
 
-  // If we have headroom for extra dessert (up to 2 dishes)
+  // If we have headroom for extra dessert (up to MAX_EXTRA_DESSERT)
   const extraDessertCost = guestCount * extraDessertRate
-  while (suggestedAddons.extraDessert < 2 && remainingBudget >= extraDessertCost) {
+  while (suggestedAddons.extraDessert < MAX_EXTRA_DESSERT && remainingBudget >= extraDessertCost) {
     suggestedAddons.extraDessert += 1
     remainingBudget -= extraDessertCost
     currentTotal += extraDessertCost

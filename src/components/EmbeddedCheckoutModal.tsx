@@ -44,11 +44,11 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
   totalPrice,
   customerName = 'Valued Client',
   customerEmail = 'client@sinagcater.com',
-  customerPhone = '0928 714 4597',
+  customerPhone = '',
   onPaymentSuccess,
   syncBooking = true,
 }) => {
-  const { bookings, verifyDownpaymentBooking } = useApp()
+  const { bookings, verifyDownpaymentBooking, business } = useApp()
   const [activeTab, setActiveTab] = useState<'gcash' | 'card' | 'maya'>('gcash')
   const [gcashMode, setGcashMode] = useState<'qr' | 'number'>('qr')
 
@@ -57,7 +57,7 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
   const [isLoadingQr, setIsLoadingQr] = useState<boolean>(false)
   const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null)
   // Form states
-  const [gcashPhone, setGcashPhone] = useState(customerPhone || '09287144597')
+  const [gcashPhone, setGcashPhone] = useState(customerPhone || '')
   const [gcashRef, setGcashRef] = useState('')
   const [gcashOtp, setGcashOtp] = useState('')
   const [otpSent, setOtpSent] = useState(false)
@@ -312,7 +312,7 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
               Downpayment Confirmed!
             </h3>
             <p style={{ fontSize: '0.88rem', color: 'var(--muted)', margin: '0 0 18px' }}>
-              Your 50% deposit has been verified. Your event date is officially locked in our calendar.
+              Your payment has been verified. Your event date is officially locked in our calendar.
             </p>
 
             <div
@@ -331,7 +331,7 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
                 <strong style={{ fontFamily: 'monospace', color: 'var(--ink)' }}>{confirmedRef}</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                <span style={{ color: 'var(--muted)' }}>Amount Paid (50%):</span>
+                <span style={{ color: 'var(--muted)' }}>Amount Paid:</span>
                 <strong style={{ color: 'var(--emerald)', fontSize: '0.95rem' }}>{formatMoney(amount)}</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
@@ -377,7 +377,7 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <div style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    Required 50% Downpayment
+                    Required {business.downpaymentPercent}% Downpayment
                   </div>
                   <strong style={{ fontSize: '0.92rem', color: 'var(--ink)' }}>{packageName}</strong>
                   {guestCount && (
@@ -687,12 +687,12 @@ export const EmbeddedCheckoutModal: React.FC<EmbeddedCheckoutModalProps> = ({
                   }}
                 >
                   <strong style={{ color: 'var(--ink)', display: 'block', marginBottom: '6px' }}>
-                    Maya / InstaPay Bank Transfer
+                    {business.bankName} / InstaPay Bank Transfer
                   </strong>
                   <div style={{ color: 'var(--muted)', lineHeight: 1.5 }}>
-                    <div>Account Name: <strong>Sinag's Catering Services</strong></div>
-                    <div>Account Number: <strong>0928 714 4597</strong></div>
-                    <div>Bank / E-Wallet: <strong>Maya Philippines / InstaPay</strong></div>
+                    <div>Account Name: <strong>{business.bankAccountName}</strong></div>
+                    <div>Account Number: <strong>{business.bankAccountNumber}</strong></div>
+                    <div>Bank / E-Wallet: <strong>{business.bankName} / InstaPay</strong></div>
                   </div>
                 </div>
 

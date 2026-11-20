@@ -15,12 +15,15 @@ import {
   CLIENT_REACTION_SCREENSHOTS,
 } from '../data/galleryData'
 import type { ClientReactionScreenshot } from '../data/galleryData'
+import { useApp } from '../context/AppContext'
+import { phoneDigits } from '../lib/businessSettings'
 
 interface TestimonialsPageProps {
   onStartBooking: () => void
 }
 
 export const TestimonialsPage: React.FC<TestimonialsPageProps> = ({ onStartBooking }) => {
+  const { business } = useApp()
   const [activeReactionModal, setActiveReactionModal] = useState<ClientReactionScreenshot | null>(null)
 
   return (
@@ -68,7 +71,7 @@ export const TestimonialsPage: React.FC<TestimonialsPageProps> = ({ onStartBooki
                   <Utensils size={18} />
                 </div>
                 <div>
-                  <span className="t-stat-num">+10 Pax</span>
+                  <span className="t-stat-num">+{business.foodBufferPax} Pax</span>
                   <span className="t-stat-label">Free Buffer with Zero Shortages</span>
                 </div>
               </div>
@@ -167,15 +170,15 @@ export const TestimonialsPage: React.FC<TestimonialsPageProps> = ({ onStartBooki
               <h2>Experience thoughtful, generous catering for your event.</h2>
               <p>
                 Every standard package includes complimentary tableware, buffet linens,
-                roll-top warmers, attentive service staff, and a +10 pax food buffer.
+                roll-top warmers, attentive service staff, and a +{business.foodBufferPax} pax food buffer.
               </p>
             </div>
             <div className="testimonials-cta-buttons">
               <button type="button" onClick={onStartBooking} className="btn-hero-primary">
                 Start Booking <ChevronRight size={16} />
               </button>
-              <a href="tel:09287144597" className="btn-hero-outline">
-                <Phone size={15} /> 0928 714 4597
+              <a href={`tel:${phoneDigits(business.phone)}`} className="btn-hero-outline">
+                <Phone size={15} /> {business.phone}
               </a>
             </div>
           </div>

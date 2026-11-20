@@ -1,26 +1,74 @@
 import type { Booking } from '../types'
 
-/** 48-hour window for the "Reserve Only" temporary date hold. */
-export const RESERVE_HOLD_HOURS = 48
-export const RESERVE_HOLD_MS = RESERVE_HOLD_HOURS * 60 * 60 * 1000
+// ---------------------------------------------------------------------------
+// Live business rules. Defaults below are replaced by the admin's Business
+// Settings as soon as they load (see lib/businessSettings.ts). ES module
+// exports are live bindings, so every importer sees the updated values.
+// ---------------------------------------------------------------------------
+
+/** Window for the "Reserve Only" temporary date hold. */
+export let RESERVE_HOLD_HOURS = 48
+export let RESERVE_HOLD_MS = RESERVE_HOLD_HOURS * 60 * 60 * 1000
 
 /** Reservation fee for a "Reserve Only" hold (credited to the package total). */
-export const RESERVATION_FEE = 2000
+export let RESERVATION_FEE = 2000
 
 /** Days before the event when the automated reminder fires. */
-export const EVENT_REMINDER_DAYS = 7
+export let EVENT_REMINDER_DAYS = 7
 
-/** Admin mobile number for SMS alerts (override with VITE_ADMIN_PHONE). */
-export const ADMIN_ALERT_PHONE =
+/** Admin mobile number for SMS alerts. */
+export let ADMIN_ALERT_PHONE =
   (import.meta.env.VITE_ADMIN_PHONE as string | undefined)?.trim() || '09287144597'
+
+/** Minimum days between booking and event. */
+export let LEAD_TIME_DAYS = 14
+
+/** Refund tiers: >= full days → 100%, >= partial days → partial %, otherwise 0%. */
+export let REFUND_FULL_DAYS = 30
+export let REFUND_PARTIAL_DAYS = 14
+export let REFUND_PARTIAL_PERCENT = 50
+
+/** Downpayment share of the total, in percent. */
+export let DOWNPAYMENT_PERCENT = 50
 
 export type PaymentTerm = 'full' | 'downpayment' | 'reserve'
 
+const pesoLabel = (n: number) => `₱${Math.round(n).toLocaleString('en-PH')}`
+
+/** Labels are rebuilt whenever the settings change (same object, updated in place). */
 export const PAYMENT_TERM_LABELS: Record<PaymentTerm, string> = {
   full: '100% Full Payment Upfront',
   downpayment: '50% Downpayment',
   reserve: 'Reserve Only (₱2,000 Reservation Fee)',
 }
+
+export const setBookingRules = (rules: {
+  reserveHoldHours: number
+  reservationFee: number
+  reminderDays: number
+  adminAlertPhone: string
+  leadTimeDays: number
+  refundFullDays: number
+  refundPartialDays: number
+  refundPartialPercent: number
+  downpaymentPercent: number
+}) => {
+  RESERVE_HOLD_HOURS = rules.reserveHoldHours
+  RESERVE_HOLD_MS = rules.reserveHoldHours * 60 * 60 * 1000
+  RESERVATION_FEE = rules.reservationFee
+  EVENT_REMINDER_DAYS = rules.reminderDays
+  ADMIN_ALERT_PHONE = rules.adminAlertPhone.replace(/[^0-9+]/g, '') || ADMIN_ALERT_PHONE
+  LEAD_TIME_DAYS = rules.leadTimeDays
+  REFUND_FULL_DAYS = rules.refundFullDays
+  REFUND_PARTIAL_DAYS = rules.refundPartialDays
+  REFUND_PARTIAL_PERCENT = rules.refundPartialPercent
+  DOWNPAYMENT_PERCENT = rules.downpaymentPercent
+  PAYMENT_TERM_LABELS.downpayment = `${DOWNPAYMENT_PERCENT}% Downpayment`
+  PAYMENT_TERM_LABELS.reserve = `Reserve Only (${pesoLabel(RESERVATION_FEE)} Reservation Fee)`
+}
+
+/** Downpayment for a total using the current percent. */
+export const computeDownpayment = (total: number): number => Math.round(total * (DOWNPAYMENT_PERCENT / 100))
 
 export const CANCELLATION_REASONS = [
   'Change of Event Date / Schedule Conflict',
@@ -155,7 +203,7 @@ export const getBookingCalendarState = (b: Booking, now: number = getSimulatedNo
 export const getAmountPaid = (b: Booking): number => {
   if (b.paymentStatus === 'fully_paid') return b.totalPrice
   if (b.paymentStatus === 'downpayment_paid' || b.paymentStatus === 'partially_paid' || b.paymentStatus === 'pending_verification') {
-    return Math.min(b.totalPrice, b.downpaymentAmount || Math.round(b.totalPrice * 0.5))
+    return Math.min(b.totalPrice, b.downpaymentAmount || computeDownpayment(b.totalPrice))
   }
   return 0
 }
@@ -163,7 +211,7 @@ export const getAmountPaid = (b: Booking): number => {
 export const getRemainingBalance = (b: Booking): number => {
   if (b.paymentStatus === 'fully_paid') return 0
   if (b.paymentStatus === 'downpayment_paid' || b.paymentStatus === 'partially_paid') {
-    return Math.max(0, b.totalPrice - (b.downpaymentAmount || Math.round(b.totalPrice * 0.5)))
+    return Math.max(0, b.totalPrice - (b.downpaymentAmount || computeDownpayment(b.totalPrice)))
   }
   return b.totalPrice
 }
@@ -178,21 +226,21 @@ export interface RefundQuote {
 }
 
 /**
- * Cancellation policy:
- *  - 30 days or more before the event → 100% refund
- *  - 14 to 29 days before the event   → 50% refund
- *  - less than 14 days                → no refund
+ * Cancellation policy (values come from Business Settings):
+ *  - REFUND_FULL_DAYS or more before the event      → 100% refund
+ *  - REFUND_PARTIAL_DAYS to REFUND_FULL_DAYS - 1    → REFUND_PARTIAL_PERCENT refund
+ *  - less than REFUND_PARTIAL_DAYS                  → no refund
  * Refund is computed on what the client has actually paid.
  */
 export const computeRefundQuote = (b: Booking, now: Date = getSimulatedNowDate()): RefundQuote => {
   const daysBefore = daysUntilEvent(b.eventDate, now)
-  const refundPercentage = daysBefore >= 30 ? 100 : daysBefore >= 14 ? 50 : 0
+  const refundPercentage = daysBefore >= REFUND_FULL_DAYS ? 100 : daysBefore >= REFUND_PARTIAL_DAYS ? REFUND_PARTIAL_PERCENT : 0
   const tierLabel =
-    refundPercentage === 100
-      ? '100% Refund (30+ days before event)'
-      : refundPercentage === 50
-      ? '50% Refund (14–29 days before event)'
-      : 'No Refund (less than 14 days before event)'
+    daysBefore >= REFUND_FULL_DAYS
+      ? `100% Refund (${REFUND_FULL_DAYS}+ days before event)`
+      : daysBefore >= REFUND_PARTIAL_DAYS && REFUND_PARTIAL_PERCENT > 0
+      ? `${REFUND_PARTIAL_PERCENT}% Refund (${REFUND_PARTIAL_DAYS}–${REFUND_FULL_DAYS - 1} days before event)`
+      : `No Refund (less than ${REFUND_PARTIAL_DAYS} days before event)`
   const amountPaid = getAmountPaid(b)
   const refundAmount = Math.round(amountPaid * (refundPercentage / 100))
   return { daysBefore, refundPercentage, tierLabel, amountPaid, refundAmount, refundable: refundAmount > 0 }
@@ -217,7 +265,7 @@ export const getPaymentStatusLabel = (b: Booking): string => {
     case 'fully_paid':
       return 'Fully Paid'
     case 'downpayment_paid':
-      return '50% Paid'
+      return `${DOWNPAYMENT_PERCENT}% Paid`
     case 'partially_paid':
       return getPaymentTerm(b) === 'reserve' ? 'Reservation Fee Paid' : 'Partially Paid'
     case 'pending_verification':

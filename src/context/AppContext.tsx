@@ -34,6 +34,9 @@ import {
   EVENT_REMINDER_DAYS,
   RESERVATION_FEE,
   RESERVE_HOLD_MS,
+  RESERVE_HOLD_HOURS,
+  DOWNPAYMENT_PERCENT,
+  computeDownpayment,
   SIM_CLOCK_EVENT,
   computeRefundQuote,
   daysUntilEvent,
@@ -46,9 +49,18 @@ import {
   isReserveHold,
   setSimulatedNowMs,
 } from '../lib/bookingRules'
-import { TERMS_VERSION, getLocalTermsAcceptance, setLocalTermsAcceptance } from '../lib/terms'
+import { getTermsVersion, getLocalTermsAcceptance, setLocalTermsAcceptance } from '../lib/terms'
+import {
+  DEFAULT_BUSINESS_SETTINGS,
+  applyBusinessSettings,
+  normalizeBusinessSettings,
+} from '../lib/businessSettings'
+import type { BusinessSettings } from '../lib/businessSettings'
 import { playNotificationSound } from '../lib/sound'
 import { getPasswordValidationError } from '../components/PasswordStrengthIndicator'
+
+/** "1 week" for 7 days, otherwise "N days" (follows the Business Settings reminder). */
+const reminderLabel = () => (EVENT_REMINDER_DAYS === 7 ? '1 week' : `${EVENT_REMINDER_DAYS} day${EVENT_REMINDER_DAYS === 1 ? '' : 's'}`)
 
 export const maskEmail = (email: string): string => {
   const parts = email.split('@')
@@ -145,6 +157,9 @@ interface AppContextType {
   saveAddon: (addon: Partial<CateringAddon> & { name: string; price: number }) => Promise<{ success: boolean; error?: string }>
   deleteAddon: (addonId: string) => Promise<{ success: boolean; error?: string }>
   refreshCatalog: () => Promise<void>
+  /** Admin-editable business rules, contact details and terms (live). */
+  business: BusinessSettings
+  saveBusinessSettings: (settings: BusinessSettings) => Promise<{ success: boolean; error?: string }>
   simulatedNow: number | null
   setSimulatedNow: (ms: number | null) => void
   runSimulateHoldExpiryCheck: (options?: { forceExpireActiveHolds?: boolean }) => Promise<{ count: number; message: string }>
@@ -406,6 +421,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const PACKAGES_STORAGE_KEY = 'sinag_catalog_packages'
   const MENU_ITEMS_STORAGE_KEY = 'sinag_catalog_menu_items'
   const ADDONS_STORAGE_KEY = 'sinag_catalog_addons'
+
+  const BUSINESS_STORAGE_KEY = 'sinag_business_settings'
+  const [business, setBusinessState] = useState<BusinessSettings>(() => {
+    let initial = DEFAULT_BUSINESS_SETTINGS
+    try {
+      const cached = localStorage.getItem(BUSINESS_STORAGE_KEY)
+      if (cached) initial = normalizeBusinessSettings(JSON.parse(cached))
+    } catch {}
+    applyBusinessSettings(initial)
+    return initial
+  })
+  /** Applies settings to the pricing/booking modules first, then re-renders. */
+  const updateBusiness = React.useCallback((next: BusinessSettings) => {
+    applyBusinessSettings(next)
+    setBusinessState(next)
+    try {
+      localStorage.setItem(BUSINESS_STORAGE_KEY, JSON.stringify(next))
+    } catch {}
+  }, [])
+  const loadBusinessSettings = React.useCallback(async () => {
+    if (!supabase) return
+    const { data, error } = await supabase.from('business_settings').select('settings').eq('id', 1).maybeSingle()
+    if (!error && data) updateBusiness(normalizeBusinessSettings(data.settings))
+  }, [updateBusiness])
 
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const currentUserRef = React.useRef<User | null>(null)
@@ -741,6 +780,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           if (data) setMenuItems(data.map(mapDbMenuItem))
         })
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'business_settings' }, (payload: any) => {
+        if (payload?.new?.settings) updateBusiness(normalizeBusinessSettings(payload.new.settings))
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'package_addons' }, () => {
         client.from('package_addons').select('*').order('price', { ascending: true }).then(({ data }) => {
           if (data) setAddons(data.map(mapDbAddon))
@@ -784,6 +826,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setBookings(data.map(mapDbBooking))
         }
       })
+
+    void loadBusinessSettings()
 
     // The package catalog is database-owned. No local/mock package fallback is used.
     supabase
@@ -982,14 +1026,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setTermsCheck({ userId, status: getLocalTermsAcceptance(userId) ? 'accepted' : 'required' })
           return
         }
-        const accepted = Boolean(data.terms_accepted_at) && data.terms_version === TERMS_VERSION
+        const accepted = Boolean(data.terms_accepted_at) && data.terms_version === getTermsVersion()
         if (accepted) setLocalTermsAcceptance(userId)
         setTermsCheck({ userId, status: accepted ? 'accepted' : 'required' })
       })
     return () => {
       cancelled = true
     }
-  }, [currentUser?.id, currentUser?.role])
+  }, [currentUser?.id, currentUser?.role, business.termsVersion])
 
   const acceptTerms = async () => {
     const user = currentUserRef.current
@@ -997,13 +1041,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setLocalTermsAcceptance(user.id)
     setTermsCheck({ userId: user.id, status: 'accepted' })
     const acceptedAt = new Date().toISOString()
-    const updatedUser: User = { ...user, termsAcceptedAt: acceptedAt, termsVersion: TERMS_VERSION }
+    const updatedUser: User = { ...user, termsAcceptedAt: acceptedAt, termsVersion: getTermsVersion() }
     setCurrentUser(updatedUser)
     sessionStorage.setItem(LOCAL_USER_BACKUP_KEY, JSON.stringify(updatedUser))
     if (supabase) {
       const { error } = await supabase
         .from('users')
-        .update({ terms_accepted_at: acceptedAt, terms_version: TERMS_VERSION })
+        .update({ terms_accepted_at: acceptedAt, terms_version: getTermsVersion() })
         .eq('id', user.id)
       if (error) console.warn('Terms acceptance saved locally only:', error.message)
     }
@@ -1477,7 +1521,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } else {
       const cleanDigits = identifier.replace(/[^0-9]/g, '')
       if (cleanDigits.length < 10) {
-        return { success: false, error: 'Please provide a valid Philippine mobile number (e.g. 0928 714 4597).' }
+        return { success: false, error: 'Please provide a valid Philippine mobile number (e.g. 0917 123 4567).' }
       }
       const normInputPhone = normalizePhPhoneNumber(identifier)
       if (supabase) {
@@ -1705,14 +1749,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       addAdminNotification({
         type: 'hold_created',
         title: 'New 48-Hour Temporary Hold',
-        message: `${newBooking.customerName} placed a Reserve Only hold on ${newBooking.eventDate} (${newBooking.eventType}, ${newBooking.guestCount} pax). Ref: #${newBooking.id}. Auto-expires in 48 hours without payment.`,
+        message: `${newBooking.customerName} placed a Reserve Only hold on ${newBooking.eventDate} (${newBooking.eventType}, ${newBooking.guestCount} pax). Ref: #${newBooking.id}. Auto-expires in ${RESERVE_HOLD_HOURS} hours without payment.`,
         bookingId: newBooking.id,
       })
       pushClientNotification({
         id: `nt-hold-${newBooking.id}`,
         type: 'hold_created',
         title: 'Your date is temporarily held!',
-        message: `Booking ${newBooking.id} on ${newBooking.eventDate} is held for 48 hours. Please pay the ${formatMoney(newBooking.downpaymentAmount || RESERVATION_FEE, 'PHP')} reservation fee within 2 days (48 hours) to lock in your reservation, or your booking will automatically expire.`,
+        message: `Booking ${newBooking.id} on ${newBooking.eventDate} is held for ${RESERVE_HOLD_HOURS} hours. Please pay the ${formatMoney(newBooking.downpaymentAmount || RESERVATION_FEE, 'PHP')} reservation fee within ${RESERVE_HOLD_HOURS} hours to lock in your reservation, or your booking will automatically expire.`,
         bookingId: newBooking.id,
         recipientEmail: newBooking.email,
         userId: currentUser?.id,
@@ -1730,7 +1774,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         title: paidOnline ? 'Payment received – date reserved' : 'Reservation submitted',
         message: paidOnline
           ? `Your online payment for booking ${newBooking.id} (${newBooking.eventDate}) was received. Your date is locked.`
-          : `Your ${term === 'full' ? '100% full payment' : term === 'reserve' ? 'reservation-fee' : '50% downpayment'} booking for ${newBooking.eventDate} is locked on our calendar. ${isPaymentSubmitted ? 'Your payment proof is pending verification.' : 'You can upload your payment receipt anytime from My Bookings.'}`,
+          : `Your ${term === 'full' ? '100% full payment' : term === 'reserve' ? 'reservation-fee' : `${DOWNPAYMENT_PERCENT}% downpayment`} booking for ${newBooking.eventDate} is locked on our calendar. ${isPaymentSubmitted ? 'Your payment proof is pending verification.' : 'You can upload your payment receipt anytime from My Bookings.'}`,
         bookingId: newBooking.id,
         recipientEmail: newBooking.email,
         userId: currentUser?.id,
@@ -1923,14 +1967,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       expired.forEach((b) => {
         const notify = () => {
-          const smsText = `Sinag Catering: Your 48-hour temporary hold for booking ${b.id} on ${b.eventDate} expired because no payment was uploaded. The date has been released.`
+          const smsText = `Sinag Catering: Your ${RESERVE_HOLD_HOURS}-hour temporary hold for booking ${b.id} on ${b.eventDate} expired because no payment was uploaded. The date has been released.`
           sendSemaphoreSMS(b.phone, smsText, b.id).catch(console.error)
           sendTransactionalEmail(b.email, `Sinag Catering: 48-Hour Temporary Hold Expired (#${b.id})`, smsText, b.id).catch(console.error)
           addAdminNotification({
             id: `nt-exp-a-${b.id}`,
             type: 'hold_expired',
             title: 'Temporary Hold Expired',
-            message: `${b.customerName}'s 48-hour hold (${b.id}) on ${b.eventDate} expired without payment and was forfeited. Date released to the calendar & SMS sent.`,
+            message: `${b.customerName}'s ${RESERVE_HOLD_HOURS}-hour hold (${b.id}) on ${b.eventDate} expired without payment and was forfeited. Date released to the calendar & SMS sent.`,
             bookingId: b.id,
           })
           pushClientNotification({
@@ -2017,13 +2061,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const dispatch = () => {
         markSentLocal(b.id)
         setBookings((prev) => prev.map((bk) => (bk.id === b.id ? { ...bk, reminderSentAt: sentAt } : bk)))
-        const clientText = `Sinag Catering Reminder: Your event is coming up in 1 week! Booking Reference: ${b.id} on ${b.eventDate}. We are excited to serve you. Check your portal for full details.`
+        const clientText = `Sinag Catering Reminder: Your event is coming up in ${reminderLabel()}! Booking Reference: ${b.id} on ${b.eventDate}. We are excited to serve you. Check your portal for full details.`
         sendSemaphoreSMS(b.phone, clientText, b.id).catch(console.error)
-        sendTransactionalEmail(b.email, `Sinag Catering Reminder: Your event is in 1 week (#${b.id})`, clientText, b.id).catch(console.error)
+        sendTransactionalEmail(b.email, `Sinag Catering Reminder: Your event is in ${reminderLabel()} (#${b.id})`, clientText, b.id).catch(console.error)
         pushClientNotification({
           id: `nt-rem-c-${b.id}${stamp}`,
           type: 'event_reminder',
-          title: 'Your event is 1 week away!',
+          title: `Your event is ${reminderLabel()} away!`,
           message: clientText,
           bookingId: b.id,
           recipientEmail: b.email,
@@ -2033,7 +2077,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           id: `nt-rem-a-${b.id}${stamp}`,
           type: 'event_reminder',
           title: 'Upcoming Event Alert',
-          message: `Upcoming Event Alert: Booking ${b.id} (${b.customerName}) is scheduled in 7 days on ${b.eventDate}. SMS, Email & In-App reminder sent.`,
+          message: `Upcoming Event Alert: Booking ${b.id} (${b.customerName}) is scheduled in ${EVENT_REMINDER_DAYS} days on ${b.eventDate}. SMS, Email & In-App reminder sent.`,
           bookingId: b.id,
         })
       }
@@ -2084,7 +2128,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
       return {
         count: 0,
-        message: 'No active 48-hour temporary holds found. Create a "Reserve Only (48-Hour Hold)" booking first or advance the Demo Time Machine by +48h.',
+        message: `No active ${RESERVE_HOLD_HOURS}-hour temporary holds found. Create a "Reserve Only (${RESERVE_HOLD_HOURS}-Hour Hold)" booking first or advance the Demo Time Machine by +${RESERVE_HOLD_HOURS}h.`,
       }
     }
 
@@ -2097,14 +2141,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     for (const b of targets) {
       expiringHoldsRef.current.add(b.id)
       const stamp = Date.now().toString().slice(-5)
-      const smsText = `Sinag Catering: Your 48-hour temporary hold for booking ${b.id} on ${b.eventDate} expired because no payment was uploaded. The date has been released.`
+      const smsText = `Sinag Catering: Your ${RESERVE_HOLD_HOURS}-hour temporary hold for booking ${b.id} on ${b.eventDate} expired because no payment was uploaded. The date has been released.`
       sendSemaphoreSMS(b.phone, smsText, b.id).catch(console.error)
       sendTransactionalEmail(b.email, `Sinag Catering: 48-Hour Temporary Hold Expired (#${b.id})`, smsText, b.id).catch(console.error)
       addAdminNotification({
         id: `nt-exp-a-${b.id}-${stamp}`,
         type: 'hold_expired',
         title: 'Temporary Hold Expired',
-        message: `${b.customerName}'s 48-hour hold (${b.id}) on ${b.eventDate} expired without payment and was forfeited. Date released to the calendar & SMS sent.`,
+        message: `${b.customerName}'s ${RESERVE_HOLD_HOURS}-hour hold (${b.id}) on ${b.eventDate} expired without payment and was forfeited. Date released to the calendar & SMS sent.`,
         bookingId: b.id,
       })
       pushClientNotification({
@@ -2163,13 +2207,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     for (const b of targets) {
       const stamp = Date.now().toString().slice(-5)
-      const clientText = `Sinag Catering Reminder: Your event is coming up in 1 week! Booking Reference: ${b.id} on ${b.eventDate}. We are excited to serve you. Check your portal for full details.`
+      const clientText = `Sinag Catering Reminder: Your event is coming up in ${reminderLabel()}! Booking Reference: ${b.id} on ${b.eventDate}. We are excited to serve you. Check your portal for full details.`
       sendSemaphoreSMS(b.phone, clientText, b.id).catch(console.error)
-      sendTransactionalEmail(b.email, `Sinag Catering Reminder: Your event is in 1 week (#${b.id})`, clientText, b.id).catch(console.error)
+      sendTransactionalEmail(b.email, `Sinag Catering Reminder: Your event is in ${reminderLabel()} (#${b.id})`, clientText, b.id).catch(console.error)
       pushClientNotification({
         id: `nt-rem-c-${b.id}-${stamp}`,
         type: 'event_reminder',
-        title: 'Your event is 1 week away!',
+        title: `Your event is ${reminderLabel()} away!`,
         message: clientText,
         bookingId: b.id,
         recipientEmail: b.email,
@@ -2178,8 +2222,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       addAdminNotification({
         id: `nt-rem-a-${b.id}-${stamp}`,
         type: 'event_reminder',
-        title: 'Upcoming Event Alert (7-Day Reminder)',
-        message: `Upcoming Event Alert: Booking ${b.id} (${b.customerName}) is scheduled in 7 days on ${b.eventDate}. SMS, Email, and In-App notifications dispatched.`,
+        title: `Upcoming Event Alert (${EVENT_REMINDER_DAYS}-Day Reminder)`,
+        message: `Upcoming Event Alert: Booking ${b.id} (${b.customerName}) is scheduled in ${EVENT_REMINDER_DAYS} days on ${b.eventDate}. SMS, Email, and In-App notifications dispatched.`,
         bookingId: b.id,
       })
       if (supabase) {
@@ -2208,8 +2252,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const eventTime = new Date(newDate).getTime()
     const nowTime = new Date().getTime()
     const diffDays = Math.ceil((eventTime - nowTime) / (1000 * 60 * 60 * 24))
-    if (diffDays < 14) {
-      return { success: false, message: 'Rebooking must be scheduled at least 14 days before the event.' }
+    if (diffDays < business.changeNoticeDays) {
+      return { success: false, message: `Rebooking must be scheduled at least ${business.changeNoticeDays} days before the event.` }
     }
 
     setBookings((prev) =>
@@ -2381,7 +2425,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       supabase.from('catering_inquiries').insert({
         customer_name: name,
         email,
-        phone: '0928 714 4597',
+        phone: '',
         event_type: 'General Inquiry',
         guest_count: 50,
         package_name: 'Inquiry',
@@ -2424,7 +2468,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           })
         }
         if (paymentStatus === 'downpayment_paid') {
-          updated.downpaymentAmount = amount ?? bk.downpaymentAmount ?? bk.totalPrice * 0.5
+          updated.downpaymentAmount = amount ?? bk.downpaymentAmount ?? computeDownpayment(bk.totalPrice)
           addAdminNotification({
             type: 'booking_confirmed',
             title: 'Downpayment Verified',
@@ -2510,10 +2554,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setBookings((prev) =>
       prev.map((bk) => {
         if (bk.id === bookingId) {
-          const finalAmount = verifiedAmount ?? bk.downpaymentAmount ?? bk.totalPrice * 0.5
+          const finalAmount = verifiedAmount ?? bk.downpaymentAmount ?? computeDownpayment(bk.totalPrice)
           const isFull = finalAmount >= bk.totalPrice || (bk.paymentTerm === 'full' && verifiedAmount === undefined)
-          // Anything below the 50% downpayment (e.g. the ₱2,000 reservation fee) is a partial payment
-          const isPartial = !isFull && finalAmount < Math.round(bk.totalPrice * 0.5)
+          // Anything below the downpayment (e.g. the reservation fee) is a partial payment
+          const isPartial = !isFull && finalAmount < computeDownpayment(bk.totalPrice)
           targetBooking = {
             ...bk,
             bookingStatus: 'confirmed',
@@ -2570,6 +2614,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const refreshCatalog = async () => {
     if (!supabase) return
+    void loadBusinessSettings()
     try {
       const [pkgRes, menuRes, addonRes] = await Promise.all([
         supabase.from('packages').select('*').order('base_price', { ascending: true }),
@@ -2589,6 +2634,46 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.error('Error refreshing catalog:', err)
     }
   }
+
+  const saveBusinessSettings = async (settings: BusinessSettings): Promise<{ success: boolean; error?: string }> => {
+    const next = normalizeBusinessSettings(settings)
+    // Editing the terms gives them a new version so clients accept them again
+    if (JSON.stringify(next.termsSections) !== JSON.stringify(business.termsSections)) {
+      next.termsVersion = new Date().toISOString().slice(0, 16).replace('T', ' ')
+    }
+    if (supabase) {
+      const { error } = await supabase
+        .from('business_settings')
+        .upsert({ id: 1, settings: next, updated_at: new Date().toISOString() })
+      if (error) {
+        console.error('[settings] save error:', error.message)
+        return { success: false, error: error.message.includes('business_settings') ? 'The business_settings table is missing. Run supabase/migrations/20261120_business_settings.sql first.' : error.message }
+      }
+    }
+    updateBusiness(next)
+    return { success: true }
+  }
+
+  // Backup for realtime: re-sync packages, menu and add-ons whenever the
+  // customer comes back to the tab, so admin edits always show up.
+  const refreshCatalogRef = React.useRef(refreshCatalog)
+  refreshCatalogRef.current = refreshCatalog
+  useEffect(() => {
+    let last = 0
+    const onFocus = () => {
+      if (document.visibilityState !== 'visible') return
+      const now = Date.now()
+      if (now - last < 15000) return
+      last = now
+      void refreshCatalogRef.current()
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+    }
+  }, [])
 
   const savePackage = async (pkg: CateringPackage): Promise<{ success: boolean; error?: string }> => {
     try {
@@ -2793,6 +2878,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         saveAddon,
         deleteAddon,
         refreshCatalog,
+        business,
+        saveBusinessSettings,
         simulatedNow,
         setSimulatedNow,
         runSimulateHoldExpiryCheck,
