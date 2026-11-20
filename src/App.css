@@ -2161,13 +2161,125 @@ input::-ms-reveal {
   align-self: flex-end;
 }
 
-.quick-chips-row {
+/* Chat rows: bubble + timestamp */
+.msg-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 100%;
+}
+
+.msg-row.bot {
+  align-items: flex-start;
+}
+
+.msg-row.user {
+  align-items: flex-end;
+}
+
+.msg-row .msg-bubble {
+  max-width: 86%;
+}
+
+.msg-time {
+  font-size: 0.66rem;
+  color: var(--muted);
+  padding: 0 4px;
+}
+
+.ai-header-btn {
+  background: none;
+  border: none;
+  color: #FFF;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  border-radius: 8px;
+  opacity: 0.85;
+}
+
+.ai-header-btn:hover:not(:disabled) {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.ai-header-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Suggested replies live inside the conversation and scroll with it */
+.ai-inline-chips {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
-  padding: 10px 16px;
+  justify-content: flex-end;
+  padding-left: 14%;
+  animation: fadeIn 0.25s ease;
+}
+
+.ai-inline-chips .chip-btn {
   background: #FFFFFF;
-  border-top: 1px solid var(--line);
+  border-color: var(--terracotta);
+  color: var(--terracotta);
+  font-weight: 600;
+}
+
+.ai-inline-chips .chip-btn:hover {
+  background: var(--terracotta);
+  color: #FFFFFF;
+}
+
+.ai-quote-card {
+  margin-top: 10px;
+  background: rgba(232, 130, 10, 0.08);
+  border: 1px solid var(--gold-light);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.ai-quote-tag {
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+/* Typing indicator */
+.ai-typing {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 14px;
+}
+
+.ai-typing span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  opacity: 0.4;
+  animation: aiTypingDot 1.2s infinite ease-in-out;
+}
+
+.ai-typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.ai-typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes aiTypingDot {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
 }
 
 .chip-btn {

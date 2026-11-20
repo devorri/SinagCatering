@@ -1,19 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Bot, Send, ShieldAlert, X, Sparkles, CheckCircle } from 'lucide-react'
+import { Bot, RotateCcw, Send, ShieldAlert, Sparkles, X } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { querySinagAI } from '../lib/ai'
 import { formatMoney } from '../data/packages'
 
-import type { AIFormData } from '../lib/ai'
+import type { AIFormData, ChatTurn } from '../lib/ai'
 
 interface Message {
   sender: 'user' | 'bot'
   text: string
-  timestamp: Date
+  /** ISO timestamp (kept as a string so the chat can be saved and restored). */
+  timestamp: string
   escalated?: boolean
-  recommendedPkgId?: string
-  recommendedGuestCount?: number
-  isLiveApi?: boolean
+  suggestions?: string[]
   formData?: AIFormData
 }
 
@@ -23,47 +22,110 @@ interface AIAssistantProps {
   onApplyRecommendation?: (formData: AIFormData) => void
 }
 
-const QUICK_REPLIES = [
-  'What main dishes & pasta are on the menu?',
-  'Recommend a package for 100 guests',
-  'Plan an 80-guest banquet with ₱150,000 budget (Maximize)',
-  'Wedding catering with extra courses, 100 guests',
-  'What is the refund policy?',
-  'Do you accept QR Ph, GCash, or MariBank?',
+const STARTER_SUGGESTIONS = [
+  'Magkano for 100 guests?',
+  'I have a ₱50k budget',
+  "What's on the menu?",
+  'Is my date available?',
+  'How do I book?',
 ]
 
-const parseInlineMarkdown = (text: string): string => {
-  let clean = text
+const HISTORY_SENT = 20
+const MAX_SAVED_MESSAGES = 60
+
+const greeting = (name?: string): Message => ({
+  sender: 'bot',
+  text: `Hi${name ? ` ${name.split(' ')[0]}` : ''}! 👋 I'm Sinag's assistant. Planning a birthday, debut, wedding or any celebration? Tell me about it and I'll help you pick a package, compute the cost, and check dates. Pwede rin po mag-Tagalog!`,
+  timestamp: new Date().toISOString(),
+  suggestions: STARTER_SUGGESTIONS,
+})
+
+const storageKeyFor = (userId?: string) => (userId ? `sinag_ai_chat_${userId}` : 'sinag_ai_chat_guest')
+
+/** Signed-in chats survive across visits on this device; guest chats last until the tab is closed. */
+const loadMessages = (userId?: string): Message[] | null => {
+  try {
+    const store = userId ? localStorage : sessionStorage
+    const raw = store.getItem(storageKeyFor(userId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed) || parsed.length === 0) return null
+    return parsed.filter((m) => m && typeof m.text === 'string' && (m.sender === 'user' || m.sender === 'bot'))
+  } catch {
+    return null
+  }
+}
+
+const saveMessages = (messages: Message[], userId?: string) => {
+  try {
+    const store = userId ? localStorage : sessionStorage
+    store.setItem(storageKeyFor(userId), JSON.stringify(messages.slice(-MAX_SAVED_MESSAGES)))
+  } catch {
+    // storage full or blocked — the chat still works in memory
+  }
+}
+
+const clearSavedMessages = (userId?: string) => {
+  try {
+    ;(userId ? localStorage : sessionStorage).removeItem(storageKeyFor(userId))
+  } catch {
+    // ignore
+  }
+}
+
+const formatTime = (iso: string): string => {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const time = d.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })
+  const today = new Date()
+  const yesterday = new Date()
+  yesterday.setDate(today.getDate() - 1)
+  if (d.toDateString() === today.toDateString()) return time
+  if (d.toDateString() === yesterday.toDateString()) return `Yesterday, ${time}`
+  return `${d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}, ${time}`
+}
+
+const parseInlineMarkdown = (text: string): string =>
+  text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
+    .replace(/^#{1,4}\s+(.*)$/, '<strong>$1</strong>')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-
-  if (/^#{1,4}\s+/.test(clean)) {
-    clean = `<strong style="display:block;margin:6px 0 2px 0;font-size:0.95rem;color:var(--terracotta);">${clean.replace(/^#{1,4}\s+/, '')}</strong>`
-  }
-  return clean
-}
+    .replace(/(^|[^*])\*(?!\s)(.+?)\*(?!\*)/g, '$1<em>$2</em>')
 
 export const AIAssistant: React.FC<AIAssistantProps> = ({ isOpen, onClose, onApplyRecommendation }) => {
-  const { createInquiryDirect, currentUser } = useApp()
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      sender: 'bot',
-      text: "Mabuhay! I am Sinag's AI Concierge in Baliwag, Bulacan. I can recommend celebration packages, show live menu options from our kitchen, compute exact estimates for your guest count, and answer reservation questions.",
-      timestamp: new Date(),
-    },
-  ])
+  const { createInquiryDirect, currentUser, bookings, blockedDates } = useApp()
+  const userId = currentUser?.id
+
+  const [messages, setMessages] = useState<Message[]>(() => loadMessages(userId) ?? [greeting(currentUser?.name)])
   const [inputValue, setInputValue] = useState('')
   const [isTyping, setIsTyping] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const loadedForUser = useRef<string | undefined>(userId)
+
+  // Switch to the right saved conversation when the user signs in or out
+  useEffect(() => {
+    if (loadedForUser.current === userId) return
+    loadedForUser.current = userId
+    setMessages(loadMessages(userId) ?? [greeting(currentUser?.name)])
+  }, [userId, currentUser?.name])
 
   useEffect(() => {
+    saveMessages(messages, userId)
+  }, [messages, userId])
+
+  useEffect(() => {
+    if (!isOpen) return
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isTyping])
+  }, [messages, isTyping, isOpen])
+
+  useEffect(() => {
+    if (isOpen) inputRef.current?.focus()
+  }, [isOpen])
 
   if (!isOpen) return null
 
@@ -71,31 +133,31 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ isOpen, onClose, onApp
     const trimmed = text.trim()
     if (!trimmed || isTyping) return
 
-    const userMsg: Message = { sender: 'user', text: trimmed, timestamp: new Date() }
+    const userMsg: Message = { sender: 'user', text: trimmed, timestamp: new Date().toISOString() }
+    const history: ChatTurn[] = messages.slice(-HISTORY_SENT).map((m) => ({
+      role: m.sender === 'user' ? 'user' : 'assistant',
+      content: m.text,
+    }))
+
     setMessages((prev) => [...prev, userMsg])
     setInputValue('')
     setIsTyping(true)
 
     try {
-      // Build conversation history for LLM
-      const history = messages.slice(-4).map((m) => ({
-        role: (m.sender === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
-        content: m.text,
-      }))
-
-      // Call dynamic backend AI API endpoint
-      const response = await querySinagAI(trimmed, history)
+      const response = await querySinagAI(trimmed, history, {
+        bookings,
+        blockedDates,
+        currentUser: currentUser ? { name: currentUser.name, email: currentUser.email, role: currentUser.role } : null,
+      })
 
       setMessages((prev) => [
         ...prev,
         {
           sender: 'bot',
           text: response.text,
-          timestamp: new Date(),
+          timestamp: new Date().toISOString(),
           escalated: response.escalate,
-          recommendedPkgId: response.pkgId,
-          recommendedGuestCount: response.guestCount,
-          isLiveApi: response.isLiveApi,
+          suggestions: response.suggestions,
           formData: response.formData,
         },
       ])
@@ -104,7 +166,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ isOpen, onClose, onApp
         createInquiryDirect(
           currentUser?.name || 'Guest User',
           currentUser?.email || 'guest@email.com',
-          trimmed,
+          `[From AI chat] ${response.escalationSummary || trimmed}`,
         )
       }
     } catch (err) {
@@ -113,15 +175,26 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ isOpen, onClose, onApp
         ...prev,
         {
           sender: 'bot',
-          text: "I'm having trouble connecting right now, but our reservation desk is ready to help at **0928 714 4597** or via the Booking Wizard!",
-          timestamp: new Date(),
-          escalated: true,
+          text: "Sorry, nagka-problema ako sa connection 😅 Try again in a bit, or call our team at **0928 714 4597**.",
+          timestamp: new Date().toISOString(),
+          suggestions: ['Try again', 'How do I book?'],
         },
       ])
     } finally {
       setIsTyping(false)
     }
   }
+
+  const handleNewChat = () => {
+    if (isTyping) return
+    clearSavedMessages(userId)
+    setMessages([greeting(currentUser?.name)])
+    setInputValue('')
+  }
+
+  const lastIndex = messages.length - 1
+  const lastMessage = messages[lastIndex]
+  const showSuggestions = !isTyping && lastMessage?.sender === 'bot' && (lastMessage.suggestions?.length ?? 0) > 0
 
   return (
     <div className="ai-chat-window">
@@ -134,131 +207,116 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ isOpen, onClose, onApp
             <h3 className="ai-chat-title">Sinag AI Concierge</h3>
             <span style={{ fontSize: '0.72rem', color: 'var(--gold-light)', display: 'flex', alignItems: 'center', gap: '4px' }}>
               <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10B981' }} />
-              Package guidance · Baliwag, Bulacan
+              {isTyping ? 'Typing…' : 'Online · Baliwag, Bulacan'}
             </span>
           </div>
         </div>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#FFF', cursor: 'pointer' }} aria-label="Close Chat">
-          <X size={20} />
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <button onClick={handleNewChat} className="ai-header-btn" aria-label="Start a new chat" title="New chat" disabled={isTyping}>
+            <RotateCcw size={16} />
+          </button>
+          <button onClick={onClose} className="ai-header-btn" aria-label="Close Chat" title="Close">
+            <X size={20} />
+          </button>
+        </div>
       </div>
 
       <div className="ai-chat-body">
         {messages.map((msg, index) => (
-          <div key={index} className={`msg-bubble ${msg.sender}`}>
-            <div style={{ fontSize: '0.88rem', lineHeight: 1.55 }}>
-              {msg.text.split('\n').map((line, i) => (
-                <p key={i} style={{ margin: '4px 0' }} dangerouslySetInnerHTML={{ __html: parseInlineMarkdown(line) }} />
-              ))}
-            </div>
+          <div key={`${msg.timestamp}-${index}`} className={`msg-row ${msg.sender}`}>
+            <div className={`msg-bubble ${msg.sender}`}>
+              <div style={{ fontSize: '0.88rem', lineHeight: 1.55 }}>
+                {msg.text.split('\n').map((line, i) =>
+                  line.trim() === ''
+                    ? <div key={i} style={{ height: '6px' }} />
+                    : <p key={i} style={{ margin: '2px 0' }} dangerouslySetInnerHTML={{ __html: parseInlineMarkdown(line) }} />,
+                )}
+              </div>
 
-            {msg.formData && (
-              <div style={{ marginTop: '10px', background: 'rgba(232, 130, 10, 0.08)', border: '1px solid var(--gold-light)', borderRadius: '8px', padding: '10px 12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                  <strong style={{ fontSize: '0.85rem', color: 'var(--terracotta)' }}>{msg.formData.package_name}</strong>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--ink)' }}>{msg.formData.guest_count} pax</span>
-                </div>
-                {msg.formData.estimated_total >= 0 && (
-                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--ink)', marginBottom: '4px' }}>
+              {msg.formData && (
+                <div className="ai-quote-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                    <strong style={{ fontSize: '0.85rem', color: 'var(--terracotta)' }}>{msg.formData.package_name}</strong>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--ink)', whiteSpace: 'nowrap' }}>{msg.formData.guest_count} pax</span>
+                  </div>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--ink)' }}>
                     Est. Total: {formatMoney(msg.formData.estimated_total)}
                   </div>
-                )}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '6px' }}>
-                  {msg.formData.event_type && (
-                    <span style={{ fontSize: '0.68rem', background: '#FEF3C7', color: '#92400E', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
-                      🏷️ {msg.formData.event_type}
-                    </span>
-                  )}
-                  {Boolean(msg.formData.extra_main_count && msg.formData.extra_main_count > 0) && (
-                    <span style={{ fontSize: '0.68rem', background: '#FFEDD5', color: '#9A3412', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
-                      +{msg.formData.extra_main_count} Extra Mains
-                    </span>
-                  )}
-                  {Boolean(msg.formData.extra_pasta_count && msg.formData.extra_pasta_count > 0) && (
-                    <span style={{ fontSize: '0.68rem', background: '#DBEAFE', color: '#1E40AF', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
-                      +{msg.formData.extra_pasta_count} Extra Pasta
-                    </span>
-                  )}
-                  {Boolean(msg.formData.extra_dessert_count && msg.formData.extra_dessert_count > 0) && (
-                    <span style={{ fontSize: '0.68rem', background: '#FEF9C3', color: '#854D0E', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
-                      +{msg.formData.extra_dessert_count} Extra Dessert
-                    </span>
-                  )}
-                  {Boolean(msg.formData.addons && msg.formData.addons.length > 0) && (
-                    <span style={{ fontSize: '0.68rem', background: '#DCFCE7', color: '#166534', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
-                      +{msg.formData.addons.length} Stations
-                    </span>
-                  )}
-                </div>
-                {msg.formData.selected_menu && msg.formData.selected_menu.length > 0 && (
-                  <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginBottom: '4px' }}>
-                    Includes: {msg.formData.selected_menu.slice(0, 3).join(', ')}{msg.formData.selected_menu.length > 3 ? '...' : ''}
+                  <div style={{ fontSize: '0.74rem', color: 'var(--muted)', marginBottom: '6px' }}>
+                    50% downpayment: {formatMoney(Math.round(msg.formData.estimated_total * 0.5))}
                   </div>
-                )}
-              </div>
-            )}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                    {msg.formData.event_type && <span className="ai-quote-tag" style={{ background: '#FEF3C7', color: '#92400E' }}>🏷️ {msg.formData.event_type}</span>}
+                    {Boolean(msg.formData.extra_main_count) && <span className="ai-quote-tag" style={{ background: '#FFEDD5', color: '#9A3412' }}>+{msg.formData.extra_main_count} Extra Mains</span>}
+                    {Boolean(msg.formData.extra_pasta_count) && <span className="ai-quote-tag" style={{ background: '#DBEAFE', color: '#1E40AF' }}>+{msg.formData.extra_pasta_count} Extra Pasta</span>}
+                    {Boolean(msg.formData.extra_dessert_count) && <span className="ai-quote-tag" style={{ background: '#FEF9C3', color: '#854D0E' }}>+{msg.formData.extra_dessert_count} Extra Dessert</span>}
+                    {msg.formData.addons.length > 0 && <span className="ai-quote-tag" style={{ background: '#DCFCE7', color: '#166534' }}>+{msg.formData.addons.length} Add-on{msg.formData.addons.length > 1 ? 's' : ''}</span>}
+                  </div>
+                  {onApplyRecommendation && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onApplyRecommendation(msg.formData!)
+                        onClose()
+                      }}
+                      className="btn-hero-primary"
+                      style={{ width: '100%', padding: '8px 12px', fontSize: '0.78rem', justifyContent: 'center', marginTop: '10px' }}
+                    >
+                      <Sparkles size={14} /> Auto-Fill Booking with this Plan
+                    </button>
+                  )}
+                  <div style={{ fontSize: '0.66rem', color: 'var(--muted)', marginTop: '6px' }}>Estimate only — final price confirmed by Sinag.</div>
+                </div>
+              )}
 
-            {msg.formData && onApplyRecommendation && (
-              <div style={{ marginTop: '10px' }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onApplyRecommendation(msg.formData!)
-                    onClose()
-                  }}
-                  className="btn-hero-primary"
-                  style={{ width: '100%', padding: '8px 12px', fontSize: '0.78rem', justifyContent: 'center' }}
-                >
-                  <Sparkles size={14} /> Auto-Fill Booking Wizard with AI Plan
-                </button>
-              </div>
-            )}
-
-            {msg.isLiveApi && (
-              <div style={{ fontSize: '0.68rem', color: '#10B981', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <CheckCircle size={10} /> Live Backend AI Response
-              </div>
-            )}
-
-            {msg.escalated && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', marginTop: '6px', color: 'var(--gold-dark)' }}>
-                <ShieldAlert size={12} /> Forwarded to admin concierge inbox.
-              </div>
-            )}
+              {msg.escalated && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', marginTop: '6px', color: 'var(--gold-dark)' }}>
+                  <ShieldAlert size={12} /> Sent to the Sinag team
+                </div>
+              )}
+            </div>
+            <span className="msg-time">{formatTime(msg.timestamp)}</span>
           </div>
         ))}
+
         {isTyping && (
-          <div className="msg-bubble bot" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>Sinag AI is calculating response...</span>
+          <div className="msg-row bot">
+            <div className="msg-bubble bot ai-typing" aria-label="Sinag AI is typing">
+              <span /><span /><span />
+            </div>
           </div>
         )}
+
+        {showSuggestions && (
+          <div className="ai-inline-chips">
+            {lastMessage.suggestions!.map((reply) => (
+              <button key={reply} className="chip-btn" onClick={() => handleSend(reply)}>
+                {reply}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
-      {messages.length <= 2 && (
-        <div className="quick-chips-row">
-          {QUICK_REPLIES.map((reply) => (
-            <button key={reply} className="chip-btn" onClick={() => handleSend(reply)}>
-              {reply}
-            </button>
-          ))}
-        </div>
-      )}
-
       <div className="ai-chat-input-bar">
         <input
+          ref={inputRef}
           type="text"
           className="ai-input"
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-          placeholder="Ask Sinag AI about packages, guest pricing, buffers..."
+          placeholder="Type your message…"
+          maxLength={1000}
         />
         <button
           onClick={() => handleSend()}
           disabled={!inputValue.trim() || isTyping}
           className="btn-submit-primary"
           style={{ width: 'auto', padding: '10px 16px' }}
+          aria-label="Send"
         >
           <Send size={14} />
         </button>
