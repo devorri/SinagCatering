@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Calendar,
@@ -27,11 +27,15 @@ import { EmbeddedCheckoutModal } from '../components/EmbeddedCheckoutModal'
 import { useConfirm } from '../context/ConfirmContext'
 import { UserProfileModal } from '../components/UserProfileModal'
 import { CancelBookingModal } from '../components/CancelBookingModal'
+import { RebookDatePicker } from '../components/RebookDatePicker'
 import { PaymentStatusPanel } from '../components/PaymentStatusPanel'
 import type { QrZoomInfo } from '../components/PaymentStatusPanel'
 import {
+  addDaysToDateStr,
   formatCountdown,
   getBookingStatusLabel,
+  getRebookDateInfo,
+  manilaToday,
   getHoldRemainingMs,
   getPaymentStatusLabel,
   getRemainingBalance,
@@ -48,6 +52,8 @@ export const ClientPortal: React.FC = () => {
     uploadPayment,
     cancelBooking,
     rebookEvent,
+    refreshAvailability,
+    blockedDates,
     business,
   } = useApp()
 
@@ -60,6 +66,10 @@ export const ClientPortal: React.FC = () => {
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null)
   const [showRebookModal, setShowRebookModal] = useState(false)
   const [rebookDate, setRebookDate] = useState('')
+  const [rebookError, setRebookError] = useState<string | null>(null)
+  const [rebookSubmitting, setRebookSubmitting] = useState(false)
+  const [availabilityLoading, setAvailabilityLoading] = useState(false)
+  const visibleRangeRef = useRef<{ from: string; to: string } | null>(null)
   const [cancelTarget, setCancelTarget] = useState<Booking | null>(null)
   const [portalNotice, setPortalNotice] = useState<{ tone: 'success' | 'info'; text: string } | null>(null)
 
@@ -98,22 +108,83 @@ export const ClientPortal: React.FC = () => {
 
   const activeHolds = clientBookings.filter((b) => isReserveHold(b) && !isHoldExpired(b, now))
 
+  const rebookMinDate = addDaysToDateStr(manilaToday(), business.changeNoticeDays)
+
   const openRebook = (booking: Booking) => {
     setSelectedBooking(booking)
-    setRebookDate(booking.eventDate)
+    setRebookDate('')
+    setRebookError(null)
     setShowRebookModal(true)
   }
 
-  const handleRebookSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!selectedBooking || !rebookDate) return
+  const closeRebook = () => {
+    if (rebookSubmitting) return
+    setShowRebookModal(false)
+    setRebookError(null)
+    visibleRangeRef.current = null
+  }
 
-    const res = rebookEvent(selectedBooking.id, rebookDate)
-    if (!res.success) {
-      alert(res.message)
-    } else {
-      alert(res.message)
+  // Live fetch of bookings + blocked dates for the month the picker is showing
+  const loadAvailability = useCallback(async (from: string, to: string) => {
+    visibleRangeRef.current = { from, to }
+    setAvailabilityLoading(true)
+    try {
+      await refreshAvailability(from, to)
+    } finally {
+      setAvailabilityLoading(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Fallback re-sync while the modal is open (realtime keeps state live; this covers dropped sockets)
+  useEffect(() => {
+    if (!showRebookModal) return
+    const t = window.setInterval(() => {
+      const r = visibleRangeRef.current
+      if (r) void refreshAvailability(r.from, r.to)
+    }, 30 * 1000)
+    return () => window.clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showRebookModal])
+
+  // Keep the modal's booking in sync with live data
+  const liveRebookBooking = selectedBooking ? bookings.find((b) => b.id === selectedBooking.id) ?? selectedBooking : null
+
+  // If the chosen date gets taken by a live update while the modal is open, drop it
+  const rebookDateInfo =
+    showRebookModal && rebookDate && liveRebookBooking
+      ? getRebookDateInfo(rebookDate, liveRebookBooking, bookings, blockedDates, rebookMinDate)
+      : null
+  const rebookDateLost = !!rebookDateInfo && !rebookDateInfo.selectable
+  const effectiveRebookDate = rebookDateLost ? '' : rebookDate
+  const rebookMessage =
+    rebookError ||
+    (rebookDateLost && rebookDateInfo
+      ? `${rebookDate} is no longer available (${rebookDateInfo.label.toLowerCase()}). Please pick another date.`
+      : null)
+
+  const handleRebookSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedBooking || rebookSubmitting) return
+    if (!effectiveRebookDate) {
+      setRebookError('Please pick an available date on the calendar.')
+      return
+    }
+    setRebookSubmitting(true)
+    setRebookError(null)
+    try {
+      const res = await rebookEvent(selectedBooking.id, effectiveRebookDate)
+      if (!res.success) {
+        setRebookError(res.message)
+        if (res.conflict) setRebookDate('')
+        return
+      }
       setShowRebookModal(false)
+      visibleRangeRef.current = null
+      setPortalNotice({ tone: 'success', text: res.message })
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    } finally {
+      setRebookSubmitting(false)
     }
   }
 
@@ -524,31 +595,67 @@ export const ClientPortal: React.FC = () => {
       )}
 
       {/* REBOOK MODAL */}
-      {showRebookModal && selectedBooking && typeof document !== 'undefined' && createPortal(
+      {showRebookModal && liveRebookBooking && typeof document !== 'undefined' && createPortal(
         <div className="modal-overlay" data-lenis-prevent="true">
-          <div className="modal-card">
+          <div className="modal-card" style={{ maxWidth: '560px', width: '100%', maxHeight: '92vh', overflowY: 'auto' }}>
             <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.8rem', margin: '0 0 10px' }}>Rebook Event Schedule</h3>
-            <p style={{ color: 'var(--muted)', fontSize: '0.9rem', marginBottom: '24px' }}>Updating event date for Booking Reference {selectedBooking.id}</p>
+            <p style={{ color: 'var(--muted)', fontSize: '0.9rem', marginBottom: '20px' }}>
+              Updating event date for Booking Reference {liveRebookBooking.id}. Current date: <strong>{liveRebookBooking.eventDate}</strong>
+            </p>
 
             <form onSubmit={handleRebookSubmit}>
-              <div className="form-group" style={{ marginBottom: '20px' }}>
+              <div className="form-group" style={{ marginBottom: '16px' }}>
                 <label>Select New Available Date</label>
-                <input
-                  type="date"
-                  className="input-field"
-                  required
-                  value={rebookDate}
-                  min={(() => { const d = new Date(); d.setDate(d.getDate() + business.changeNoticeDays); return d.toISOString().slice(0, 10) })()}
-                  onChange={(e) => setRebookDate(e.target.value)}
+                <RebookDatePicker
+                  booking={liveRebookBooking}
+                  bookings={bookings}
+                  blockedDates={blockedDates}
+                  minDate={rebookMinDate}
+                  value={effectiveRebookDate}
+                  onChange={(d) => {
+                    setRebookDate(d)
+                    setRebookError(null)
+                  }}
+                  onVisibleMonthChange={loadAvailability}
+                  loading={availabilityLoading}
                 />
               </div>
 
-              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '30px' }}>
-                <button type="button" onClick={() => setShowRebookModal(false)} className="btn-nav-logout">
+              <div
+                style={{
+                  padding: '10px 14px',
+                  borderRadius: '10px',
+                  fontSize: '0.86rem',
+                  fontWeight: 600,
+                  background: effectiveRebookDate ? '#ECFDF5' : '#F8FAFC',
+                  color: effectiveRebookDate ? '#065F46' : 'var(--muted)',
+                  border: `1px solid ${effectiveRebookDate ? '#A7F3D0' : '#E2E8F0'}`,
+                }}
+              >
+                {effectiveRebookDate ? `New date: ${effectiveRebookDate}` : 'No new date selected yet.'}
+              </div>
+
+              {rebookMessage && (
+                <div
+                  role="alert"
+                  style={{ marginTop: '12px', padding: '10px 14px', borderRadius: '10px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#991B1B', fontSize: '0.86rem', display: 'flex', gap: '8px', alignItems: 'flex-start' }}
+                >
+                  <AlertCircle size={16} style={{ flexShrink: 0, marginTop: '1px' }} />
+                  <span>{rebookMessage}</span>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '24px' }}>
+                <button type="button" onClick={closeRebook} className="btn-nav-logout" disabled={rebookSubmitting}>
                   Close
                 </button>
-                <button type="submit" className="btn-submit-primary" style={{ width: 'auto' }}>
-                  Confirm Rebooking
+                <button
+                  type="submit"
+                  className="btn-submit-primary"
+                  style={{ width: 'auto', opacity: !effectiveRebookDate || rebookSubmitting ? 0.6 : 1 }}
+                  disabled={!effectiveRebookDate || rebookSubmitting}
+                >
+                  {rebookSubmitting ? 'Checking availability…' : 'Confirm Rebooking'}
                 </button>
               </div>
             </form>

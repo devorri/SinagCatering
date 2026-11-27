@@ -189,6 +189,34 @@ export const isBookingOccupyingDate = (b: Booking, now: number = getSimulatedNow
   return true
 }
 
+// ---------------------------------------------------------------------------
+// Rebook date picker availability
+// ---------------------------------------------------------------------------
+export type RebookDateStatus = 'available' | 'current' | 'too_soon' | 'reserved' | 'hold' | 'blocked'
+
+export interface RebookDateInfo {
+  status: RebookDateStatus
+  label: string
+  selectable: boolean
+}
+
+/** Availability of one date for rebooking `booking`. Shared by the picker and the portal's re-validation. */
+export const getRebookDateInfo = (
+  dateStr: string,
+  booking: Booking,
+  bookings: Booking[],
+  blockedDates: string[],
+  minDate: string,
+): RebookDateInfo => {
+  if (dateStr === booking.eventDate) return { status: 'current', label: 'Your current event date', selectable: false }
+  if (dateStr < minDate) return { status: 'too_soon', label: `Too soon – earliest rebook date is ${minDate}`, selectable: false }
+  const others = bookings.filter((b) => b.id !== booking.id && b.eventDate === dateStr && isBookingOccupyingDate(b))
+  if (others.some((b) => !isReserveHold(b))) return { status: 'reserved', label: 'Already reserved', selectable: false }
+  if (others.length > 0) return { status: 'hold', label: 'Temporarily held by another client', selectable: false }
+  if (blockedDates.includes(dateStr)) return { status: 'blocked', label: 'Blocked by Sinag Catering', selectable: false }
+  return { status: 'available', label: 'Available', selectable: true }
+}
+
 /** Calendar state of a date contributed by a booking. */
 export const getBookingCalendarState = (b: Booking, now: number = getSimulatedNowMs()): 'reserved' | 'hold' | 'pending' | null => {
   if (!isBookingOccupyingDate(b, now)) return null
@@ -199,11 +227,55 @@ export const getBookingCalendarState = (b: Booking, now: number = getSimulatedNo
   return 'pending'
 }
 
-/** Amount the client has actually paid / submitted for this booking. */
+/** Fallback paid amount when no explicit amount is stored on the booking. */
+const defaultPartialAmount = (b: Booking): number =>
+  getPaymentTerm(b) === 'reserve' ? Math.min(b.totalPrice, RESERVATION_FEE) : computeDownpayment(b.totalPrice)
+
+/** Amount the client has actually paid / submitted for this booking (includes receipts still awaiting verification). */
 export const getAmountPaid = (b: Booking): number => {
   if (b.paymentStatus === 'fully_paid') return b.totalPrice
   if (b.paymentStatus === 'downpayment_paid' || b.paymentStatus === 'partially_paid' || b.paymentStatus === 'pending_verification') {
-    return Math.min(b.totalPrice, b.downpaymentAmount || computeDownpayment(b.totalPrice))
+    return Math.min(b.totalPrice, b.downpaymentAmount || defaultPartialAmount(b))
+  }
+  return 0
+}
+
+/** Amount the admin has actually verified as received (excludes receipts still pending verification). */
+export const getVerifiedAmountPaid = (b: Booking): number => {
+  if (b.paymentStatus === 'fully_paid') return b.totalPrice
+  if (b.paymentStatus === 'downpayment_paid' || b.paymentStatus === 'partially_paid') {
+    return Math.min(b.totalPrice, b.downpaymentAmount || defaultPartialAmount(b))
+  }
+  return 0
+}
+
+/** True while a cancelled booking's refund is requested but not yet paid out by the admin. */
+export const isRefundPending = (b: Booking): boolean => b.bookingStatus === 'cancelled' && b.refundStatus === 'pending'
+
+/** Refund actually paid out (only once the admin marks it as refunded). Never more than what was paid. */
+export const getProcessedRefund = (b: Booking): number => {
+  if (b.refundStatus !== 'processed') return 0
+  return Math.max(0, Math.min(Number(b.refundAmount) || 0, getAmountPaid(b)))
+}
+
+/**
+ * Collected money recognised as Gross Revenue for one booking.
+ *  - Active (confirmed / completed): the verified payment (full price or verified downpayment).
+ *  - Cancelled / forfeited: the verified payment stays counted while the refund is
+ *    only REFUND PENDING (or when no refund applies). The refund is deducted only
+ *    after the admin marks it as refunded (PROCESSED).
+ */
+export const getRecognizedRevenue = (b: Booking): number => {
+  const total = Number(b.totalPrice) || 0
+  const collected =
+    b.paymentStatus === 'fully_paid'
+      ? total
+      : b.paymentStatus === 'downpayment_paid'
+      ? Math.min(total, Number(b.downpaymentAmount) || computeDownpayment(total))
+      : 0
+  if (b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed') return collected
+  if (b.bookingStatus === 'cancelled' || b.bookingStatus === 'forfeit') {
+    return Math.max(0, collected - getProcessedRefund(b))
   }
   return 0
 }
@@ -221,6 +293,8 @@ export interface RefundQuote {
   refundPercentage: number
   tierLabel: string
   amountPaid: number
+  /** Part of amountPaid that is a receipt the admin has not verified yet. */
+  unverifiedAmount: number
   refundAmount: number
   refundable: boolean
 }
@@ -230,7 +304,8 @@ export interface RefundQuote {
  *  - REFUND_FULL_DAYS or more before the event      → 100% refund
  *  - REFUND_PARTIAL_DAYS to REFUND_FULL_DAYS - 1    → REFUND_PARTIAL_PERCENT refund
  *  - less than REFUND_PARTIAL_DAYS                  → no refund
- * Refund is computed on what the client has actually paid.
+ * Refund is computed on what the client has actually paid. Receipts still awaiting
+ * verification are flagged (unverifiedAmount) so the admin verifies them before payout.
  */
 export const computeRefundQuote = (b: Booking, now: Date = getSimulatedNowDate()): RefundQuote => {
   const daysBefore = daysUntilEvent(b.eventDate, now)
@@ -242,8 +317,10 @@ export const computeRefundQuote = (b: Booking, now: Date = getSimulatedNowDate()
       ? `${REFUND_PARTIAL_PERCENT}% Refund (${REFUND_PARTIAL_DAYS}–${REFUND_FULL_DAYS - 1} days before event)`
       : `No Refund (less than ${REFUND_PARTIAL_DAYS} days before event)`
   const amountPaid = getAmountPaid(b)
-  const refundAmount = Math.round(amountPaid * (refundPercentage / 100))
-  return { daysBefore, refundPercentage, tierLabel, amountPaid, refundAmount, refundable: refundAmount > 0 }
+  const unverifiedAmount = Math.max(0, amountPaid - getVerifiedAmountPaid(b))
+  // Refund can never exceed what the client actually paid
+  const refundAmount = Math.min(amountPaid, Math.max(0, Math.round(amountPaid * (refundPercentage / 100))))
+  return { daysBefore, refundPercentage, tierLabel, amountPaid, unverifiedAmount, refundAmount, refundable: refundAmount > 0 }
 }
 
 /** Human status label shown in both portals. */

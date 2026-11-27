@@ -40,6 +40,9 @@ import {
   SIM_CLOCK_EVENT,
   computeRefundQuote,
   daysUntilEvent,
+  addDaysToDateStr,
+  getAmountPaid,
+  manilaToday,
   getPaymentTerm,
   getSimulatedNowDate,
   getSimulatedNowMs,
@@ -128,7 +131,9 @@ interface AppContextType {
   needsTermsAcceptance: boolean
   acceptTerms: () => Promise<void>
   fetchCustomers: () => Promise<CustomerAccount[]>
-  rebookEvent: (bookingId: string, newDate: string) => { success: boolean; message: string }
+  rebookEvent: (bookingId: string, newDate: string) => Promise<{ success: boolean; message: string; conflict?: boolean }>
+  /** Pulls live bookings (for the given YYYY-MM-DD range) and blocked dates from the database into state. */
+  refreshAvailability: (fromDate: string, toDate: string) => Promise<void>
   addReview: (rating: number, comment: string, imageUrl: string | null) => void
   replyReview: (reviewId: string, reply: string) => void
   deleteReview: (reviewId: string) => void
@@ -1922,12 +1927,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const markRefundProcessed = (bookingId: string) => {
     const booking = bookings.find((b) => b.id === bookingId)
-    if (!booking) return
+    // Only a REFUND PENDING cancellation can be marked refunded (prevents double-processing)
+    if (!booking || booking.bookingStatus !== 'cancelled' || booking.refundStatus !== 'pending') return
     const processedAt = new Date().toISOString()
+    // Clamp to what was actually paid so revenue is never over-deducted
+    const finalRefund = Math.min(getAmountPaid(booking), Math.max(0, Number(booking.refundAmount) || 0))
     setBookings((prev) =>
-      prev.map((bk) => (bk.id === bookingId ? { ...bk, refundStatus: 'processed', refundProcessedAt: processedAt } : bk)),
+      prev.map((bk) =>
+        bk.id === bookingId
+          ? { ...bk, refundStatus: 'processed', refundAmount: finalRefund, refundProcessedAt: processedAt }
+          : bk,
+      ),
     )
-    const amountText = formatMoney(booking.refundAmount || 0, booking.currency)
+    const amountText = formatMoney(finalRefund, booking.currency)
     pushClientNotification({
       type: 'refund_processed',
       title: 'Refund processed',
@@ -1943,7 +1955,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (supabase) {
       const client = supabase
       void writeBookingRow(
-        { refund_status: 'processed', refund_processed_at: processedAt },
+        { refund_status: 'processed', refund_amount: finalRefund, refund_processed_at: processedAt },
         (row) => client.from('bookings').update(row).eq('id', bookingId),
       ).then((error) => {
         if (error) console.error('Error marking refund processed:', error.message)
@@ -2237,39 +2249,109 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }
 
-  const rebookEvent = (bookingId: string, newDate: string): { success: boolean; message: string } => {
+  /** Re-reads bookings in a date range + all blocked dates and merges them into state. */
+  const refreshAvailability = async (fromDate: string, toDate: string): Promise<void> => {
+    if (!supabase) return
+    const [bookingRes, blockedRes] = await Promise.all([
+      supabase.from('bookings').select('*').gte('event_date', fromDate).lte('event_date', toDate),
+      supabase.from('blocked_dates').select('date'),
+    ])
+    if (!bookingRes.error && bookingRes.data) {
+      const fresh = bookingRes.data.map(mapDbBooking)
+      const freshById = new Map(fresh.map((b) => [b.id, b]))
+      setBookings((prev) => {
+        // Replace rows we got back, drop in-range rows the DB no longer has, prepend new ones
+        const prevIds = new Set(prev.map((b) => b.id))
+        const updated = prev
+          .filter((b) => freshById.has(b.id) || b.eventDate < fromDate || b.eventDate > toDate)
+          .map((b) => freshById.get(b.id) ?? b)
+        const added = fresh.filter((b) => !prevIds.has(b.id))
+        return [...added, ...updated]
+      })
+    }
+    if (!blockedRes.error && blockedRes.data) {
+      setBlockedDates(blockedRes.data.map((d: any) => d.date))
+    }
+  }
+
+  const rebookEvent = async (
+    bookingId: string,
+    newDate: string,
+  ): Promise<{ success: boolean; message: string; conflict?: boolean }> => {
+    const booking = bookings.find((b) => b.id === bookingId)
+    if (!booking) return { success: false, message: 'Booking not found. Please refresh the page and try again.' }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) return { success: false, message: 'Please pick a valid date.' }
+
+    const oldDate = booking.eventDate
+    if (newDate === oldDate) {
+      return { success: false, message: 'That is already your scheduled date. Please pick a different date.' }
+    }
+
+    const minDate = addDaysToDateStr(manilaToday(), business.changeNoticeDays)
+    if (newDate < minDate) {
+      return { success: false, message: `Rebooking must be scheduled at least ${business.changeNoticeDays} days in advance (earliest: ${minDate}).` }
+    }
+
+    // Quick local check (state is kept live by the realtime channel)
     if (blockedDates.includes(newDate)) {
-      return { success: false, message: 'The selected date is blocked for inventory/operations.' }
+      return { success: false, conflict: true, message: 'The selected date is blocked for inventory/operations. Please pick another date.' }
+    }
+    if (bookings.some((b) => b.eventDate === newDate && b.id !== bookingId && isBookingOccupyingDate(b))) {
+      return { success: false, conflict: true, message: 'This date is already reserved. Please pick another date.' }
     }
 
-    const dateConflict = bookings.some(
-      (b) => b.eventDate === newDate && b.id !== bookingId && isBookingOccupyingDate(b),
-    )
-    if (dateConflict) {
-      return { success: false, message: 'This date is already fully reserved. Please pick another date.' }
-    }
+    // Final server-side check right before saving (catches race conditions)
+    if (supabase) {
+      const client = supabase
+      const [blockedRes, sameDayRes] = await Promise.all([
+        client.from('blocked_dates').select('date').eq('date', newDate),
+        client.from('bookings').select('*').eq('event_date', newDate).neq('id', bookingId),
+      ])
+      if (blockedRes.error || sameDayRes.error) {
+        return { success: false, message: 'Could not verify date availability right now. Please check your connection and try again.' }
+      }
+      const takenOnServer =
+        (blockedRes.data?.length ?? 0) > 0 ||
+        (sameDayRes.data || []).map(mapDbBooking).some((b) => isBookingOccupyingDate(b))
+      if (takenOnServer) {
+        // Pull the latest state so the calendar reflects what just happened
+        void refreshAvailability(`${newDate.slice(0, 7)}-01`, `${newDate.slice(0, 7)}-31`)
+        return {
+          success: false,
+          conflict: true,
+          message: 'Sorry, this date was just reserved or blocked while you were choosing. The calendar has been updated — please pick another date.',
+        }
+      }
 
-    const eventTime = new Date(newDate).getTime()
-    const nowTime = new Date().getTime()
-    const diffDays = Math.ceil((eventTime - nowTime) / (1000 * 60 * 60 * 24))
-    if (diffDays < business.changeNoticeDays) {
-      return { success: false, message: `Rebooking must be scheduled at least ${business.changeNoticeDays} days before the event.` }
+      const { error } = await client
+        .from('bookings')
+        .update({ event_date: newDate, booking_status: 'pending' })
+        .eq('id', bookingId)
+      if (error) {
+        console.error('Error rebooking in Supabase:', error.message)
+        return { success: false, message: 'Rebooking could not be saved. Please try again.' }
+      }
     }
 
     setBookings((prev) =>
       prev.map((bk) => (bk.id === bookingId ? { ...bk, eventDate: newDate, bookingStatus: 'pending' } : bk)),
     )
 
-    if (supabase) {
-      supabase.from('bookings').update({
-        event_date: newDate,
-        booking_status: 'pending',
-      }).eq('id', bookingId).then(({ error }) => {
-        if (error) console.error('Error rebooking in Supabase:', error.message)
-      })
-    }
+    // Free the previous slot: confirmed bookings auto-block their date, so release it
+    // unless another active booking still sits on that date.
+    const oldDateStillUsed = bookings.some(
+      (b) => b.id !== bookingId && b.eventDate === oldDate && isBookingOccupyingDate(b),
+    )
+    if (!oldDateStillUsed && blockedDates.includes(oldDate)) unblockDate(oldDate)
 
-    return { success: true, message: 'Event successfully rebooked! Status returned to Pending for verification.' }
+    addAdminNotification({
+      type: 'booking_new',
+      title: 'Event Rebooked – Needs Re-verification',
+      message: `${booking.customerName} moved booking ${bookingId} from ${oldDate} to ${newDate}. Status returned to Pending.`,
+      bookingId,
+    })
+
+    return { success: true, message: `Event successfully rebooked to ${newDate}! Status returned to Pending for verification.` }
   }
 
   const addReview = (rating: number, comment: string, imageUrl: string | null) => {
@@ -2850,6 +2932,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         acceptTerms,
         fetchCustomers,
         rebookEvent,
+        refreshAvailability,
         addReview,
         replyReview,
         deleteReview,

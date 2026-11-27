@@ -77,6 +77,8 @@ import {
   getPaymentTerm,
   isHoldExpired,
   isReserveHold,
+  isRefundPending,
+  getRecognizedRevenue,
   monthKey,
   monthLabel,
 } from '../lib/bookingRules'
@@ -608,13 +610,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       // Count bookings per day
       dailyBookings[b.eventDate] = (dailyBookings[b.eventDate] || 0) + 1
 
-      // Revenue calculations: include completed bookings with fully_paid and confirmed bookings
-      if ((b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed') && b.paymentStatus === 'fully_paid') {
-        totalRevenue += b.totalPrice
-      } else if (b.bookingStatus === 'confirmed' && b.paymentStatus === 'downpayment_paid') {
-        const paidAmount = b.downpaymentAmount || (computeDownpayment(b.totalPrice))
-        totalRevenue += paidAmount
-      }
+      // Revenue: verified collections. Cancelled bookings keep their paid amount
+      // while the refund is only REFUND PENDING; the refund is deducted only once
+      // the admin marks it as refunded (PROCESSED).
+      totalRevenue += getRecognizedRevenue(b)
 
       // Status counts
       if (b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed') confirmedCount++
@@ -1237,7 +1236,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         label: monthLabel(key),
         bookings: list,
         revenue: list
-          .filter((b) => b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit')
+          // Refund-pending cancellations stay in the package total until the refund is processed
+          .filter((b) => (b.bookingStatus !== 'cancelled' && b.bookingStatus !== 'forfeit') || isRefundPending(b))
           .reduce((sum, b) => sum + (Number(b.totalPrice) || 0), 0),
         confirmed: list.filter((b) => b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed').length,
         pending: list.filter((b) => b.bookingStatus === 'pending').length,
@@ -1255,7 +1255,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const handleMarkRefundProcessed = async (booking: Booking) => {
     const ok = await confirm({
       title: 'Mark Refund as Processed',
-      message: `Confirm you have manually sent the refund of ${formatMoney(booking.refundAmount || 0, booking.currency)} to ${booking.customerName} for booking #${booking.id}?\n\nThe client will be notified by SMS and in their notification feed.`,
+      message: `Confirm you have manually sent the refund of ${formatMoney(booking.refundAmount || 0, booking.currency)} to ${booking.customerName} for booking #${booking.id}?${booking.paymentStatus === 'pending_verification' ? '\n\nWARNING: this client\'s payment receipt was never verified. Check that the money was actually received before paying out.' : ''}\n\nThis amount will be deducted from Gross Revenue and the client will be notified by SMS and in their notification feed.`,
       confirmText: 'Mark Refunded',
       cancelText: 'Cancel',
       variant: 'success',
@@ -1717,7 +1717,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                 <div className="stat">
                   <div className="label">Gross Revenue</div>
                   <div className="value">{formatMoney(analyticsData.totalRevenue, 'PHP')}</div>
-                  <div className="subtext">Active & confirmed event packages</div>
+                  <div className="subtext">Collected payments, net of completed refunds</div>
                 </div>
 
                 <div className="stat">

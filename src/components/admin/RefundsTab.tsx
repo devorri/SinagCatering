@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react'
-import { CheckCircle2, Eye, RotateCcw, Search, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Eye, RotateCcw, Search, X } from 'lucide-react'
 import type { Booking } from '../../types'
 import { formatMoney } from '../../data/packages'
-import { computeRefundQuote, getAmountPaid } from '../../lib/bookingRules'
+import { computeRefundQuote, getAmountPaid, getVerifiedAmountPaid } from '../../lib/bookingRules'
 
 interface RefundsTabProps {
   bookings: Booking[]
@@ -31,13 +31,16 @@ export const RefundsTab: React.FC<RefundsTabProps> = ({ bookings, onMarkProcesse
         .map((b) => {
           // Older cancellations (before revision 6) have no stored refund data — derive it
           const derived = computeRefundQuote(b, b.cancelledAt ? new Date(b.cancelledAt) : new Date(b.createdAt))
-          const refundAmount = b.refundAmount ?? derived.refundAmount
+          const paid = getAmountPaid(b)
+          const unverified = Math.max(0, paid - getVerifiedAmountPaid(b))
+          // Never show (or pay out) more than the client actually paid
+          const refundAmount = Math.min(paid, Math.max(0, b.refundAmount ?? derived.refundAmount))
           const refundPercentage = b.refundPercentage ?? derived.refundPercentage
           const status: Exclude<RefundFilter, 'all'> =
             b.refundStatus === 'pending' || b.refundStatus === 'processed'
               ? b.refundStatus
               : 'not_applicable'
-          return { b, refundAmount, refundPercentage, status }
+          return { b, paid, unverified, refundAmount, refundPercentage, status }
         })
         .sort((x, y) => new Date(y.b.cancelledAt || y.b.createdAt).getTime() - new Date(x.b.cancelledAt || x.b.createdAt).getTime()),
     [bookings],
@@ -66,6 +69,7 @@ export const RefundsTab: React.FC<RefundsTabProps> = ({ bookings, onMarkProcesse
           <h3>Cancellations &amp; Refunds</h3>
           <p>
             Client cancellation requests with reason, refund tier and requested manual payout.
+            Gross Revenue is only reduced once a refund is marked as refunded.
             {counts.pending > 0 && (
               <> Pending payouts: <strong style={{ color: '#B45309' }}>{formatMoney(pendingTotal)}</strong></>
             )}
@@ -120,7 +124,7 @@ export const RefundsTab: React.FC<RefundsTabProps> = ({ bookings, onMarkProcesse
                 </td>
               </tr>
             ) : (
-              rows.map(({ b, refundAmount, refundPercentage, status }) => (
+              rows.map(({ b, paid, unverified, refundAmount, refundPercentage, status }) => (
                 <tr key={b.id}>
                   <td>
                     <div style={{ fontWeight: 700, color: '#18181B' }}>{b.customerName}</div>
@@ -136,7 +140,17 @@ export const RefundsTab: React.FC<RefundsTabProps> = ({ bookings, onMarkProcesse
                     <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{b.cancellationReason || '—'}</div>
                     {b.cancellationNotes && <div style={{ fontSize: '0.74rem', color: '#71717A', marginTop: '2px' }}>“{b.cancellationNotes}”</div>}
                   </td>
-                  <td style={{ fontWeight: 600 }}>{formatMoney(getAmountPaid(b), b.currency)}</td>
+                  <td style={{ fontWeight: 600 }}>
+                    {formatMoney(paid, b.currency)}
+                    {unverified > 0 && (
+                      <div
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: '#B45309', fontWeight: 700, marginTop: '3px' }}
+                        title="The client's receipt was never verified. Confirm the money was received before paying out."
+                      >
+                        <AlertTriangle size={11} /> {formatMoney(unverified, b.currency)} unverified
+                      </div>
+                    )}
+                  </td>
                   <td style={{ fontSize: '0.8rem', fontWeight: 700 }}>{refundPercentage}%</td>
                   <td style={{ fontWeight: 800, color: '#9A3412' }}>{formatMoney(refundAmount, b.currency)}</td>
                   <td>
